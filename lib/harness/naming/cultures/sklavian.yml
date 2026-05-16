@@ -1,0 +1,73 @@
+# Slavic-ish. Hard consonants, -ov / -en / -inski endings, river-and-stone
+# family roots. Riverine kingdoms tend to roll this.
+id: sklavian
+weight: 8
+flavor: "slavic-ish — hard consonants, riverine and stone-rooted family names"
+
+given:
+  - Bohdan
+  - Branko
+  - Dragan
+  - Goran
+  - Igor
+  - Kazek
+  - Lazar
+  - Milos
+  - Mirek
+  - Nikodem
+  - Pyetr
+  - Radoslav
+  - Stojan
+  - Tomash
+  - Vasek
+  - Vladek
+  - Yaroslav
+  - Zenek
+  - Borys
+  - Cyril
+  - Anya
+  - Dushka
+  - Helka
+  - Ivana
+  - Kira
+  - Lyudmila
+  - Mira
+  - Natka
+  - Olek
+  - Petra
+  - Rusalka
+  - Sasha
+  - Tanya
+  - Vela
+
+family:
+  - Borescu
+  - Cherniak
+  - Dolinski
+  - Drozdov
+  - Goran
+  - Halich
+  - Iskar
+  - Kosta
+  - Krasnov
+  - Lebedev
+  - Mareska
+  - Mihalev
+  - Novak
+  - Oradin
+  - Ostrov
+  - Petrenko
+  - Pyetrov
+  - Radkin
+  - Sokolov
+  - Stojanovich
+  - Tarasch
+  - Volkov
+  - Voronev
+  - Yegorov
+  - Zaitsev
+  - Zelenin
+  - Babich
+  - Mardek
+  - Velkov
+  - Domarov

@@ -1,0 +1,64 @@
+# Genesis scenario table — biases founding-history generation toward
+# specific dramatic shapes. Most rolls hit nothing_interesting and Genesis
+# runs its default behavior. Rare rolls instruct the LLM to bake a specific
+# shape into the cluster (a betrayal, a curse, a contested founding, etc.).
+#
+# Adding a scenario:
+#   - id: my_new_shape
+#     weight: 2
+#     prompt_seed: |
+#       SCENARIO: ...directive...
+#
+# To make a scenario rarer, lower its weight. To make it more common, raise it.
+# All weights together sum to 100 here for legibility but any positive integers
+# work.
+#
+# `requires:` is optional. When present, the entry is only eligible if the
+# context (passed at roll time) matches. Currently only `biome` is supplied
+# by Genesis::Generator.
+
+- id: nothing_interesting
+  weight: 90
+  prompt_seed: null
+
+- id: founding_betrayal
+  weight: 3
+  prompt_seed: |
+    SCENARIO: One of the founding events depicts a betrayal — the place's
+    anchor was wronged by an ally, sibling, partner, or oath-bound peer. Make
+    the betrayal specific (a bargain broken, a shared inheritance seized, a
+    sworn pact voided, a sibling's hand turned). Avoid generic "rivals"
+    framing. Other events in the cluster may but need not reference it.
+
+- id: cursed_ground
+  weight: 2
+  prompt_seed: |
+    SCENARIO: One of the events seeds a lingering curse, ill omen, or
+    unhealed wound at this place — something locals quietly avoid or
+    whisper about. Be concrete (an unburied dead, a broken promise to
+    spirits, a salted well, a place where children are told not to play).
+    The curse need not be supernatural; it can be social or material.
+
+- id: contested_origin
+  weight: 2
+  prompt_seed: |
+    SCENARIO: This place's founding is disputed between two named groups or
+    individuals. One version says X founded it, the other says Y. Both
+    versions appear in the events as held by different actors. Don't
+    resolve the dispute — leave the ambiguity in the prose.
+
+- id: hidden_inheritance
+  weight: 2
+  prompt_seed: |
+    SCENARIO: One of the founding actors left behind something valuable
+    that locals don't know about — a sealed vault, an heirloom in a wall,
+    a buried cache, a forgotten document of consequence. Mention it
+    obliquely in event prose; don't make it the headline.
+
+- id: refugee_origin
+  weight: 1
+  prompt_seed: |
+    SCENARIO: This place was founded by people fleeing somewhere else.
+    Their origin (a fallen city, a defeated kingdom, a religious schism,
+    a famine year) is named explicitly in the events. Some founders bear
+    that loss visibly even generations on.

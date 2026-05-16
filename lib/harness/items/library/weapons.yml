@@ -1,0 +1,66 @@
+# Weapon templates. Generated items roll a kind + flavor from the pools and
+# instance-specific modifier values from the ranges. Names are decoupled
+# from power: a "rusted dagger" might roll +2 STR while a "gleaming dagger"
+# rolls +0. The mystery is the point — DF-style.
+#
+# Schema (per entry):
+#   id              snake_case unique
+#   kind_pool       array of base kinds (one rolled per spawn)
+#   flavor_pool     array of adjective prefixes (one rolled, optional)
+#   base_tags       array; merged into the spawned item's tags
+#   modifier_table  array of modifiers, each rolled per instance
+#                   shapes:
+#                     {stat: <stat>, op: add, range: [min, max]}     → rolls integer in range
+#                     {damage_dice: "1d4", op: add, on: attack, chance: 0.3} → 30% chance to apply
+#   weight          spawn rarity within the weapons category
+
+- id: short_blade
+  kind_pool:    [dagger, knife, shortsword, stiletto, dirk]
+  flavor_pool:  [rusted, chipped, gleaming, plain, heavy, balanced, salt-stained, blood-darkened]
+  base_tags:    [weapon, edged, light]
+  modifier_table:
+    - { stat: strength, op: add, range: [0, 2] }
+  weight: 30
+
+- id: longblade
+  kind_pool:    [longsword, broadsword, saber, scimitar, falchion]
+  flavor_pool:  [rusted, plain, gleaming, ornate, ancestral, looted, heirloom, notched]
+  base_tags:    [weapon, edged, two_handed]
+  modifier_table:
+    - { stat: strength, op: add, range: [0, 3] }
+    - { damage_dice: "1d4", op: add, on: attack, chance: 0.3 }
+  weight: 18
+
+- id: blunt_weapon
+  kind_pool:    [club, mace, warhammer, cudgel, mallet]
+  flavor_pool:  [worn, iron-shod, polished, plain, heavy]
+  base_tags:    [weapon, blunt]
+  modifier_table:
+    - { stat: strength, op: add, range: [0, 2] }
+  weight: 22
+
+- id: spear
+  kind_pool:    [spear, pike, lance, javelin]
+  flavor_pool:  [rusted, plain, ash-shafted, oak-shafted, bound]
+  base_tags:    [weapon, polearm, reach]
+  modifier_table:
+    - { stat: strength, op: add, range: [0, 2] }
+    - { stat: dexterity, op: add, range: [0, 1] }
+  weight: 15
+
+- id: bow
+  kind_pool:    [shortbow, longbow, recurve, hunting bow]
+  flavor_pool:  [worn, plain, well-strung, polished, ash, yew]
+  base_tags:    [weapon, ranged, two_handed]
+  modifier_table:
+    - { stat: dexterity, op: add, range: [0, 3] }
+  weight: 12
+
+- id: focus
+  kind_pool:    [staff, rod, wand, scepter]
+  flavor_pool:  [carved, knotted, smooth, plain, gnarled, twisted]
+  base_tags:    [weapon, focus, magical_implement]
+  modifier_table:
+    - { stat: intelligence, op: add, range: [0, 2] }
+    - { stat: wisdom, op: add, range: [0, 1] }
+  weight: 8

@@ -1,0 +1,73 @@
+# Norse / north-Germanic. Patronymic -sson / -sdottir, harsh consonants,
+# stone/sea/iron family roots. Highland kingdoms lean here.
+id: nord
+weight: 7
+flavor: "norse-ish — patronymics, stone-and-sea family names, harsh consonants"
+
+given:
+  - Arn
+  - Asger
+  - Bjorn
+  - Brand
+  - Egil
+  - Erik
+  - Folke
+  - Gunnar
+  - Hakon
+  - Halvar
+  - Ingmar
+  - Ivar
+  - Kjell
+  - Leif
+  - Magnus
+  - Oddvar
+  - Olaf
+  - Ragnar
+  - Rolf
+  - Sigurd
+  - Sten
+  - Sven
+  - Torsten
+  - Ulf
+  - Vidar
+  - Astrid
+  - Borghild
+  - Frida
+  - Helga
+  - Inga
+  - Liv
+  - Saga
+  - Sigrid
+  - Thora
+
+family:
+  - Arnesson
+  - Brandsson
+  - Egilsson
+  - Erlandson
+  - Eriksson
+  - Folkesson
+  - Gunnarsen
+  - Halvarsson
+  - Ingvarson
+  - Ironbeard
+  - Knutsen
+  - Korrson
+  - Leifson
+  - Magnussen
+  - Northwind
+  - Olafsson
+  - Ragnarson
+  - Stenholm
+  - Stoneforge
+  - Svensson
+  - Thorsten
+  - Ulfsson
+  - Vargrson
+  - Voldsen
+  - Winterborn
+  - Yngveson
+  - Coldhall
+  - Skardsson
+  - Hjaltesson
+  - Vegirsson

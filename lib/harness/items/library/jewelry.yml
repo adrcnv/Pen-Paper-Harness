@@ -1,0 +1,18 @@
+# Plain (non-magical) jewelry. Cosmetic flavor + small stat bumps. The
+# magical equivalents live in magical.yml (which has effect_pool entries).
+
+- id: ring_plain
+  kind_pool:    [ring, signet, band, loop]
+  flavor_pool:  [silver, copper, iron, tarnished, polished, simple]
+  base_tags:    [jewelry, ring]
+  modifier_table:
+    - { stat: charisma, op: add, range: [0, 1] }
+  weight: 30
+
+- id: pendant_plain
+  kind_pool:    [pendant, charm, locket, amulet, talisman]
+  flavor_pool:  [hammered, carved, smooth, etched, plain]
+  base_tags:    [jewelry, neck]
+  modifier_table:
+    - { stat: wisdom, op: add, range: [0, 1] }
+  weight: 25

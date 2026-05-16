@@ -1,0 +1,884 @@
+#!/usr/bin/env ruby
+# REPL driver for the harness.
+#
+# Usage:
+#   ANTHROPIC_API_KEY=... bin/play                  # continue existing save, OR start a new game (with prompt)
+#   ANTHROPIC_API_KEY=... bin/play --reset          # wipe + new game (worldgen + character creation)
+#   ANTHROPIC_API_KEY=... bin/play --model claude-opus-4-7
+#   ANTHROPIC_API_KEY=... bin/play --grunt-model claude-haiku-4-5-20251001 --nuance-model claude-sonnet-4-6
+#
+# Type your input and press enter. Special inputs:
+#   /quit, /exit, /q   → exit cleanly
+#   /scene             → dump the current Active scene state
+#   /history           → dump conversation history
+#   /map               → render the world map (worldgen-rooted saves only)
+
+require "optparse"
+
+# Load .env at the project root if present. Tiny shell-style parser:
+# KEY=value per line, # comments ignored, blank lines ignored, optional quoted
+# values. Existing ENV entries are NOT overwritten — your shell wins.
+env_path = File.expand_path("../.env", __dir__)
+if File.exist?(env_path)
+  File.foreach(env_path) do |line|
+    line = line.strip
+    next if line.empty? || line.start_with?("#")
+    key, _, value = line.partition("=")
+    next if key.empty?
+    value = value.strip
+    value = value[1..-2] if value.start_with?('"') && value.end_with?('"')
+    value = value[1..-2] if value.start_with?("'") && value.end_with?("'")
+    ENV[key.strip] ||= value
+  end
+end
+
+# Defaults: same model for both tiers. Sonnet is the workhorse — strong enough
+# for Phase 1 reasoning, fine for grunt-tier materialization. Override with
+# --grunt-model and --nuance-model for two-tier setups.
+#
+# Precedence: CLI flag > ENV (HARNESS_MODEL / HARNESS_GRUNT_MODEL /
+# HARNESS_NUANCE_MODEL, picked up from .env or shell) > built-in default.
+options = {
+  model:         ENV["HARNESS_MODEL"] || "claude-sonnet-4-6",
+  grunt_model:   ENV["HARNESS_GRUNT_MODEL"],
+  nuance_model:  ENV["HARNESS_NUANCE_MODEL"],
+  log_level:     ENV["HARNESS_LOG_LEVEL"] || "warn",
+  snapshot_dir:  ENV["HARNESS_SNAPSHOT_DIR"],
+  reset:         false,
+  worldgen_seed: nil,
+  city_count:    nil,
+  kingdom_count: nil
+}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: bin/play [options]"
+  opts.on("--model MODEL",        "Single model for both tiers (default: claude-sonnet-4-6)")        { |v| options[:model] = v }
+  opts.on("--grunt-model MODEL",  "Override grunt-tier model (materialization, extraction)")          { |v| options[:grunt_model] = v }
+  opts.on("--nuance-model MODEL", "Override nuance-tier model (Phase 1 reasoning, Phase 2 narration)") { |v| options[:nuance_model] = v }
+  opts.on("--log-level LEVEL",    "debug|info|warn|error (default: warn)")                            { |v| options[:log_level] = v }
+  opts.on("--snapshot-dir DIR",   "Snapshot the SQLite file after each turn into DIR")                { |v| options[:snapshot_dir] = v }
+  opts.on("--reset",              "Wipe DB and start a new game without prompting (DESTRUCTIVE)")     { options[:reset] = true }
+  opts.on("--worldgen-seed SEED", Integer, "Deterministic seed for worldgen new-game (default: random)") { |v| options[:worldgen_seed] = v }
+  opts.on("--cities N",           Integer, "Number of cities to generate (default: 15)")              { |v| options[:city_count] = v }
+  opts.on("--kingdoms N",         Integer, "Number of kingdoms to generate (default: 4)")             { |v| options[:kingdom_count] = v }
+  opts.on("-h", "--help") { puts opts; exit }
+end.parse!
+
+# Backend selector. Default: anthropic (cloud). Set HARNESS_BACKEND=openai-compat
+# to point at a local llama.cpp / vLLM / Ollama server that speaks the OpenAI
+# Chat Completions API. Local backend ignores ANTHROPIC_API_KEY and reads:
+#   HARNESS_OPENAI_BASE_URL  (default http://127.0.0.1:8080/v1)
+#   HARNESS_OPENAI_MODEL     (default "local" — most local servers ignore the
+#                             field, set it for vLLM or routed endpoints)
+backend = (ENV["HARNESS_BACKEND"] || "anthropic").downcase
+
+api_key = ENV["ANTHROPIC_API_KEY"]
+if backend == "anthropic" && (api_key.nil? || api_key.empty?)
+  abort "ANTHROPIC_API_KEY not set. Get one at console.anthropic.com and re-run with `ANTHROPIC_API_KEY=... bin/play`, or set HARNESS_BACKEND=openai-compat to use a local server."
+end
+
+# Two valid LLM configurations:
+#   1. HARNESS_MODEL alone        — same model for both grunt and nuance tiers
+#   2. BOTH grunt and nuance set  — explicit two-tier
+# Half-configurations (only one of grunt / nuance set) are rejected. Genesis,
+# Materializer, and other grunt-tier callers assume llm_grunt is configured
+# whenever play is running with an API key — letting nuance run without a
+# grunt counterpart would silently degrade those subsystems.
+grunt_set  = !options[:grunt_model].to_s.strip.empty?
+nuance_set = !options[:nuance_model].to_s.strip.empty?
+if grunt_set != nuance_set
+  set_var, unset_var = grunt_set ? %w[GRUNT NUANCE] : %w[NUANCE GRUNT]
+  abort <<~MSG
+    Configuration error: HARNESS_#{set_var}_MODEL is set but HARNESS_#{unset_var}_MODEL is not.
+
+    Pick one of:
+      - Unset both #{set_var} and #{unset_var} and use HARNESS_MODEL alone (single shared model).
+      - Set BOTH HARNESS_GRUNT_MODEL and HARNESS_NUANCE_MODEL (explicit two-tier).
+
+    Half-configured tiers are not supported.
+  MSG
+end
+
+ENV["RAILS_ENV"] ||= "development"
+require_relative "../config/environment"
+
+# --reset wipes the DB rows. If a stale debug log from a prior session is
+# sitting at log/play.log, drop it now so the new session starts with a
+# clean slate. Done BEFORE the logger setup below so we never delete an
+# open file descriptor (debug mode opens log/play.log in "w" mode below).
+if options[:reset]
+  stale_log = Rails.root.join("log/play.log")
+  File.delete(stale_log) if File.exist?(stale_log)
+end
+
+# Logger destination depends on level. At debug, the request/response payloads
+# are gigantic and would scroll narration off the screen — route to a file
+# (log/play.log, truncated each session) and tell the user where to tail. At
+# warn/info/error, output is sparse, so stderr is fine.
+#
+# Rails.logger and ActiveRecord::Base.logger are swapped to the same sink so
+# materializers and other internal callers (which fall back to Rails.logger
+# when not handed an explicit logger) write to the same place.
+log_level     = Logger.const_get(options[:log_level].upcase)
+debug_log_path = nil
+
+if options[:log_level].downcase == "debug"
+  debug_log_path = Rails.root.join("log/play.log")
+  log_io = File.open(debug_log_path, "w")
+  log_io.sync = true  # so `tail -f` sees lines as they're written
+  logger = Logger.new(log_io)
+  Rails.logger = logger
+  ActiveRecord::Base.logger = logger
+  Harness::Timing.enable!  # /debug elapsed needs the per-call ledger
+else
+  logger = Logger.new($stderr)
+end
+logger.level = log_level
+Rails.logger.level = log_level
+ActiveRecord::Base.logger.level = log_level if ActiveRecord::Base.logger
+
+# --reset: truncate user tables and re-run seeds. Done in-process to avoid
+# fighting the open Rails connection, and to skip the rake-task overhead. Loud
+# banner because this is destructive — there is no undo.
+#
+# Uses `PRAGMA defer_foreign_keys = ON` so FK checks don't fire mid-truncation.
+# At commit time every table is empty, so there are no orphans for SQLite to
+# flag. Single transaction = atomic.
+# Build adapters. Default: one shared. Two-tier: separate grunt and nuance.
+# Built before reset/worldgen so the worldgen pipeline can use the grunt
+# adapter for naming.
+build_adapter = ->(model_name, name) {
+  case backend
+  when "anthropic"
+    Harness::LLM::AnthropicAdapter.new(api_key: api_key, model: model_name, logger: logger, name: name)
+  when "openai-compat", "openai_compat", "local"
+    Harness::LLM::OpenAICompatAdapter.new(
+      base_url: ENV["HARNESS_OPENAI_BASE_URL"] || "http://127.0.0.1:8080/v1",
+      api_key:  ENV["HARNESS_OPENAI_API_KEY"]  || "local",
+      model:    model_name,
+      logger:   logger,
+      name:     name
+    )
+  else
+    abort "Unknown HARNESS_BACKEND=#{backend.inspect}. Use 'anthropic' or 'openai-compat'."
+  end
+}
+
+nuance_model_name = options[:nuance_model] || options[:model]
+grunt_model_name  = options[:grunt_model]  || nuance_model_name
+
+nuance_adapter = build_adapter.call(nuance_model_name, :nuance)
+grunt_adapter  = if grunt_model_name == nuance_model_name
+  # Same physical adapter serving both tiers — tag it :shared so timing
+  # reflects "same model" without lying about which tier was used.
+  nuance_adapter.instance_variable_set(:@name, :shared)
+  nuance_adapter
+else
+  build_adapter.call(grunt_model_name, :grunt)
+end
+
+# Mode selection. Two paths:
+#   :continue  — load existing save, no setup
+#   :new_game  — wipe + worldgen + character creation + spawn at random city
+#
+# --reset is explicit. With no flag: prompt continue/new/quit if a save
+# exists, else go straight to new_game.
+def wipe_db!
+  conn = ActiveRecord::Base.connection
+  conn.transaction do
+    conn.execute("PRAGMA defer_foreign_keys = ON")
+    conn.tables.each do |t|
+      next if %w[ar_internal_metadata schema_migrations].include?(t)
+      conn.execute("DELETE FROM #{conn.quote_table_name(t)}")
+    end
+    conn.execute("DELETE FROM sqlite_sequence") rescue nil
+  end
+end
+
+def prompt_existing_save(player)
+  puts "═" * 72
+  puts "  Existing save found"
+  puts "═" * 72
+  puts "  Player:    #{player.name} (id=#{player.id})"
+  puts "  Location:  #{player.location&.name || '(no location set)'}"
+  puts "  Game time: #{::Event.maximum(:game_time) || 0}"
+  puts
+  puts "  (c)ontinue  /  (n)ew game (wipes current save)  /  (q)uit"
+  loop do
+    print "> "
+    $stdout.flush
+    input = $stdin.gets.to_s.strip.downcase
+    case input
+    when "c", "continue" then return :continue
+    when "n", "new"      then return :new_game
+    when "q", "quit"     then puts "Bye."; exit 0
+    else puts "  ! enter c, n, or q"
+    end
+  end
+end
+
+mode = if options[:reset]
+  :new_game
+else
+  existing = Player.first
+  if existing && existing.location
+    prompt_existing_save(existing)
+  else
+    :new_game  # no save, or save is missing critical fields
+  end
+end
+
+case mode
+when :continue
+  # Nothing to do — load happens below.
+
+when :new_game
+  puts "═" * 72
+  puts "  New game — generating a world"
+  puts "═" * 72
+  wipe_db!
+
+  seed = options[:worldgen_seed] || Random.new_seed
+  puts "  worldgen seed: #{seed}"
+  pipeline_opts = { seed: seed, llm: grunt_adapter, logger: logger }
+  pipeline_opts[:city_count]    = options[:city_count]    if options[:city_count]
+  pipeline_opts[:kingdom_count] = options[:kingdom_count] if options[:kingdom_count]
+  Harness::Worldgen::Pipeline.run!(**pipeline_opts)
+  puts "  worldgen complete."
+  puts
+
+  # Character creation: name, stats (roll or distribute), class. All
+  # interactive — no LLM. Returns a hash; we persist it as the Player row.
+  creation = Harness::CharacterCreation.run
+
+  # Spawn at a random worldgen city — top-level, has coords, has a kingdom.
+  candidates = ::Location.where(parent_id: nil).where.not(x: nil, y: nil).where.not(faction_id: nil).to_a
+  if candidates.empty?
+    abort "Worldgen produced no eligible spawn cities — cannot continue."
+  end
+  starting_city = candidates.sample
+
+  player = ::Player.create!(
+    name:            creation[:name],
+    location:        starting_city,
+    character_class: creation[:character_class],
+    level:           1,
+    strength:        creation[:stats][:strength],
+    dexterity:       creation[:stats][:dexterity],
+    constitution:    creation[:stats][:constitution],
+    intelligence:    creation[:stats][:intelligence],
+    wisdom:          creation[:stats][:wisdom],
+    charisma:        creation[:stats][:charisma]
+  )
+
+  # Hatchery skips the LLM materializers for Players (stats are hand-rolled,
+  # description is the player's domain). Assigner sets pending_ability_picks
+  # (player's deferred slot allocation; the picker drains it next). HP comes
+  # from class hit_die + CON.
+  Harness::Character::Hatchery.materialize!(player, llm_grunt: grunt_adapter)
+
+  # "Level up to level 1" — let the player pick their first set of abilities
+  # interactively, same flow as every subsequent level-up. Drains the counter
+  # set by Assigner above.
+  Harness::Abilities::Picker.drain_pending!(player.reload)
+
+  puts "═" * 72
+  puts "  #{creation[:name]} the #{creation[:character_class].capitalize} (HP #{player.reload.current_hp}/#{player.max_hp}) steps into #{starting_city.name}"
+  puts "═" * 72
+  puts
+end
+
+player = Player.first
+unless player
+  abort "No Player row found after setup. Re-run `bin/play --reset` to start over."
+end
+unless player.location
+  abort "Player has no location. Re-run `bin/play --reset` to start over."
+end
+
+# Backfill abilities for saves created under the older slot formula (or
+# saves migrated to the picker-deferred model where abilities started
+# empty). Assigner.assign! on a Player now sets pending_ability_picks
+# rather than random-picking; the main loop's pre-input drain fires the
+# Picker on the next iteration.
+if Array(player.abilities).empty? && (player.properties || {})["pending_ability_picks"].to_i == 0
+  Harness::Abilities::Assigner.assign!(player)
+  puts "  (your ability set is empty — you'll pick from the updated library before your first turn)"
+  puts
+end
+
+# Backfill starter inventory for saves created before items existed.
+# Pure mechanical roll from the class table; no LLM call. Idempotent —
+# fires only when the player owns zero items.
+unless player.items.exists?
+  rolled = Harness::Items::Inventory.roll_for_player(player)
+  if rolled.any?
+    puts "  (rolled starter inventory: #{rolled.map(&:name).join(', ')} — see /sheet)"
+    puts
+  end
+end
+
+# Backfill starter coins for saves created before coins existed. The
+# inventory backfill above also rolls coins, so this only fires when
+# inventory is already present (i.e., we skipped that block) AND coins
+# are still zero (Phase 3 hadn't run yet).
+if player.coins.zero?
+  amount = Harness::Items::Inventory.roll_starter_coins!(player.reload)
+  if amount.to_i.positive?
+    puts "  (rolled starter coins: #{amount} — see /sheet)"
+    puts
+  end
+end
+
+last_event_time = ::Event.maximum(:game_time) || 0
+initial_game_time = [ last_event_time, 100_000 ].max
+
+context = Harness::Turn::Context.new(
+  player_location: player.location,
+  llm_grunt:       grunt_adapter,
+  llm_nuance:      nuance_adapter,
+  game_time:       initial_game_time
+)
+
+loop_obj = Harness::Turn::Loop.new(
+  adapter:      nuance_adapter,
+  context:      context,
+  snapshot_dir: options[:snapshot_dir],
+  logger:       logger
+)
+
+puts "─" * 72
+puts "Harness — solo play"
+puts "  player:    #{player.name} (id=#{player.id})"
+puts "  location:  #{player.location.name}"
+puts "  backend:   #{backend}"
+puts "  nuance:    #{nuance_adapter.display_model}"
+puts "  grunt:     #{grunt_adapter.display_model}"
+puts "  log level: #{options[:log_level]}"
+puts "  debug log: #{debug_log_path}  (tail -f #{debug_log_path} to follow live)" if debug_log_path
+puts "─" * 72
+puts
+puts "Slash commands:"
+puts "  /scene                      inspect the active scene"
+puts "  /abilities                  show your character sheet (class, level, HP, abilities)"
+puts "  /history                    dump conversation turns"
+puts "  /cost                       per-turn LLM cost breakdown (auto-shown after each turn)"
+puts "  /map                        render the world map (worldgen-rooted saves only)"
+puts "  /quests                     list quests you've encountered"
+puts "  /quests <N>                 show detail for quest N"
+if debug_log_path
+  puts "  /debug scene                engine view of scene (internal_state, agendas, extras)"
+  puts "  /debug travel               active travel journey state (cursor, remaining distance)"
+  puts "  /debug character=<id>       dump character + beliefs as JSON"
+  puts "  /debug location[=<id>]      dump location + parent/siblings/children (no id = current)"
+  puts "  /debug eventlog [>N]        dump event log (newest first; optional id floor)"
+  puts "  /debug eventlog character=<id>  events involving that character"
+  puts "  /debug elapsed              per-call timings from the most recent turn"
+  puts "  /debug levelup              level up the player one rank (fires picker inline)"
+end
+puts "  /quit                       exit"
+puts
+
+loop do
+  # Drain any pending ability picks (level-ups from the previous turn).
+  # Player chooses interactively; no LLM. Fires AT MOST once per turn cycle
+  # because XP.levelup! is the only writer to pending_ability_picks and runs
+  # inside a turn, not between them.
+  current_player = Player.first
+  if current_player && (current_player.properties || {})["pending_ability_picks"].to_i > 0
+    Harness::Abilities::Picker.drain_pending!(current_player)
+  end
+
+  print "> "
+  $stdout.flush
+  begin
+    input = $stdin.gets
+  rescue Interrupt
+    puts
+    puts "Bye."
+    break
+  end
+  break if input.nil?  # EOF
+  input = input.chomp.strip
+  next if input.empty?
+
+  case input
+  when "/quit", "/exit", "/q"
+    puts "Bye."
+    break
+  when "/scene"
+    # Stale-active-scene guard: if the player just transitioned mid-turn,
+    # active_scene still reflects where they STARTED this turn — the rebuild
+    # fires at the start of the next play turn. Detect this and show a fresh
+    # structural snapshot at the player's actual current location instead.
+    active = context.active_scene
+    stale  = context.scene_dirty || (active && active.location.id != context.player_location.id)
+
+    # /scene is the player-facing view: only what an observer in the room
+    # could see. No internal_state (private to characters), no inclination
+    # (private), no "extra" label (implementation detail — extras render as
+    # unnamed people just like any committed character would). Use
+    # `/debug scene` for the engine view.
+    chars  = (active && !stale) ? active.present_characters : Harness::Scene::Assembler.for(location: context.player_location).present_characters
+    items  = (active && !stale) ? active.present_items      : Harness::Scene::Assembler.for(location: context.player_location).present_items
+    extras = (active && !stale) ? active.present_extras     : []
+    loc    = (active && !stale) ? active.location           : context.player_location
+
+    # Player-view exits are sibling/parent/child only — those are the
+    # `transition` destinations. Inter-city travel is its own thing
+    # (Path-edge adjacency was retired with the Path model).
+    siblings = loc.parent_id ? Location.where(parent_id: loc.parent_id).where.not(id: loc.id).to_a : []
+    children = Location.where(parent_id: loc.id).to_a
+    parent_loc = loc.parent
+
+    puts "── #{loc.name} ──"
+    puts "  #{loc.description}" if loc.description.present?
+    if chars.any? || extras.any?
+      puts "  here:"
+      chars.each  { |c| puts "    [#{c.id}] #{c.name} (#{c.subrole})" }
+      extras.each { |e| puts "    · #{e}" }
+    end
+    if items.any?
+      puts "  items:"
+      items.each { |i| puts "    [#{i.id}] #{i.name}" }
+    end
+    if parent_loc || siblings.any? || children.any?
+      puts "  exits:"
+      puts "    ↑ [#{parent_loc.id}] #{parent_loc.name} (out)" if parent_loc
+      siblings.each { |s| puts "    → [#{s.id}] #{s.name}" }
+      children.each { |c| puts "    ↓ [#{c.id}] #{c.name} (in)" }
+    end
+    if stale
+      puts "  (just transitioned — full scene materializes on the next play turn)"
+    elsif active.nil?
+      puts "  (not yet entered — first play turn will materialize this scene)"
+    end
+    puts
+    next
+  when "/abilities", "/sheet"
+    p = Player.first
+    if p.nil?
+      puts "no player"
+    else
+      next_threshold = Harness::Character::XP.threshold_for(p.level + 1)
+      puts "── #{p.name} the #{p.character_class.capitalize} ──"
+      puts "  level:  #{p.level}  (XP #{p.xp} / #{next_threshold} to next)"
+      puts "  HP:     #{p.current_hp}/#{p.max_hp}"
+      puts "  coins:  #{p.coins}"
+      puts "  stats:  STR=#{p.strength}  DEX=#{p.dexterity}  CON=#{p.constitution}  INT=#{p.intelligence}  WIS=#{p.wisdom}  CHA=#{p.charisma}"
+      abilities = Array(p.abilities)
+      if abilities.empty?
+        puts "  abilities: (none — basic attacks only at this level)"
+      else
+        puts "  abilities:"
+        abilities.each do |a|
+          dmg = if a["effect_kind"] == "damage" && a["damage_dice"]
+            scale = a["damage_per_level"] ? " +#{a['damage_per_level']}/lvl" : ""
+            "  damage=#{a['damage_dice']}#{scale}"
+          else
+            ""
+          end
+          area  = a["area"] && a["area"] != "self" ? "  area=#{a['area']}" : ""
+          stat  = a["stat"] || Harness::Abilities::Library.stat_for_ability(ability: a, character_class: p.character_class)
+          puts "    [#{a['effect_kind']}] #{a['name']}  (uses #{a['uses_remaining'].to_i}/#{a['uses_per_rest']}, range=#{a['range']}#{area}, stat=#{stat})"
+          puts "      #{a['description']}"
+          puts "      #{dmg}" unless dmg.empty?
+        end
+      end
+      items = p.items.order(:id).to_a
+      if items.empty?
+        puts "  inventory: (empty)"
+      else
+        puts "  inventory:"
+        items.each do |it|
+          tags = Array(it.properties["tags"]).join(",")
+          mods = Array(it.properties["modifiers"]).map { |m|
+            if m["stat"]        then "#{m['stat'][0,3]}+#{m['value']}"
+            elsif m["damage_dice"] then "#{m['damage_dice']} on #{m['on']}"
+            else m.inspect
+            end
+          }.join(" ")
+          eff  = Array(it.properties["effects"]).map { |e| e["trigger"] }.join(",")
+          line = "    #{it.name}  [#{tags}]"
+          line << "  mods: #{mods}" unless mods.empty?
+          line << "  effect: #{eff}" unless eff.empty?
+          puts line
+        end
+      end
+      followers = Npc.where(location_id: p.location_id).select { |c|
+        c.properties.is_a?(Hash) && c.properties["following_player"] == true
+      }
+      if followers.any?
+        puts "  followers:"
+        followers.each do |f|
+          puts "    [#{f.id}] #{f.name} (#{f.subrole})  L#{f.level} #{f.character_class}  HP #{f.current_hp}/#{f.max_hp}"
+        end
+      end
+    end
+    puts
+    next
+  when "/history"
+    puts "── conversation history (#{context.history.size} turns) ──"
+    context.history.each_with_index do |t, i|
+      puts "[#{i + 1}] > #{t['input']}"
+      puts "      #{t['narration']}"
+    end
+    puts
+    next
+  when "/map"
+    map = Harness::Worldgen::FromDb.load
+    if map.cities.empty?
+      puts "no map — this save wasn't created via worldgen."
+      puts "run `bin/play --reset` for a fresh worldgen-rooted save."
+    else
+      puts Harness::Worldgen::Ascii.render(map)
+    end
+    puts
+    next
+  when %r{\A/debug\b}
+    # Debug commands are gated on --log-level=debug. Avoids accidental
+    # exposure of internal-state dumps in casual play sessions.
+    unless debug_log_path
+      puts "/debug commands require --log-level=debug. Restart with that flag to enable."
+      puts
+      next
+    end
+    case input
+    when %r{\A/debug\s+location\s*\z}, %r{\A/debug\s+location\s*=\s*(\d+)\s*\z}
+      target_id = $1&.to_i
+      target = if target_id
+        Location.find_by(id: target_id)
+      else
+        context.player_location
+      end
+
+      if target.nil?
+        puts "no location id=#{target_id}"
+      else
+        loc_dump = ->(l) {
+          {
+            id:        l.id,
+            name:      l.name,
+            parent_id: l.parent_id,
+            biome:     l.biome,
+            coords:    (l.x && l.y ? [ l.x, l.y ] : nil),
+            faction_id: l.faction_id,
+            description: l.description
+          }.compact
+        }
+
+        chars_at = Character.where(location_id: target.id).map { |c|
+          { id: c.id, type: c.type, name: c.name, subrole: c.subrole }
+        }
+        items_at = Item.where(location_id: target.id).map { |i|
+          { id: i.id, name: i.name, subrole: i.subrole }
+        }
+        siblings = target.parent_id ? Location.where(parent_id: target.parent_id).where.not(id: target.id).map(&loc_dump) : []
+        children = Location.where(parent_id: target.id).map(&loc_dump)
+
+        dump = {
+          target:           loc_dump.call(target),
+          is_player_loc:    (target.id == context.player_location.id),
+          parent:           target.parent ? loc_dump.call(target.parent) : nil,
+          siblings:         siblings,
+          children:         children,
+          characters_here:  chars_at,
+          items_here:       items_at
+        }
+        puts JSON.pretty_generate(dump)
+      end
+    when %r{\A/debug\s+character\s*=\s*(\d+)\s*\z}
+      id = $1.to_i
+      c  = Character.find_by(id: id)
+      if c.nil?
+        puts "no character id=#{id}"
+      else
+        dump = {
+          type:       c.type,
+          id:         c.id,
+          name:       c.name,
+          subrole:    c.subrole,
+          location:   c.location ? { id: c.location.id, name: c.location.name } : nil,
+          class:      c.character_class,
+          level:      c.level,
+          hp:         "#{c.current_hp}/#{c.max_hp}",
+          coins:      c.coins,
+          stats:      { str: c.strength, dex: c.dexterity, con: c.constitution,
+                        int: c.intelligence, wis: c.wisdom, cha: c.charisma },
+          properties: c.properties,
+          abilities:  c.abilities,
+          inventory:  c.items.order(:id).map { |it|
+            { id: it.id, name: it.name, subrole: it.subrole, properties: it.properties }
+          },
+          beliefs:    c.respond_to?(:beliefs) ? c.beliefs.order(:id).map { |b|
+            { id: b.id, claim: b.claim, confidence: b.confidence, source_event_id: b.source_event_id }
+          } : nil
+        }
+        puts JSON.pretty_generate(dump)
+      end
+    when %r{\A/debug\s+eventlog\s+character\s*=\s*(\d+)\s*\z}
+      char_id = $1.to_i
+      char    = Character.find_by(id: char_id)
+      if char.nil?
+        puts "no character id=#{char_id}"
+      else
+        # Match by character_id (post-promotion) OR by actor_name == this
+        # character's name (catches class-2 stragglers if any). Both ORed
+        # via subquery so event_participants doesn't need a join twice.
+        ev_ids = EventParticipant.where(character_id: char_id)
+                                 .or(EventParticipant.where(actor_name: char.name))
+                                 .pluck(:event_id).uniq
+        events = Event.where(id: ev_ids).order(id: :desc).limit(100).map do |e|
+          {
+            id:           e.id,
+            game_time:    e.game_time,
+            scope:        e.scope,
+            location_id:  e.location_id,
+            details:      e.details,
+            participants: e.event_participants.map { |ep|
+              { character_id: ep.character_id, actor_name: ep.actor_name, role: ep.role }
+            }
+          }
+        end
+        puts "(#{events.size} events involving character_id=#{char_id} '#{char.name}', newest first)"
+        puts JSON.pretty_generate(events)
+      end
+    when %r{\A/debug\s+eventlog(?:\s+>\s*(\d+))?\s*\z}
+      rel = Event.all
+      rel = rel.where("id > ?", $1.to_i) if $1
+      events = rel.order(id: :desc).limit(100).map do |e|
+        {
+          id:           e.id,
+          game_time:    e.game_time,
+          scope:        e.scope,
+          location_id:  e.location_id,
+          details:      e.details,
+          participants: e.event_participants.map { |ep|
+            { character_id: ep.character_id, actor_name: ep.actor_name, role: ep.role }
+          }
+        }
+      end
+      puts "(#{events.size} events#{$1 ? ", id > #{$1}" : ""}, newest first)"
+      puts JSON.pretty_generate(events)
+    when %r{\A/debug\s+elapsed\s*\z}
+      ledger = Harness::Timing.turn_ledger
+      if ledger.empty?
+        puts "(no LLM calls timed in the most recent turn — Timing module may be off, or no turn run yet)"
+      else
+        total = Harness::Timing.turn_total_ms
+        puts "── last turn: #{ledger.size} call(s), #{total}ms total ──"
+        ledger.each_with_index do |e, i|
+          puts format("  [%2d] %-12s %-32s %6dms", i + 1, e[:adapter], e[:subsystem], e[:duration_ms])
+        end
+      end
+    when %r{\A/debug\s+levelup\s*\z}
+      target = Player.first
+      if target.nil?
+        puts "no player row"
+      else
+        before_level = target.level
+        result = Harness::Character::XP.levelup!(target)
+        target.reload
+        puts "── levelup ──"
+        puts "  #{target.name}: L#{before_level} → L#{target.level}"
+        puts "  HP reset to #{target.current_hp}/#{target.max_hp}"
+        if result[:abilities_gained].any?
+          puts "  abilities gained (auto-rolled): #{result[:abilities_gained].map { |a| a['name'] }.join(', ')}"
+        else
+          pending = (target.properties || {})["pending_ability_picks"].to_i
+          puts "  pending_ability_picks: #{pending}"
+          # Drain immediately so the picker fires inline rather than waiting
+          # for the next input cycle. Matches the main-loop drain shape.
+          Harness::Abilities::Picker.drain_pending!(target) if pending > 0
+        end
+      end
+    when %r{\A/debug\s+travel\s*\z}, %r{\A/debug\s+journey\s*\z}
+      journey = Journey.active
+      if journey.nil?
+        puts "no active journey"
+      else
+        dest = journey.destination
+        puts "── active journey ──"
+        puts "  destination:        [#{dest.id}] #{dest.name} at (#{dest.x.round(2)}, #{dest.y.round(2)})"
+        puts "  origin:             (#{journey.origin_x.round(2)}, #{journey.origin_y.round(2)})"
+        puts "  cursor:             (#{journey.cursor_x.round(2)}, #{journey.cursor_y.round(2)})"
+        puts "  remaining_distance: #{journey.remaining_distance.round(2)} units"
+        puts "  elapsed_minutes:    #{journey.elapsed_minutes}"
+        puts "  started_at_game_time: #{journey.started_at_game_time}"
+        puts "  cooldown_until_game_time: #{journey.cooldown_until_game_time}  (encounter dice gated until then)"
+      end
+    when %r{\A/debug\s+scene\s*\z}
+      # Engine view of the scene — surfaces what's normally hidden from the
+      # player view: per-character internal_state + inclination intensity,
+      # extras flagged as such, scene-dirty flag, accumulated narration count.
+      active = context.active_scene
+      stale  = context.scene_dirty || (active && active.location.id != context.player_location.id)
+      puts "── scene (engine view) ──"
+      puts "  scene_dirty: #{context.scene_dirty}"
+      if active.nil?
+        puts "  active_scene: nil (not yet entered)"
+      elsif stale
+        puts "  active_scene: STALE (location_id=#{active.location.id} '#{active.location.name}' but player at #{context.player_location.id} '#{context.player_location.name}'; rebuild on next play turn)"
+      else
+        puts "  location: [#{active.location.id}] #{active.location.name}"
+        puts "  entered_at_game_time: #{active.entered_at_game_time}"
+        puts "  characters:"
+        active.present_characters.each do |stale|
+          # active.present_characters holds Npc objects loaded at scene-entry by
+          # the Assembler. resolve / mutate_character / loot updates hit the DB
+          # but don't refresh those in-memory rows, so without a reload here HP
+          # / coins / properties read stale. Reload once per debug print.
+          c = stale.reload
+          lens = c.properties.is_a?(Hash) ? c.properties["lens"] : nil
+          puts "    [#{c.id}] #{c.name} (#{c.subrole})  L#{c.level} #{c.character_class}  HP #{c.current_hp}/#{c.max_hp}  coins=#{c.coins}#{lens ? "  lens=#{lens}" : ""}"
+          state = active.state_for(c.id)
+          puts "        internal_state: #{state}" if state
+          agenda = active.agenda_for(c.id)
+          puts "        agenda: #{agenda}" if agenda
+        end
+        if active.present_extras.any?
+          puts "  extras (RAM-only, no ids):"
+          active.present_extras.each { |e| puts "    · #{e}" }
+        end
+        if active.present_items.any?
+          puts "  items:"
+          active.present_items.each { |i| puts "    [#{i.id}] #{i.name}" }
+        end
+        puts "  narrations this scene: #{active.narrations.size}"
+      end
+    else
+      puts "usage:"
+      puts "  /debug scene              engine view of active scene (internal_state, agendas, extras flagged)"
+      puts "  /debug travel             active travel journey state (cursor, remaining distance, cooldown)"
+      puts "  /debug character=<id>     dump character + properties + beliefs"
+      puts "  /debug location           dump current location + parent/siblings/children + chars+items here"
+      puts "  /debug location=<id>      dump that specific location with the same context"
+      puts "  /debug eventlog           dump last 100 events, newest first"
+      puts "  /debug eventlog >N        dump events with id > N, newest first"
+      puts "  /debug eventlog character=<id>  events involving that character (by character_id or actor_name)"
+      puts "  /debug elapsed            per-call timings (adapter + subsystem + ms) from the most recent turn"
+      puts "  /debug levelup            level up the player one rank (fires picker inline)"
+    end
+    puts
+    next
+  when "/quests"
+    quests = Quest.where(state: %w[offered active complete abandoned]).order(:id).select(&:player_has_met_giver?)
+    if quests.empty?
+      puts "(no quests yet — you haven't met anyone offering one)"
+    else
+      puts "── quests ──"
+      quests.each do |q|
+        progress = if q.state == "active"
+          steps = q.quest_steps.to_a
+          done  = steps.count { |s| s.state == "fulfilled" }
+          " step #{done + 1}/#{steps.size}"
+        else
+          ""
+        end
+        puts format("  %d. %-40s [%s]%s", q.id, q.name, q.state, progress)
+      end
+    end
+    puts
+    next
+  when %r{\A/quests\s+(\d+)\s*\z}
+    qid = Regexp.last_match(1).to_i
+    q = Quest.find_by(id: qid)
+    if q.nil? || !q.player_has_met_giver?
+      puts "unknown quest: #{qid}"
+      puts
+      next
+    end
+    puts "── Quest ##{q.id}: #{q.name} ──"
+    puts "  archetype: #{q.archetype_id}"
+    puts "  giver:     #{q.giver.name} (#{q.giver.subrole || 'unknown role'}) at #{q.giver.location&.name || '?'}"
+    puts "  state:     #{q.state}"
+    puts "  summary:   #{q.summary}"
+    puts
+    puts "  steps:"
+    q.quest_steps.order(:position).each_with_index do |s, i|
+      marker = case s.state
+               when "fulfilled" then "[✓]"
+               when "active"    then "[●]"
+               when "skipped"   then "[~]"
+               else                  "[ ]"
+               end
+      puts "    #{marker} #{i + 1}. #{s.description}"
+      target_line = case s.fulfillment_kind
+                    when "information"
+                      "informant: #{s.target_character&.name || '?'} (id #{s.target_character_id})"
+                    when "item_in_inventory"
+                      "target item: #{s.target_item&.name || '?'} (id #{s.target_item_id})"
+                    when "character_dead"
+                      "target: #{s.target_character&.name || '?'} (id #{s.target_character_id}) alive→dead"
+                    when "character_at_location"
+                      "lure #{s.target_character&.name || '?'} (id #{s.target_character_id}) to #{s.target_location&.name || '?'}"
+                    end
+      puts "          #{target_line}" if target_line
+      if s.opened_at_game_time
+        puts "          opened at game_time #{s.opened_at_game_time}"
+      end
+      if s.fulfilled_at_game_time
+        puts "          fulfilled at game_time #{s.fulfilled_at_game_time}"
+      end
+      evs = Array(s.related_event_ids)
+      puts "          related events: #{evs.join(', ')}" if evs.any?
+    end
+    puts
+    next
+  when "/cost"
+    breakdown = Harness::CostTracker.turn_breakdown
+    if breakdown.empty?
+      puts "(no LLM activity in the last turn)"
+    else
+      total = Harness::CostTracker.turn_total
+      puts "── last turn: $#{format('%.4f', total)} ──"
+      breakdown.sort_by { |_k, v| -v[:cost] }.each do |sub, info|
+        puts format(
+          "  %-32s $%.4f  (calls=%d  in=%d  cached=%d  write=%d  out=%d)",
+          sub, info[:cost], info[:calls], info[:input], info[:cached_read], info[:cache_write], info[:output]
+        )
+      end
+    end
+    sess_total = Harness::CostTracker.session_total
+    puts "── session total: $#{format('%.4f', sess_total)} ──" if sess_total > 0
+    puts
+    next
+  when %r{\A/}
+    # Catch-all: any input starting with `/` is treated as a slash command.
+    # Misspellings or unknown commands short-circuit here without touching
+    # the LLM or DB. The narration/Phase 1 path only gets non-slash input.
+    puts "unknown command: #{input.split.first}"
+    puts "available: /scene  /abilities  /history  /cost  /map  /quests  /debug  /quit  (and aliases /exit, /q)"
+    puts
+    next
+  end
+
+  # Death gate: player at 0 HP can't drive the LLM forward. Slash commands
+  # still work (already handled above) so the player can inspect /history,
+  # /debug, /scene, etc. before /quit. Re-checked each input — a future
+  # heal could revive them and clear the gate.
+  if Player.first.current_hp.to_i <= 0
+    puts "You are dead. (Use /history, /debug, or /quit to inspect or exit.)"
+    puts
+    next
+  end
+
+  begin
+    transcript = loop_obj.run_turn(input: input)
+  rescue StandardError => e
+    puts
+    puts "!! turn failed: #{e.class}: #{e.message}"
+    puts "   (transcript persisted with error)"
+    puts
+    next
+  end
+
+  puts
+  puts transcript.narration
+  puts
+  turn_cost = Harness::CostTracker.turn_total
+  if turn_cost > 0
+    puts "  [turn cost: $#{format('%.4f', turn_cost)}  session: $#{format('%.4f', Harness::CostTracker.session_total)}]"
+    puts
+  end
+end

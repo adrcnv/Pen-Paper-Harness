@@ -1,0 +1,23 @@
+#!/usr/bin/env ruby
+require_relative "../config/environment"
+
+format = ARGV[0] || "text"
+
+viz = Harness::Spatial::GraphViz.new
+
+case format
+when "dot"
+  puts viz.to_dot
+when "text"
+  puts viz.to_text
+when "svg"
+  dot = viz.to_dot
+  IO.popen([ "dot", "-Tsvg" ], "r+") do |io|
+    io.write(dot)
+    io.close_write
+    puts io.read
+  end
+else
+  $stderr.puts "Usage: script/viz_graph [text|dot|svg]"
+  exit 1
+end

@@ -1,0 +1,78 @@
+# Character-creation scenario table — biases what KIND of person any newly
+# spawned character actually IS underneath the apparent subrole. Default
+# (nothing_interesting, weight 92) preserves baseline behavior: an ordinary
+# person of the apparent kind. Rare rolls pry the LLM out of flat-average
+# plausibility by injecting a structural outlier.
+#
+# The asymmetry is the point: the world is mostly populated by ordinary
+# people, but a small fraction of NPCs are something else under the surface
+# — a retired adept tending bar, exiled nobility working as a clerk, a
+# demon-touched fisherman, an eternal child. The LLM can't invent these
+# unprompted (it averages to plausible-flat), so we structurally inject
+# them at character-creation time.
+#
+# Density tuning: total weight ~= 100; "interesting" rolls add to ~8% across
+# all outliers. Adjust weights here without touching code. The cruel-world
+# philosophy says high-level outliers are permitted — there is no level cap;
+# the player may walk into a tavern they cannot survive.
+
+- id: nothing_interesting
+  weight: 87
+  prompt_seed: null
+
+- id: retired_adept
+  weight: 1
+  prompt_seed: |
+    SCENARIO: Underneath the apparent subrole, this person is a retired adept of
+    a dangerous craft — a former soldier, battle-mage, ranger, monster hunter,
+    or scholar of dangerous lore. They appear ordinary now (the visible subrole
+    is what they DO; their actual training is what they WERE). Level 6-12 reflecting
+    their old vocation. Stats reflect the old training, not the current trade —
+    a smith who used to be a knight has STR/CON of a knight, not the modest
+    stats of an apprentice. Their abilities (later) and bearing carry the past;
+    casual observation reveals nothing.
+
+- id: exiled_noble
+  weight: 1
+  prompt_seed: |
+    SCENARIO: This person is fallen nobility from a kingdom — once-titled, now
+    reduced to ordinary work. Level 3-6, weighted toward the social and
+    intellectual: high CHA, high INT, decent WIS. Physical stats unremarkable.
+    They carry themselves wrong for their current station; observers may notice
+    if they're paying attention.
+
+- id: prodigy
+  weight: 1
+  prompt_seed: |
+    SCENARIO: This person has unusual natural talent for something — a barkeep
+    with prophetic dreams, a smith whose work bends physics slightly, a child
+    with terrifyingly accurate intuition. Level 2-5; the talent isn't trained,
+    just present. ONE stat among (INT, WIS, CHA) sits at 17-18; others ordinary
+    or low. They may not understand what they have.
+
+- id: marked_by_a_power
+  weight: 1
+  prompt_seed: |
+    SCENARIO: This person carries some mark, contract, or curse from a power
+    larger than themselves — a god's attention, a lich's bargain, a fae debt,
+    a demon's interest. Level varies (3-10) depending on how much the power
+    has invested in them. They may not even know; outwardly normal, structurally
+    not. Stats can be erratic — one preternatural value, the rest ordinary.
+
+- id: hidden_veteran
+  weight: 1
+  prompt_seed: |
+    SCENARIO: This person fought in a war the current generation has mostly
+    forgotten — survived it, doesn't talk about it, picked a quiet trade.
+    Level 5-9. STR or DEX above what the current trade would suggest; WIS
+    high from things they've seen; CHA may be low (they don't enjoy crowds).
+    Combat reflexes intact. Only relevant when violence reaches them.
+
+- id: legendary_outlier
+  weight: 1
+  prompt_seed: |
+    SCENARIO: This person is genuinely legendary in their own context, hiding
+    in plain sight as something ordinary. The retired archmage who once held
+    back a kingdom, now tending a hilltop tavern. The exiled general now
+    running a dock-side fish stall. Level 11-18. Stats include at least one
+    in the 17-18 exceptional range matching their old vocation.

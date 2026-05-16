@@ -1,0 +1,42 @@
+# Magical items. Each entry's effect_pool is rolled per spawn — exactly one
+# effect chosen, weighted. The trigger names MUST be in TriggerRegistry;
+# Library validates this at boot.
+#
+# Magical items spawn rarely overall (low entry weights or rare slots in
+# the inventory roll tables). The cosmetic surface is high-flavor names;
+# the underlying mechanic is one of the registered triggers.
+
+- id: protective_amulet
+  kind_pool:    [amulet, pendant, charm, talisman, locket]
+  flavor_pool:  [drowned saint, broken oath, last breath, hollow king, bone witch, sundered crown, lichmark]
+  base_tags:    [jewelry, neck, magical]
+  modifier_table: []
+  effect_pool:
+    - { trigger: death_save,    params: { hp_after: 1, destroy_on_use: true }, weight: 30 }
+    - { trigger: damage_resist, params: { type: fire, amount: 2 },              weight: 20 }
+    - { trigger: damage_resist, params: { type: cold, amount: 2 },              weight: 20 }
+    - { trigger: regen_on_rest, params: { amount: 5 },                          weight: 30 }
+  weight: 1
+
+- id: hunters_token
+  kind_pool:    [token, sigil, fetish, brand]
+  flavor_pool:  [bone, antler, silvered, blood-marked, ash-bound]
+  base_tags:    [jewelry, magical]
+  modifier_table: []
+  effect_pool:
+    - { trigger: bonus_damage_vs_tag, params: { damage_dice: "1d6", tag: bandit }, weight: 25 }
+    - { trigger: bonus_damage_vs_tag, params: { damage_dice: "1d6", tag: undead }, weight: 25 }
+    - { trigger: heal_on_kill,        params: { amount: 3 },                       weight: 25 }
+    - { trigger: crit_chance_bonus,   params: { amount: 1 },                       weight: 25 }
+  weight: 1
+
+- id: keepsake
+  kind_pool:    [ring, band, locket]
+  flavor_pool:  [warped, dull, lover's, vow-bound, faded]
+  base_tags:    [jewelry, magical]
+  modifier_table: []
+  effect_pool:
+    - { trigger: auto_succeed_check, params: {},                                  weight: 40 }
+    - { trigger: restore_use,        params: { ability_id: null },                weight: 30 }
+    - { trigger: reflect_damage,     params: { fraction: 0.25 },                  weight: 30 }
+  weight: 1

@@ -1,0 +1,67 @@
+#!/usr/bin/env ruby
+# Set up a fresh Harness checkout. Idempotent — re-run any time.
+#
+# Steps:
+#   1. Sanity-check the Ruby toolchain (mise preferred, anything matching
+#      .ruby-version accepted).
+#   2. bundle install
+#   3. Copy .env.example -> .env if missing.
+#   4. bin/rails db:prepare (creates + migrates SQLite files).
+#   5. Print next-step instructions for bin/play.
+#
+# Re-run with --reset to wipe + re-create the development database.
+
+require "fileutils"
+
+APP_ROOT = File.expand_path("..", __dir__)
+
+def system!(*args)
+  system(*args, exception: true)
+end
+
+def section(title)
+  puts
+  puts "== #{title} =="
+end
+
+FileUtils.chdir APP_ROOT do
+  pinned = File.read(".ruby-version").strip.sub(/\Aruby-/, "")
+  running = RUBY_VERSION
+  if running != pinned
+    section "Ruby version mismatch"
+    puts "  pinned   : #{pinned} (.ruby-version)"
+    puts "  running  : #{running}"
+    puts
+    puts "  Install + activate the pinned version. With mise:"
+    puts "    mise install"
+    puts "    mise use ruby@#{pinned}"
+    puts
+    puts "  Or with rbenv/asdf, install ruby #{pinned} and re-run bin/setup."
+    exit 1
+  end
+
+  section "Installing gems"
+  system("bundle check") || system!("bundle install")
+
+  section "Setting up .env"
+  if File.exist?(".env")
+    puts "  .env already exists, leaving it alone."
+  else
+    FileUtils.cp ".env.example", ".env"
+    puts "  Copied .env.example -> .env"
+    puts "  Edit .env and set ANTHROPIC_API_KEY (or configure a local LLM endpoint)"
+    puts "  before running bin/play."
+  end
+
+  section "Preparing database"
+  system! "bin/rails db:prepare"
+  system! "bin/rails db:reset" if ARGV.include?("--reset")
+
+  section "Done"
+  puts "  Next steps:"
+  puts "    1. Edit .env and add your ANTHROPIC_API_KEY (or point at a local LLM)."
+  puts "    2. bin/play           # start or continue a game"
+  puts "    3. bin/play --reset   # wipe save + start fresh"
+  puts
+  puts "  Run the test suite with: bin/rails spec  (or: bundle exec rspec)"
+end

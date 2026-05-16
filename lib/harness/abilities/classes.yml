@@ -1,0 +1,47 @@
+# Class roster. Each entry maps a class to its primary stat — the stat used
+# for ability checks when an ability doesn't override it. Spellcasting class
+# split (mage→INT, sorcerer→CHA, cleric→WIS) and martial split (fighter→STR,
+# rogue/ranger→DEX) follows D&D convention; tweaks are local.
+#
+# `hit_die` defines max-HP scaling: a level-N character has roughly
+# `hit_die_max + avg(hit_die) × (N-1) + CON_mod × N` HP. Tougher classes
+# (fighter d10) outlast squishier ones (mage d6) at the same level.
+#
+# Commoner is the default for plain NPCs — has no primary stat and a small
+# hit die (d6, the squishy baseline). Draws from a tight subset of fighter
+# abilities (those tagged `[fighter, commoner]` in library.yml).
+
+- id: commoner
+  name: "Commoner"
+  primary_stat: null
+  hit_die: 6
+
+- id: fighter
+  name: "Fighter"
+  primary_stat: strength
+  hit_die: 10
+
+- id: mage
+  name: "Mage"
+  primary_stat: intelligence
+  hit_die: 6
+
+- id: sorcerer
+  name: "Sorcerer"
+  primary_stat: charisma
+  hit_die: 6
+
+- id: cleric
+  name: "Cleric"
+  primary_stat: wisdom
+  hit_die: 8
+
+- id: rogue
+  name: "Rogue"
+  primary_stat: dexterity
+  hit_die: 8
+
+- id: ranger
+  name: "Ranger"
+  primary_stat: dexterity
+  hit_die: 8

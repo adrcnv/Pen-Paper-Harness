@@ -1,0 +1,71 @@
+# Anglo-Saxon / Old English flavor. Earthy, monosyllabic, occupational
+# surnames. Default fallback culture — first alphabetically also lands here.
+id: anglish
+weight: 10
+flavor: "anglish / old english — earthy, monosyllabic, occupational surnames"
+
+given:
+  - Aelric
+  - Alden
+  - Bram
+  - Cedric
+  - Dunstan
+  - Edmund
+  - Egbert
+  - Eadwin
+  - Garrick
+  - Godric
+  - Harold
+  - Hewett
+  - Kenric
+  - Leofric
+  - Mead
+  - Oswin
+  - Owen
+  - Roderic
+  - Ralf
+  - Stenric
+  - Tomis
+  - Wystan
+  - Wilmer
+  - Bess
+  - Aleth
+  - Hilde
+  - Maerwen
+  - Edith
+  - Sefa
+  - Annwyn
+  - Goda
+  - Mereth
+
+family:
+  - Ashford
+  - Blackwood
+  - Briarcroft
+  - Coldbrook
+  - Dunmoor
+  - Fennwick
+  - Greyholm
+  - Hollowmere
+  - Ironvale
+  - Leighton
+  - Marston
+  - Northgate
+  - Oakshield
+  - Pellard
+  - Quintric
+  - Redfern
+  - Stoddard
+  - Sternwood
+  - Thornham
+  - Underhill
+  - Westbrook
+  - Whitlock
+  - Wynter
+  - Yarrowhall
+  - Coltrane
+  - Hexham
+  - Ingleton
+  - Marrowfield
+  - Penhurst
+  - Sallowmere

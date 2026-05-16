@@ -1,0 +1,75 @@
+You are generating a LEVEL and six ability scores for a character: strength, dexterity, constitution, intelligence, wisdom, charisma.
+
+LEVEL is power tier. Stats are identity within a tier. The two are different axes:
+- A dock hand at level 1 with STR 16 is unusually strong for a dock hand. Still level 1. Still loses badly to a level-5 fighter.
+- A retired veteran at level 7 with STR 13 is mechanically more dangerous than the dock hand despite a lower raw score, because of HP, proficiency, and abilities that level brings.
+
+Stats describe what kind of person someone is. Level describes how trained or experienced they are at the kind of dangerous work that scales — combat, magic, hunting, infiltration. Most people in the world are level 1 because most people are not professional doers of dangerous things.
+
+LEVEL TIERS (guidance, not hard floors):
+- 1: ordinary people. Farmers, dock hands, merchants, tavern patrons, scholars, artisans without combat training. The default.
+- 2-3: trained but ordinary. City guards, militia, journeyman fighters, hedge mages, experienced hunters.
+- 4-6: veterans, seasoned operators. Captain of a watch, a successful bandit leader, a working battle-mage, a notable tracker.
+- 7-10: notable. Named heroes, retired adventurers (now innkeepers), elite enforcers, masters of a craft that has combat applications.
+- 11+: legendary. The retired archmage who once held back a kingdom. The exiled general. Rare; only when context strongly says so.
+
+DEFAULT TO LEVEL 1. Most NPCs are ordinary people. Push higher only when the SUBROLE clearly suggests it (a "captain" is not level 1) or when CONTEXT (events, properties, scenario) establishes someone as more than they appear.
+
+There is NO LEVEL CAP. The world is indifferent — a retired archmage tending bar at level 14 is permitted when the scenario calls for it. The player may walk into a room they cannot survive.
+
+INPUT format
+{
+  "name":       "<character name>",
+  "subrole":    "<archetype, e.g. barkeep, guard, smith, scholar, bandit>",
+  "properties": <object: free-text attributes — personality, physique, background, faction_id, appearance_intent, etc>,
+  "context":    "<optional: prose that established this character — event narratives they participated in, the materializer's reason for spawning them, the appearance_intent text>"
+}
+
+The INPUT block may be followed by a "SCENARIO:" line that injects an outlier — "this dock hand is a retired archmage who can throw fireballs," "this barkeep is exiled nobility from a fallen kingdom." When a scenario fires, take it seriously: it overrides the apparent subrole's level baseline. When no scenario is present, generate ordinary stats appropriate to the subrole and context.
+
+STAT REFERENCE POINTS (per stat, in [3, 18]):
+- 3-5: poor, notably below human baseline
+- 6-9: below average
+- 10-11: average human
+- 12-13: above average
+- 14-16: highly capable
+- 17-18: exceptional / legendary
+
+Weight stats according to subrole, properties, and context:
+- A blacksmith has above-average STR and CON; average DEX; unremarkable mental stats unless noted.
+- A scholar has high INT and WIS; low STR/CON unless young or trained.
+- A charismatic innkeep has high CHA; solid CON from lived-in years; otherwise average.
+- A bandit has above-average DEX and STR; low INT/CHA unless properties or context say otherwise.
+- A retired archmage (per scenario) has very high INT, decent WIS, ordinary STR — their level is what makes them dangerous, not their muscles.
+
+Leave weaknesses. Do not push every stat high. Average total across all six should land 65-75 for an unremarkable person. Push higher only when CONTEXT or SCENARIO explicitly suggests exceptional ability.
+
+CHARACTER CLASS — pick one from this exact set:
+- commoner: ordinary person without combat training. The default for barkeeps, dock hands, scholars, merchants, farmers, scribes. Most level-1 NPCs are commoner.
+- fighter: trained to fight with weapons. Guards, soldiers, mercenaries, militia, skilled brawlers, captains.
+- mage: studied arcane discipline; magic via reasoning and preparation. Wizards, court magicians, scholars-of-power.
+- sorcerer: raw arcane talent; magic from within, unstable. Wild-magic users, magnetic charlatans, the unschooled gifted.
+- cleric: divine practitioner of a god, power, or principle. Priests with real magic, oracles, chosen-of-something.
+- rogue: precision, stealth, unfair fights. Thieves, assassins, spies, urban operators.
+- ranger: wilderness fighter, ranged + nature. Hunters, trackers, scouts, frontier folk who survive what most can't.
+
+CHOOSING: prefer commoner for ordinary subroles. Pick fighter when subrole or context implies professional combat (guard, soldier, captain, bandit, watch). Pick a caster class only when subrole/scenario implies it (a hedge mage, a temple priest, a scholar of forbidden things). When SCENARIO is active, let it override the apparent subrole — a "retired_adept" working as a barkeep is fighter or mage or cleric depending on the prose, not commoner.
+
+OUTPUT MUST be a JSON object of this exact shape:
+{
+  "level":           <int>,
+  "character_class": "<one of: commoner | fighter | mage | sorcerer | cleric | rogue | ranger>",
+  "strength":        <int>,
+  "dexterity":       <int>,
+  "constitution":    <int>,
+  "intelligence":    <int>,
+  "wisdom":          <int>,
+  "charisma":        <int>
+}
+
+HARD RULES:
+- All eight keys present.
+- "level" is an integer >= 1. No upper cap.
+- "character_class" is one of the seven listed values exactly (lowercase). No others.
+- Each stat value is an integer in [3, 18]. No decimals, no strings, no null.
+- No extra fields, no prose around the object.

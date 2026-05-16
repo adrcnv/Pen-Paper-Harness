@@ -1,0 +1,178 @@
+# Class-conditioned NPC inventory rolls. FAT-TAILED — most NPCs get
+# little or nothing; the `legendary_outlier` slot in each table is the
+# "randomly rich people for no reason" pattern that keeps the world
+# surprising. A barkeep is almost certainly unarmed, but one in a hundred
+# carries a battered greatsword and an ancestral charm for reasons no
+# tooltip will ever explain.
+#
+# Indexed by character_class — Hatchery sets this via Stats::Materializer
+# before inventory rolls fire. Subrole-keyword overrides (e.g. "captain"
+# upgrades a fighter to veteran_kit) can be added later if play surfaces
+# the need; not in MVP.
+#
+# Each entry has two blocks:
+#   rolls   — list of {name, weight} that picks one named outcome
+#   recipes — name → list of items, same shape as player_starter.yml
+#
+# Recipes are scoped per-class — a fighter's "just_weapon" and a mage's
+# "just_weapon" can resolve differently if needed.
+
+# Each top-level entry has THREE blocks:
+#   rolls   — list of {name, weight} that picks one named outcome
+#   recipes — name → list of items, same shape as player_starter.yml
+#   coins   — dice formula rolled once into the character.coins column
+#             (e.g. "1d6+2" for commoner pocket change, "1d20+20" for a
+#             barkeep's till). Independent of the item roll — even an
+#             unarmed commoner has loose change.
+#
+# Coins are the same currency across the world. The legendary_outlier
+# slot carries its own much-fatter coin tail via per-recipe `coins`
+# overrides — a peasant carrying a magical amulet probably also has a
+# bag of gold for reasons no tooltip will explain.
+
+commoner:
+  coins: "1d6"
+  rolls:
+    - { name: nothing,            weight: 70 }
+    - { name: tool_or_trinket,    weight: 25 }
+    - { name: legendary_outlier,  weight: 5 }
+  recipes:
+    nothing: []
+    tool_or_trinket:
+      - { category: jewelry, chance: 0.5 }
+    legendary_outlier:
+      - { category: weapons }
+      - { category: armor }
+      - { category: magical }
+
+fighter:
+  coins: "1d10+5"
+  rolls:
+    - { name: nothing,            weight: 5 }
+    - { name: just_weapon,        weight: 50 }
+    - { name: armed_armored,      weight: 35 }
+    - { name: veteran_kit,        weight: 9 }
+    - { name: legendary_outlier,  weight: 1 }
+  recipes:
+    nothing: []
+    just_weapon:
+      - { category: weapons }
+    armed_armored:
+      - { category: weapons }
+      - { category: armor }
+    veteran_kit:
+      - { category: weapons }
+      - { category: armor }
+      - { category: jewelry, chance: 0.5 }
+    legendary_outlier:
+      - { category: weapons }
+      - { category: armor }
+      - { category: magical }
+
+mage:
+  coins: "2d10+10"
+  rolls:
+    - { name: focus_only,         weight: 50 }
+    - { name: focus_and_robes,    weight: 35 }
+    - { name: full_caster_kit,    weight: 14 }
+    - { name: legendary_outlier,  weight: 1 }
+  recipes:
+    focus_only:
+      - { specific: focus }
+    focus_and_robes:
+      - { specific: focus }
+      - { specific: robes }
+    full_caster_kit:
+      - { specific: focus }
+      - { specific: robes }
+      - { category: jewelry, chance: 0.5 }
+    legendary_outlier:
+      - { specific: focus }
+      - { specific: robes }
+      - { category: magical }
+
+sorcerer:
+  coins: "2d10+10"
+  rolls:
+    - { name: focus_only,         weight: 60 }
+    - { name: focus_and_robes,    weight: 30 }
+    - { name: full_caster_kit,    weight: 9 }
+    - { name: legendary_outlier,  weight: 1 }
+  recipes:
+    focus_only:
+      - { specific: focus }
+    focus_and_robes:
+      - { specific: focus }
+      - { specific: robes }
+    full_caster_kit:
+      - { specific: focus }
+      - { specific: robes }
+      - { category: jewelry, chance: 0.5 }
+    legendary_outlier:
+      - { specific: focus }
+      - { specific: robes }
+      - { category: magical }
+
+cleric:
+  coins: "2d10+10"
+  rolls:
+    - { name: just_weapon,        weight: 40 }
+    - { name: armed_armored,      weight: 50 }
+    - { name: veteran_kit,        weight: 9 }
+    - { name: legendary_outlier,  weight: 1 }
+  recipes:
+    just_weapon:
+      - { specific: blunt_weapon }
+    armed_armored:
+      - { specific: blunt_weapon }
+      - { category: armor }
+    veteran_kit:
+      - { specific: blunt_weapon }
+      - { category: armor }
+      - { category: jewelry, chance: 0.5 }
+    legendary_outlier:
+      - { specific: blunt_weapon }
+      - { category: armor }
+      - { category: magical }
+
+rogue:
+  coins: "3d10+5"
+  rolls:
+    - { name: nothing,            weight: 10 }
+    - { name: just_blade,         weight: 60 }
+    - { name: blade_and_leather,  weight: 25 }
+    - { name: legendary_outlier,  weight: 5 }
+  recipes:
+    nothing: []
+    just_blade:
+      - { specific: short_blade }
+    blade_and_leather:
+      - { specific: short_blade }
+      - { specific: light_armor }
+    legendary_outlier:
+      - { specific: short_blade }
+      - { specific: light_armor }
+      - { category: magical }
+
+ranger:
+  coins: "1d10+5"
+  rolls:
+    - { name: just_bow,           weight: 50 }
+    - { name: bow_and_blade,      weight: 35 }
+    - { name: hunter_kit,         weight: 14 }
+    - { name: legendary_outlier,  weight: 1 }
+  recipes:
+    just_bow:
+      - { specific: bow }
+    bow_and_blade:
+      - { specific: bow }
+      - { specific: short_blade }
+    hunter_kit:
+      - { specific: bow }
+      - { specific: short_blade }
+      - { specific: light_armor }
+    legendary_outlier:
+      - { specific: bow }
+      - { specific: short_blade }
+      - { specific: light_armor }
+      - { category: magical }

@@ -1,0 +1,55 @@
+You are generating a personality and a physical appearance for a character that has already been given stats and a level. Your output is the LAST step of character creation — everything upstream (subrole, scenario, the prose that established them, their level, their stats) is now fixed and feeds into what you write.
+
+What you produce becomes the character's stable disposition and visible presentation. It will be read by:
+- the InternalState materializer (every scene the character is in, to color their mood)
+- the reasoning loop (when the player asks about them or they push an agenda)
+- belief generation (when other characters form impressions of them)
+
+So write prose that gives downstream readers something concrete to draw on — not a bullet list of traits, not a generic adjective, but the kind of sentence a careful observer might write.
+
+THE TWO FIELDS
+
+PERSONALITY (one to two sentences):
+- Their disposition, social posture, how they carry themselves in conversation.
+- Should reflect: subrole, properties already on them, level (the higher the level the more "settled"/"hardened" they tend to read), the scenario when one is active, the prose context they came from.
+- Examples of shape (do NOT paraphrase these — invent your own concrete content):
+  - "Quick-tempered when crossed but slow to forgive — speaks plainly to those he respects, dismissively to those he doesn't."
+  - "Calm and methodical; smiles too easily. The kind of warm that makes a careful traveler check his purse afterward."
+  - "Quiet, watchful; answers questions with questions. Pretends to less than he knows."
+
+APPEARANCE (one to two sentences):
+- What they look like, how they're built, how they move, distinguishing marks.
+- MUST reflect their stats — a STR-17 character is broad-shouldered with heavy hands; a DEX-16 character is light and quick on their feet; an INT-15 scholar has sharp eyes that catch detail; high-CHA characters carry themselves with ease; low-CON characters look frail or hollow-eyed; etc.
+- MUST reflect their level when high — veterans (level 5+) carry scars, weathered hands, a way of watching exits; legendary outliers (level 11+) often have one detail that's notably wrong for their cover (the fishmonger with unburnt-but-callused fingers, the barkeep whose eyes track too smoothly across a crowd).
+- MUST reflect scenario when active — a retired_adept tending bar may have callused palms or a faded tattoo at the wrist; an exiled_noble's bearing is wrong for their station; a marked_by_a_power character has something subtle that catches the light wrong.
+- MUST reflect properties.appearance_intent when present — a debt collector LOOKS like a debt collector; a faction emissary carries the faction's mark or colors.
+- Examples of shape (do NOT paraphrase):
+  - "Broad-shouldered, with thick wrists and the stance of a man who has spent decades behind a forge. A burn-scar runs the length of his right forearm; the hand is steady."
+  - "Slight, sharp-featured, hair in a careful merchant's braid. Her left hand drums a beat against the table when she listens — she is always listening."
+  - "Heavyset and bald, with the soft-faced look of a scholar gone to seed. The eyes are wrong for the body: they track exits with the precision of someone who has had to leave rooms quickly."
+
+INPUT format
+{
+  "name":          "<character name>",
+  "subrole":       "<archetype>",
+  "level":         <int>,
+  "stats":         { "strength": <int>, "dexterity": <int>, "constitution": <int>, "intelligence": <int>, "wisdom": <int>, "charisma": <int> },
+  "properties":    <object: existing properties; may include appearance_intent, faction_id, personality (existing), etc>,
+  "context":       "<optional prose that established this character — event narratives, materializer reasoning, etc>"
+}
+
+The INPUT block may be followed by a "SCENARIO:" line that tells you this person is something other than they appear (retired adept, exiled noble, prodigy, marked by a power, hidden veteran, legendary outlier, exceptionally evil, etc). When present, take it seriously: the personality and appearance must reflect the underlying truth of the scenario, not just the apparent subrole. The hidden truth typically expresses through a small, deniable detail rather than an obvious tell — observers can choose whether to notice.
+
+OUTPUT format
+{
+  "personality": "<one to two sentences, no leading 'They are...', just direct prose>",
+  "appearance":  "<one to two sentences, no leading 'They look like...', just direct prose>"
+}
+
+HARD RULES
+- Output VALID JSON. No leading/trailing prose.
+- Both keys present. No extra fields.
+- Each value is a string between 30 and 400 characters.
+- Do NOT use the character's name in either field — the prose describes them in third-person attributes only ("he is", "she is", "they are" — name-less).
+- Do NOT contradict the input. If subrole is "barkeep" and scenario is absent, do NOT make them a soldier in disguise. The scenario is what creates legitimate hidden depths; without one, the character is what they appear to be.
+- Description MUST be observable. No "he is wracked by guilt over the war" (interior state, not visible). YES "he looks tired in a way sleep doesn't fix" (observable inference).

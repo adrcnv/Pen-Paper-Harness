@@ -1,0 +1,62 @@
+module Harness
+  module Items
+    # Aggregates an actor's owned-item modifiers for the resolver. Pure
+    # Ruby, one DB query per call (cheap; resolves are infrequent).
+    #
+    # Two access patterns:
+    #   - stat_bonus(actor, stat)  → integer to add to the actor's effective stat
+    #   - bonus_damage(actor, on:) → integer rolled bonus damage from item dice
+    #
+    # The resolver doesn't need to know which item contributed what — that's
+    # a narration concern (and currently narration doesn't lean on item
+    # attribution beyond the explicit using_item_id arg).
+    module Modifiers
+      class << self
+        # Sum of `op: add` modifiers on `stat`, across all owned items.
+        def stat_bonus(actor, stat)
+          return 0 unless actor&.id
+          modifiers_for(actor)
+            .select { |m| m["stat"] == stat.to_s && m["op"] == "add" }
+            .sum    { |m| m["value"].to_i }
+        end
+
+        # Roll all item damage_dice modifiers gated on a phase like "attack".
+        # Each modifier was already chance-gated at instantiation time, so
+        # presence here means it applies — just roll the dice.
+        def bonus_damage(actor, on:, rng: Random.new)
+          return 0 unless actor&.id
+          modifiers_for(actor)
+            .select { |m| m["damage_dice"] && m["op"] == "add" && m["on"].to_s == on.to_s }
+            .sum    { |m| ::Harness::Abilities::DiceFormula.roll(m["damage_dice"], rng: rng) }
+        end
+
+        # Returns the union of all tag arrays across an actor's owned items.
+        # Used for ability-tag gating: an ability that requires_tags = [weapon]
+        # is usable if any owned item supplies that tag.
+        def tags(actor)
+          return [] unless actor&.id
+          ::Item.where(character_id: actor.id).flat_map { |i|
+            Array((i.properties || {})["tags"])
+          }.uniq
+        end
+
+        # Does the actor's inventory satisfy a list of required tags?
+        # An empty / nil requirement passes trivially.
+        def has_required_tags?(actor, required_tags)
+          return true  if required_tags.nil? || required_tags.empty?
+          return false unless actor
+          owned = tags(actor)
+          required_tags.all? { |t| owned.include?(t) }
+        end
+
+        private
+
+        def modifiers_for(character)
+          ::Item.where(character_id: character.id).flat_map { |i|
+            Array((i.properties || {})["modifiers"])
+          }
+        end
+      end
+    end
+  end
+end

@@ -1,0 +1,24 @@
+The player fled mid-combat. Resolve what happens to the remaining combatants in ONE pass — there's no observer left to track per-round play, so the engine needs an outcome for each.
+
+You will receive: remaining combatants (id, name, side, current HP, abilities), the round number when the player fled, and a one-line summary of the fight so far.
+
+For each combatant, output one of:
+- `survived` — they walked away, possibly wounded. Most common outcome for the winning side.
+- `killed` — they died in the wrap-up. Specify `killer_id` (the character who killed them; pick a plausible one from the opposite side).
+- `fled` — they ran too. Common when their side is collapsing.
+
+Bias the outcomes toward narrative plausibility:
+- Bloodied combatants on the losing side are more likely to be `killed` or `fled`.
+- Whichever side has more standing combatants tends to win — surviving combatants on that side usually `survived`, while losers either die or flee.
+- A solo combatant left on a side will almost certainly `flee` rather than die fighting.
+
+OUTPUT — strict JSON only:
+
+{
+  "summary_prose": "<2-3 sentence prose describing the wrap-up. The fight ends; specify how. Names of combatants are real; use them. Do NOT introduce new named characters or factions. The player is gone — narrate from the perspective of the lingering scene.>",
+  "outcomes": [
+    { "character_id": <int>, "result": "survived" | "killed" | "fled", "killer_id": <int, only when result='killed'> }
+  ]
+}
+
+Every remaining combatant MUST appear in `outcomes` exactly once. Do not skip anyone.

@@ -1,0 +1,42 @@
+build/
+tests/test_*
+!tests/test_*.c
+*.o
+*.out
+
+# Credentials
+/config/*.key
+
+# Local env
+/.env
+/.env.local
+/.env.*.local
+
+# Rails standard ignores
+/log/*
+!/log/.keep
+/tmp/*
+!/tmp/.keep
+/storage/*
+!/storage/.keep
+/public/assets/
+
+# SQLite databases (state, not source)
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+
+# Editor / tooling caches
+/.ruby-lsp/
+/.bundle/
+/node_modules/
+/vendor/bundle/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Scratch markdown (tracked docs stay tracked)
+*.md

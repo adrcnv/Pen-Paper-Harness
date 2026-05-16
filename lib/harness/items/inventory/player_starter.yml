@@ -1,0 +1,60 @@
+# Class-conditioned starter kits for the player. DETERMINISTIC — no
+# fat-tail outliers at character creation. Surprises happen later in play
+# (encounter loot, gifts, finds).
+#
+# Index is character_class (one of: fighter, mage, sorcerer, cleric, rogue,
+# ranger, commoner). Each entry is a list of items rolled at hatch time.
+#
+# Item shape:
+#   { specific: <library_id> }                    → roll exactly this template
+#   { category: <category>, chance: <0..1> }      → roll from category, optional gate
+#
+# Players never see the `chance` gate at MVP (deterministic kits), but it
+# stays valid syntax in case starter slots ever need it.
+
+# `items` is the deterministic kit. `coins` is a dice formula rolled once
+# and added to the player's coin column at hatch time. Coins live as an
+# integer column on characters (not as Item rows) — see Tools::TransferCoins
+# and the economy notes in CLAUDE.md.
+
+fighter:
+  coins: "2d10+10"
+  items:
+    - { specific: longblade }
+    - { specific: medium_armor }
+
+mage:
+  coins: "2d10+15"
+  items:
+    - { specific: focus }
+    - { specific: robes }
+
+sorcerer:
+  coins: "2d10+15"
+  items:
+    - { specific: focus }
+    - { specific: robes }
+
+cleric:
+  coins: "2d10+15"
+  items:
+    - { specific: blunt_weapon }
+    - { specific: medium_armor }
+
+rogue:
+  coins: "3d10+20"
+  items:
+    - { specific: short_blade }
+    - { specific: light_armor }
+
+ranger:
+  coins: "2d10+10"
+  items:
+    - { specific: bow }
+    - { specific: short_blade }
+    - { specific: light_armor }
+
+commoner:
+  coins: "1d6+2"
+  items:
+    - { specific: short_blade }

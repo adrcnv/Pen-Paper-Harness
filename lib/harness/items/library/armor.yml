@@ -1,0 +1,36 @@
+# Armor templates. Same shape as weapons but base_tags carry armor markers
+# and modifier_table generally contributes constitution/defense.
+
+- id: light_armor
+  kind_pool:    [leather jerkin, padded coat, traveler's cloak, layered hide]
+  flavor_pool:  [worn, plain, well-cut, oiled, patched]
+  base_tags:    [armor, light]
+  modifier_table:
+    - { stat: constitution, op: add, range: [0, 1] }
+  weight: 30
+
+- id: medium_armor
+  kind_pool:    [chain shirt, ringmail, scale shirt, brigandine]
+  flavor_pool:  [rusted, plain, polished, riveted, layered]
+  base_tags:    [armor, medium]
+  modifier_table:
+    - { stat: constitution, op: add, range: [1, 2] }
+  weight: 18
+
+- id: heavy_armor
+  kind_pool:    [plate harness, full plate, banded mail, half-plate]
+  flavor_pool:  [battered, ornate, plain, ancestral, polished, looted]
+  base_tags:    [armor, heavy]
+  modifier_table:
+    - { stat: constitution, op: add, range: [1, 3] }
+    - { stat: dexterity,    op: add, range: [-1, 0] }
+  weight: 8
+
+- id: robes
+  kind_pool:    [robes, vestments, mantle, cloak]
+  flavor_pool:  [traveling, ceremonial, faded, embroidered, plain, sigil-marked]
+  base_tags:    [armor, light, magical_implement]
+  modifier_table:
+    - { stat: intelligence, op: add, range: [0, 1] }
+    - { stat: wisdom,       op: add, range: [0, 1] }
+  weight: 10

@@ -1,0 +1,70 @@
+# Archaic high-fantasy. Made-up phoneme cluster (apostrophes, double-vowels,
+# title-as-name). Use sparingly — exoticism by reservation. Coastal /
+# mercantile capitals occasionally roll this.
+id: myrr
+weight: 5
+flavor: "archaic high-fantasy — apostrophes, vowel clusters, ceremonial roots"
+
+given:
+  - Aelorin
+  - Caelthen
+  - Daerion
+  - Faelar
+  - Gildren
+  - Halric
+  - Iorvath
+  - Joren
+  - Kaervas
+  - Lorimar
+  - Maerith
+  - Nelarion
+  - Oryn
+  - Pellanor
+  - Quaeron
+  - Rhys
+  - Sael
+  - Thaelis
+  - Velorin
+  - Wynvar
+  - Yorvel
+  - Zarvian
+  - Cael
+  - Sariel
+  - Aerin
+  - Nymria
+  - Ylith
+  - Velora
+  - Vaelis
+  - Iselle
+
+family:
+  - Aurinvale
+  - Caelmaris
+  - Drovanis
+  - Embervaen
+  - Falinhar
+  - Gloamheart
+  - Halvenir
+  - Ironbright
+  - Joravor
+  - Kaervalen
+  - Lirelith
+  - Morvanir
+  - Nighthold
+  - Orinmar
+  - Pyrethorn
+  - Quenmire
+  - Riverwane
+  - Silentbough
+  - Tarrenmist
+  - Underglade
+  - Vaelmir
+  - Whisperwood
+  - Yarrenfel
+  - Zhirivar
+  - Stillvale
+  - Hollowsong
+  - Greymantle
+  - Brassmoot
+  - Sunderlance
+  - Embralis

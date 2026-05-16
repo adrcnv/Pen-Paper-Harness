@@ -1,0 +1,77 @@
+# Location-anchored item seeding. When a fresh scene assembles for the
+# first time, the seeder rolls a recipe from the table that matches the
+# location's kind + (for wilderness leaves) encounter_type. Items spawn
+# anchored to the location — pickable via Tools::Pickup.
+#
+# Idempotent: the Manager sets `properties.items_seeded = true` after
+# seeding, so re-entry never re-seeds (even if the player picks
+# everything up).
+#
+# Indexed by:
+#   city                  — top-level worldgen city (parent_id nil + has coords + not wilderness_leaf)
+#   sublocation           — has parent_id (a tavern, smithy, customs office, etc.)
+#   encounter_combat      — wilderness_leaf with encounter_type=combat
+#   encounter_discovery   — wilderness_leaf with encounter_type=discovery
+#   encounter_social      — wilderness_leaf with encounter_type=social
+#
+# Each entry has the same shape as npc_inventory.yml: rolls (named
+# weighted outcomes) + recipes (item lists, with the same {specific:|category:, chance:?}
+# shape as the player + npc tables).
+
+city:
+  rolls:
+    - { name: nothing,        weight: 80 }
+    - { name: minor_find,     weight: 18 }
+    - { name: notable_find,   weight: 2  }
+  recipes:
+    nothing: []
+    minor_find:
+      - { category: jewelry, chance: 0.5 }
+    notable_find:
+      - { category: weapons }
+      - { category: magical, chance: 0.5 }
+
+sublocation:
+  rolls:
+    - { name: nothing,        weight: 70 }
+    - { name: minor_find,     weight: 25 }
+    - { name: notable_find,   weight: 5  }
+  recipes:
+    nothing: []
+    minor_find:
+      - { category: jewelry, chance: 0.4 }
+    notable_find:
+      - { category: weapons, chance: 0.6 }
+      - { category: armor,   chance: 0.4 }
+
+encounter_combat:
+  rolls:
+    - { name: scattered_gear,   weight: 60 }
+    - { name: arms_cache,       weight: 30 }
+    - { name: mysterious_drop,  weight: 10 }
+  recipes:
+    scattered_gear:
+      - { category: weapons, chance: 0.6 }
+    arms_cache:
+      - { category: weapons }
+      - { category: armor, chance: 0.5 }
+    mysterious_drop:
+      - { category: magical }
+
+encounter_discovery:
+  rolls:
+    - { name: nothing,         weight: 40 }
+    - { name: small_find,      weight: 50 }
+    - { name: relic,           weight: 10 }
+  recipes:
+    nothing: []
+    small_find:
+      - { category: jewelry, chance: 0.7 }
+    relic:
+      - { category: magical }
+
+encounter_social:
+  rolls:
+    - { name: nothing,         weight: 100 }
+  recipes:
+    nothing: []

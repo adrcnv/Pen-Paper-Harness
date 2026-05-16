@@ -1,0 +1,67 @@
+# Catch-up scenario table — biases what KIND of ambient activity gets
+# generated for a location during the gap the player was away. Default
+# (ambient_color, weight 80) keeps current behavior: small color, no plot,
+# no deaths. Rare rolls relax those constraints in specific ways.
+#
+# Death is intentionally very rare (weight 1) — catch-up at a tavern shouldn't
+# produce a body every visit. Move weights up/down to retune tone without
+# touching code.
+#
+# `requires:` not used here yet; all scenarios are universally eligible.
+# Adding biome/location-kind filters later is just a YAML edit.
+
+- id: ambient_color
+  weight: 80
+  prompt_seed: null
+
+- id: traveler_passing
+  weight: 5
+  prompt_seed: |
+    SCENARIO: One of the events depicts a notable stranger or small party
+    passing through during the gap — paid in odd coin, asked unusual
+    questions, left without saying where they were going. Color, not bait.
+    Don't aim them at the player. The locals may remember them or shrug it
+    off.
+
+- id: small_dispute
+  weight: 4
+  prompt_seed: |
+    SCENARIO: One of the events depicts a quarrel between locals or
+    patrons during the gap — over a debt, a slight, a misunderstanding.
+    May have settled or may still simmer. No deaths, no destruction; just
+    friction the returning player can feel in the room.
+
+- id: minor_theft
+  weight: 4
+  prompt_seed: |
+    SCENARIO: One of the events depicts something small that went missing
+    during the gap — a tool, a coin purse, a few coppers from a till, a
+    cloak from a peg. Suspect known or not. The loss is real but
+    unimportant; nobody died over it.
+
+- id: new_named_actor
+  weight: 3
+  prompt_seed: |
+    SCENARIO: One of the events introduces a fresh class-2 named actor
+    who arrived during the gap and is still around. Give them a name, a
+    rough purpose for being here, and one specific behavior locals have
+    noticed. They become a candidate for promotion if the player engages
+    them.
+
+- id: threat_passing
+  weight: 3
+  prompt_seed: |
+    SCENARIO: One of the events depicts a danger that moved through the
+    area during the gap — a bandit raid on a road outside town, a sickness
+    that took two children, a wolf taken at the herd, a fire kept from
+    spreading. The threat is past or contained; what remains is the
+    aftermath in conversation.
+
+- id: major_event
+  weight: 1
+  prompt_seed: |
+    SCENARIO: This is a rare bucket. EXCEPTION TO THE BASE RULES: ONE
+    significant event happened here during the gap — a death (named, with
+    cause), a fire, a building lost, a public fight that ended badly, a
+    leader removed. Other events in the cluster stay ambient color
+    around it. Be specific; don't gesture vaguely at "tragedy."

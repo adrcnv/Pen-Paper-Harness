@@ -1,0 +1,838 @@
+# The ability library. Static, hand-authored, deterministic. The Assigner
+# picks N entries from this file by class + min_level filter; nothing here
+# is LLM-generated.
+#
+# AUTHORING NOTES
+# - Names are renamed-D&D — distinct enough to feel like Harness, recognizable
+#   enough to load instantly for anyone who's played D&D.
+# - Dice formulas use polyhedrals freely (d3, d4, d6, d8, d10, d12) — these
+#   are computer-dice, balance is the goal, not physical-die fidelity. Mixed
+#   formulas (1d6+1d4) read more chaotic than averaged equivalents (1d10);
+#   used where the ability's flavor wants chaos.
+# - Each ability lists which classes can pick it. Fighter entries with
+#   min_level <= 3 are tagged with [fighter, commoner] so commoners draw
+#   from that subset.
+# - min_level gates "you must be at least this caster_level to learn this."
+#   Damage scales further via damage_per_level (added each level beyond min).
+# - uses_per_rest is the resource model — abilities don't return until the
+#   character rests. pass_time(intent: rest|sleep) refreshes.
+#
+# STAT RESOLUTION
+# Default = the caster's class primary_stat. An ability may LOCK to a specific
+# stat with `stat: <name>` — used when the ability's nature demands it
+# regardless of class (charm always CHA, stealth always DEX, divine always
+# WIS). When `stat` is absent the resolver falls through to class primary,
+# which is the right default for damage spells, weapon strikes, etc.
+#
+# SCHEMA (per entry)
+#   id:                snake_case, unique
+#   name:              display name
+#   description:       1-2 sentences, evocative, no D&D jargon
+#   classes:           array of class ids that can pick this
+#   min_level:         caster level required
+#   effect_kind:       damage | heal | buff | debuff | control | utility
+#   damage_dice:       base dice formula at min_level (e.g. "2d6", "1d8+1d4")
+#   damage_per_level:  added per caster level beyond min_level (or null)
+#   range:             close (melee/touch) | near (~scene-room) | far (line of sight)
+#   area:              null (single target) | blast_small | blast_large | line_short | cone | self
+#   uses_per_rest:     int; replenished by pass_time(intent: rest|sleep)
+#   stat:              optional LOCK; absent = use class.primary_stat
+#   opposed_by:        target stat for opposed checks; absent = unopposed (use difficulty)
+#   difficulty:        unopposed DC tier; absent = unopposed default "moderate"
+#   tags:              array of free-text descriptors
+
+# ====================== FIGHTER ======================
+
+- id: heavy_strike
+  name: "Heavy Strike"
+  description: "A committed swing that puts shoulder and hip into the blow. Slow to recover from, hard to shrug off."
+  classes: [fighter, commoner]
+  min_level: 1
+  effect_kind: damage
+  damage_dice: "1d8+1d4"
+  damage_per_level: "1d6"
+  range: close
+  area: null
+  uses_per_rest: 4
+  opposed_by: dexterity
+  tags: [martial, weapon]
+
+- id: shield_up
+  name: "Shield Up"
+  description: "Settles into a low guard. Incoming damage glances or is shrugged off until the next exchange."
+  classes: [fighter, commoner]
+  min_level: 1
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: self
+  area: self
+  uses_per_rest: 3
+  difficulty: easy
+  tags: [martial, defense]
+
+- id: shove
+  name: "Shove"
+  description: "A short, hard push aimed to drive the target back a pace and break their footing. Easier to land than to capitalize on."
+  classes: [fighter, commoner]
+  min_level: 1
+  effect_kind: control
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: null
+  uses_per_rest: 3
+  stat: strength
+  opposed_by: strength
+  tags: [martial, control]
+
+- id: intimidate
+  name: "Intimidate"
+  description: "A low, steady promise of violence — voice, eyes, the way the hand sits near the weapon. The target's resolve cracks or it doesn't."
+  classes: [fighter, commoner, rogue]
+  min_level: 1
+  effect_kind: control
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: null
+  uses_per_rest: 2
+  stat: strength
+  opposed_by: wisdom
+  tags: [social, control, fear]
+
+- id: sweeping_blow
+  name: "Sweeping Blow"
+  description: "Carries the weapon through one target into a second standing close. Wide arc, real reach."
+  classes: [fighter, commoner]
+  min_level: 3
+  effect_kind: damage
+  damage_dice: "1d6+1d4"
+  damage_per_level: "1d6"
+  range: close
+  area: blast_small
+  uses_per_rest: 3
+  opposed_by: dexterity
+  tags: [martial, weapon, area]
+
+- id: rallying_cry
+  name: "Rallying Cry"
+  description: "A shout that snaps the line back together. Allies within earshot find their next move steadier than the moment before."
+  classes: [fighter]
+  min_level: 3
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: blast_small
+  uses_per_rest: 2
+  stat: charisma
+  difficulty: moderate
+  tags: [martial, buff, social, ally]
+
+- id: iron_resolve
+  name: "Iron Resolve"
+  description: "Stops bleeding, ignores pain, locks the legs. The kind of stand that ends with the fighter alive and the room quiet."
+  classes: [fighter]
+  min_level: 7
+  effect_kind: heal
+  damage_dice: "2d8"
+  damage_per_level: "1d6"
+  range: self
+  area: self
+  uses_per_rest: 1
+  stat: constitution
+  difficulty: moderate
+  tags: [martial, recovery]
+
+- id: storm_of_steel
+  name: "Storm of Steel"
+  description: "A circle of attacks delivered faster than ordinary muscle should allow. Anyone within reach is part of it."
+  classes: [fighter]
+  min_level: 12
+  effect_kind: damage
+  damage_dice: "2d8+1d6"
+  damage_per_level: "2d6"
+  range: close
+  area: blast_small
+  uses_per_rest: 1
+  opposed_by: dexterity
+  tags: [martial, weapon, area]
+
+- id: last_stand
+  name: "Last Stand"
+  description: "Refuses to fall. The next strike is delivered as if nothing else mattered, because nothing does."
+  classes: [fighter]
+  min_level: 17
+  effect_kind: damage
+  damage_dice: "4d10"
+  damage_per_level: "2d8"
+  range: close
+  area: null
+  uses_per_rest: 1
+  opposed_by: constitution
+  tags: [martial, weapon, legendary, finisher]
+
+# ====================== MAGE ======================
+
+- id: arcane_bolt
+  name: "Arcane Bolt"
+  description: "A thin streak of pale force, drawn from line of sight to target. Reliable, unspectacular, persistent."
+  classes: [mage]
+  min_level: 1
+  effect_kind: damage
+  damage_dice: "1d6+1d4"
+  damage_per_level: "1d6"
+  range: far
+  area: null
+  uses_per_rest: 4
+  opposed_by: dexterity
+  tags: [arcane, force]
+
+- id: veil
+  name: "Veil"
+  description: "The eye slides off where the mage stood. Lasts only as long as no one is actively looking, but that's often enough."
+  classes: [mage, rogue]
+  min_level: 1
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: self
+  area: self
+  uses_per_rest: 2
+  stat: dexterity
+  difficulty: moderate
+  tags: [arcane, illusion, stealth]
+
+- id: prestidigitation
+  name: "Prestidigitation"
+  description: "Minor working — a candle lights, a coin spins, a draft stirs the curtain. Useful at the edges of conversation; not for combat."
+  classes: [mage, sorcerer]
+  min_level: 1
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: null
+  uses_per_rest: 6
+  difficulty: easy
+  tags: [arcane, utility, social]
+
+- id: scrutinize
+  name: "Scrutinize"
+  description: "A slow, careful look — runic, alchemical, or merely attentive — that surfaces what is hidden in plain sight. Symbols, false bottoms, lies of omission."
+  classes: [mage, cleric, rogue]
+  min_level: 1
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: null
+  uses_per_rest: 3
+  stat: intelligence
+  difficulty: moderate
+  tags: [arcane, investigation, utility]
+
+- id: frost_sphere
+  name: "Frost Sphere"
+  description: "A pale sphere expands from the casting hand and bursts at range. Cold seizes flesh and slows the breath."
+  classes: [mage]
+  min_level: 3
+  effect_kind: damage
+  damage_dice: "2d4+1d6"
+  damage_per_level: "1d6"
+  range: far
+  area: blast_small
+  uses_per_rest: 3
+  opposed_by: constitution
+  tags: [arcane, cold, area]
+
+- id: counterspell
+  name: "Counterspell"
+  description: "A precise unraveling of a working in mid-cast. Requires reading the shape of the spell before it lands; cheaper if the mage knows the spell themselves."
+  classes: [mage]
+  min_level: 3
+  effect_kind: control
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: null
+  uses_per_rest: 2
+  stat: intelligence
+  opposed_by: intelligence
+  tags: [arcane, antimagic, control]
+
+- id: incineration_blast
+  name: "Incineration Blast"
+  description: "A point of red-shifted air detonates outward. Heat enough to flash-cook stone; close-range survivors do not look the same after."
+  classes: [mage, sorcerer]
+  min_level: 7
+  effect_kind: damage
+  damage_dice: "2d6+2d4"
+  damage_per_level: "1d6"
+  range: far
+  area: blast_large
+  uses_per_rest: 2
+  opposed_by: dexterity
+  tags: [arcane, fire, area]
+
+- id: sundering_wall
+  name: "Sundering Wall"
+  description: "A vertical plane of binding force unfolds across the line. Crossing it costs flesh; standing in it costs everything."
+  classes: [mage]
+  min_level: 12
+  effect_kind: control
+  damage_dice: "3d6"
+  damage_per_level: "1d8"
+  range: far
+  area: line_short
+  uses_per_rest: 1
+  opposed_by: strength
+  tags: [arcane, force, area, control]
+
+- id: annihilate
+  name: "Annihilate"
+  description: "Removes the target from physical existence in a single, soundless instant. Survivable only by something more than mortal."
+  classes: [mage]
+  min_level: 17
+  effect_kind: damage
+  damage_dice: "6d8+2d6"
+  damage_per_level: "2d8"
+  range: far
+  area: null
+  uses_per_rest: 1
+  opposed_by: constitution
+  tags: [arcane, force, legendary, finisher]
+
+# ====================== SORCERER ======================
+
+- id: wild_surge
+  name: "Wild Surge"
+  description: "A jet of raw, uncontrolled current leaps from the sorcerer's hand. The damage shape varies — sometimes a hammer, sometimes a knife."
+  classes: [sorcerer]
+  min_level: 1
+  effect_kind: damage
+  damage_dice: "1d10+1d3"
+  damage_per_level: "1d8"
+  range: near
+  area: null
+  uses_per_rest: 4
+  opposed_by: constitution
+  tags: [arcane, chaos]
+
+- id: charm_word
+  name: "Charm Word"
+  description: "A single sentence delivered with terrible warmth. The target finds the sorcerer plausible for one critical beat."
+  classes: [sorcerer, cleric]
+  min_level: 1
+  effect_kind: control
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: null
+  uses_per_rest: 2
+  stat: charisma
+  opposed_by: wisdom
+  tags: [charm, social]
+
+- id: sway_crowd
+  name: "Sway Crowd"
+  description: "A short address that bends the room's mood for the duration of a conversation. Won't make enemies friends, but takes the edge off a knife-fight."
+  classes: [sorcerer, cleric]
+  min_level: 1
+  effect_kind: control
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: blast_small
+  uses_per_rest: 2
+  stat: charisma
+  opposed_by: wisdom
+  tags: [charm, social, area]
+
+- id: spark
+  name: "Spark"
+  description: "A small bright jolt thrown from the fingertips. Cheap, fast, weak — but always there."
+  classes: [sorcerer]
+  min_level: 1
+  effect_kind: damage
+  damage_dice: "1d6"
+  damage_per_level: "1d4"
+  range: near
+  area: null
+  uses_per_rest: 6
+  opposed_by: dexterity
+  tags: [arcane, lightning, cantrip]
+
+- id: chaos_bolt
+  name: "Chaos Bolt"
+  description: "A jagged streak of unstable force; on a clean hit it leaps to a second nearby target with what's left."
+  classes: [sorcerer]
+  min_level: 3
+  effect_kind: damage
+  damage_dice: "2d6+1d4"
+  damage_per_level: "1d6"
+  range: far
+  area: null
+  uses_per_rest: 3
+  opposed_by: dexterity
+  tags: [arcane, chaos, force]
+
+- id: dread_aura
+  name: "Dread Aura"
+  description: "A wrong feeling settles over everyone nearby — a deep, unspecified certainty that staying is a mistake. Weak wills break first."
+  classes: [sorcerer]
+  min_level: 3
+  effect_kind: debuff
+  damage_dice: null
+  damage_per_level: null
+  range: self
+  area: blast_small
+  uses_per_rest: 2
+  stat: charisma
+  opposed_by: wisdom
+  tags: [fear, area, debuff]
+
+- id: manaburn
+  name: "Manaburn"
+  description: "Pulls the magic out of the target's flesh and converts it to heat. Mages and sorcerers fare worse than the unmagical, who simply burn."
+  classes: [sorcerer]
+  min_level: 7
+  effect_kind: damage
+  damage_dice: "2d8+1d6"
+  damage_per_level: "1d8"
+  range: near
+  area: null
+  uses_per_rest: 2
+  opposed_by: constitution
+  tags: [arcane, fire, antimagic]
+
+- id: soul_drain
+  name: "Soul Drain"
+  description: "A line of dark current connects sorcerer and target; flesh becomes flesh elsewhere. The target weakens; the sorcerer steadies."
+  classes: [sorcerer]
+  min_level: 12
+  effect_kind: damage
+  damage_dice: "3d6+1d8"
+  damage_per_level: "2d6"
+  range: near
+  area: null
+  uses_per_rest: 1
+  opposed_by: constitution
+  tags: [arcane, necrotic, drain]
+
+- id: final_defiance
+  name: "Final Defiance"
+  description: "The sorcerer's body becomes the source. Everything within reach of the casting takes the brunt; the sorcerer pays a price they may not survive."
+  classes: [sorcerer]
+  min_level: 17
+  effect_kind: damage
+  damage_dice: "4d8+2d6"
+  damage_per_level: "2d8"
+  range: close
+  area: blast_large
+  uses_per_rest: 1
+  opposed_by: dexterity
+  tags: [arcane, chaos, legendary, area, sacrificial]
+
+# ====================== CLERIC ======================
+
+- id: mending_light
+  name: "Mending Light"
+  description: "A pale, warm radiance settles into the target's wounds. Bleeding stops; bone knits a little; pain lifts."
+  classes: [cleric]
+  min_level: 1
+  effect_kind: heal
+  damage_dice: "1d8+1d4"
+  damage_per_level: "1d6"
+  range: close
+  area: null
+  uses_per_rest: 4
+  stat: wisdom
+  difficulty: easy
+  tags: [divine, heal]
+
+- id: sacred_strike
+  name: "Sacred Strike"
+  description: "The cleric's weapon strikes carrying borrowed light. Most flesh receives it as ordinary damage; the wrong kind of flesh receives it as judgment."
+  classes: [cleric]
+  min_level: 1
+  effect_kind: damage
+  damage_dice: "1d6+1d6"
+  damage_per_level: "1d6"
+  range: close
+  area: null
+  uses_per_rest: 3
+  opposed_by: dexterity
+  tags: [divine, weapon, radiant]
+
+- id: bless
+  name: "Bless"
+  description: "Lays a hand briefly on shoulder or sword. The next critical effort goes better; small, certain, unflashy."
+  classes: [cleric]
+  min_level: 1
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: null
+  uses_per_rest: 3
+  stat: wisdom
+  difficulty: easy
+  tags: [divine, buff, ally]
+
+- id: discern_truth
+  name: "Discern Truth"
+  description: "Lays a quiet test on the next thing spoken. The cleric knows, without proof, whether the words ring honest. The speaker may sense the test if it lands."
+  classes: [cleric]
+  min_level: 1
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: null
+  uses_per_rest: 2
+  stat: wisdom
+  opposed_by: charisma
+  tags: [divine, social, investigation]
+
+- id: sanctify
+  name: "Sanctify"
+  description: "Marks an area of ground as the cleric's. Allies within fight better; the unaligned find the air heavy."
+  classes: [cleric]
+  min_level: 3
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: blast_small
+  uses_per_rest: 2
+  stat: wisdom
+  difficulty: moderate
+  tags: [divine, area, buff]
+
+- id: spirit_lash
+  name: "Spirit Lash"
+  description: "A bright line of judgment cracks across the target — bypasses armor entirely, but the soul has to be there to mark."
+  classes: [cleric]
+  min_level: 3
+  effect_kind: damage
+  damage_dice: "1d6+1d6"
+  damage_per_level: "1d6"
+  range: near
+  area: null
+  uses_per_rest: 3
+  opposed_by: wisdom
+  tags: [divine, radiant]
+
+- id: banishing_word
+  name: "Banishing Word"
+  description: "A single word in the old tongue, addressed to one foe. They are elsewhere for a count of breaths — long enough for the fight to change."
+  classes: [cleric]
+  min_level: 7
+  effect_kind: control
+  damage_dice: null
+  damage_per_level: null
+  range: far
+  area: null
+  uses_per_rest: 2
+  stat: wisdom
+  opposed_by: wisdom
+  tags: [divine, control, displacement]
+
+- id: greater_mending
+  name: "Greater Mending"
+  description: "A flood of warm radiance. Bones knit, lungs unclench, and the recipient stands with the unsettling sense that something larger took an interest."
+  classes: [cleric]
+  min_level: 12
+  effect_kind: heal
+  damage_dice: "4d8+2d6"
+  damage_per_level: "2d6"
+  range: close
+  area: null
+  uses_per_rest: 1
+  stat: wisdom
+  difficulty: moderate
+  tags: [divine, heal]
+
+- id: word_of_return
+  name: "Word of Return"
+  description: "Spoken over a body that has been gone less than the time it takes to bury. The breath returns, the eyes open, the cleric ages noticeably."
+  classes: [cleric]
+  min_level: 17
+  effect_kind: heal
+  damage_dice: "10d8"
+  damage_per_level: "1d8"
+  range: close
+  area: null
+  uses_per_rest: 1
+  stat: wisdom
+  difficulty: hard
+  tags: [divine, heal, legendary, resurrection]
+
+# ====================== ROGUE ======================
+
+- id: pinpoint_strike
+  name: "Pinpoint Strike"
+  description: "Goes for a specific gap — between ribs, behind the ear, the vein in the thigh. Bleeds harder than its damage suggests."
+  classes: [rogue]
+  min_level: 1
+  effect_kind: damage
+  damage_dice: "1d8+1d4"
+  damage_per_level: "1d8"
+  range: close
+  area: null
+  uses_per_rest: 4
+  opposed_by: dexterity
+  tags: [martial, precision, weapon]
+
+- id: shadowstep
+  name: "Shadowstep"
+  description: "Steps from one shadow to a nearby one without crossing the space between. Movement, not magic, by the rogue's polite insistence."
+  classes: [rogue]
+  min_level: 1
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: self
+  uses_per_rest: 3
+  stat: dexterity
+  difficulty: moderate
+  tags: [stealth, mobility]
+
+- id: pick_lock
+  name: "Pick Lock"
+  description: "Locks unspool under steady hands and the right tension. A bad pick scars the mechanism; a good one leaves no trace."
+  classes: [rogue]
+  min_level: 1
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: null
+  uses_per_rest: 6
+  stat: dexterity
+  difficulty: moderate
+  tags: [utility, larceny]
+
+- id: sleight
+  name: "Sleight of Hand"
+  description: "Lifts a purse, plants a token, switches a card — the gesture is innocent unless the mark notices, and they usually don't."
+  classes: [rogue]
+  min_level: 1
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: null
+  uses_per_rest: 4
+  stat: dexterity
+  opposed_by: wisdom
+  tags: [utility, larceny, social]
+
+- id: hamstring
+  name: "Hamstring"
+  description: "A short, fast cut behind the knee or the heel. Target stops moving fast for a long time."
+  classes: [rogue, ranger]
+  min_level: 3
+  effect_kind: debuff
+  damage_dice: "1d6"
+  damage_per_level: "1d4"
+  range: close
+  area: null
+  uses_per_rest: 2
+  opposed_by: dexterity
+  tags: [martial, debuff, precision]
+
+- id: smokescreen
+  name: "Smokescreen"
+  description: "A flick of the wrist releases a fast-spreading curtain of smoke. The rogue knows the room; everyone else briefly doesn't."
+  classes: [rogue]
+  min_level: 3
+  effect_kind: control
+  damage_dice: null
+  damage_per_level: null
+  range: close
+  area: blast_small
+  uses_per_rest: 2
+  stat: dexterity
+  difficulty: moderate
+  tags: [utility, control, area]
+
+- id: vanish
+  name: "Vanish"
+  description: "Steps sideways out of attention. To observers, the rogue simply isn't there for a moment — long enough to relocate, set up, or leave."
+  classes: [rogue]
+  min_level: 7
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: self
+  area: self
+  uses_per_rest: 2
+  stat: dexterity
+  difficulty: hard
+  tags: [stealth, mobility]
+
+- id: death_blow
+  name: "Death Blow"
+  description: "Setup-dependent. Delivered from concealment or against a target who hasn't noticed the rogue, hits like a weapon several sizes too large."
+  classes: [rogue]
+  min_level: 12
+  effect_kind: damage
+  damage_dice: "4d10+2d6"
+  damage_per_level: "2d6"
+  range: close
+  area: null
+  uses_per_rest: 1
+  opposed_by: constitution
+  tags: [martial, precision, finisher]
+
+- id: killing_touch
+  name: "Killing Touch"
+  description: "The rogue's hand finds the precise place the body cannot tolerate damage. Armor is irrelevant; constitution is barely a check."
+  classes: [rogue]
+  min_level: 17
+  effect_kind: damage
+  damage_dice: "6d6+3d4"
+  damage_per_level: "3d6"
+  range: close
+  area: null
+  uses_per_rest: 1
+  opposed_by: constitution
+  tags: [martial, precision, legendary, finisher]
+
+# ====================== RANGER ======================
+
+- id: ranged_shot
+  name: "Ranged Shot"
+  description: "A composed shot from bow or sling. Reliable; what a ranger does when they don't need to do something more interesting."
+  classes: [ranger]
+  min_level: 1
+  effect_kind: damage
+  damage_dice: "1d8+1d4"
+  damage_per_level: "1d6"
+  range: far
+  area: null
+  uses_per_rest: 5
+  opposed_by: dexterity
+  tags: [martial, ranged, weapon]
+
+- id: stalkers_brand
+  name: "Stalker's Brand"
+  description: "Marks a target with a thread of attention only the ranger can see. While marked, every shot lands a little better."
+  classes: [ranger]
+  min_level: 1
+  effect_kind: debuff
+  damage_dice: null
+  damage_per_level: null
+  range: far
+  area: null
+  uses_per_rest: 3
+  stat: wisdom
+  difficulty: easy
+  tags: [hunter, debuff, marking]
+
+- id: track
+  name: "Track"
+  description: "Reads the ground — bent grass, drying mud, the wrong silence. A trail emerges from what looked like nothing."
+  classes: [ranger]
+  min_level: 1
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: null
+  uses_per_rest: 4
+  stat: wisdom
+  difficulty: moderate
+  tags: [hunter, utility, investigation]
+
+- id: forage
+  name: "Forage"
+  description: "A slow walk through unfamiliar country yields enough — roots, water-safe greens, a small clutch of eggs — to keep going."
+  classes: [ranger]
+  min_level: 1
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: self
+  uses_per_rest: 3
+  stat: wisdom
+  difficulty: easy
+  tags: [nature, utility, survival]
+
+- id: hunters_volley
+  name: "Hunter's Volley"
+  description: "Three arrows or bolts, fired one after another as a single decision. Fans across a near area; not all need to find targets."
+  classes: [ranger]
+  min_level: 3
+  effect_kind: damage
+  damage_dice: "1d6+1d6"
+  damage_per_level: "1d6"
+  range: far
+  area: line_short
+  uses_per_rest: 2
+  opposed_by: dexterity
+  tags: [martial, ranged, area]
+
+- id: snare
+  name: "Snare"
+  description: "Quickly tied: a tripwire, a deadfall, a noose set behind a likely step. Whoever passes is the one who finds it."
+  classes: [ranger]
+  min_level: 3
+  effect_kind: control
+  damage_dice: "1d6"
+  damage_per_level: "1d4"
+  range: close
+  area: null
+  uses_per_rest: 2
+  stat: dexterity
+  opposed_by: dexterity
+  tags: [hunter, trap, control]
+
+- id: beastsworn_pact
+  name: "Beastsworn Pact"
+  description: "Calls in something the ranger has owed, or is owed by. A shape from the wilderness arrives, helps, and leaves without explanation."
+  classes: [ranger]
+  min_level: 7
+  effect_kind: buff
+  damage_dice: "2d6"
+  damage_per_level: "1d6"
+  range: near
+  area: self
+  uses_per_rest: 1
+  stat: wisdom
+  difficulty: moderate
+  tags: [nature, summon, buff]
+
+- id: storm_of_arrows
+  name: "Storm of Arrows"
+  description: "A ridiculous number of arrows, fired faster than they should be drawable, descending across a wide area. Nothing not behind cover survives intact."
+  classes: [ranger]
+  min_level: 12
+  effect_kind: damage
+  damage_dice: "3d6+1d8"
+  damage_per_level: "2d6"
+  range: far
+  area: blast_large
+  uses_per_rest: 1
+  opposed_by: dexterity
+  tags: [martial, ranged, area]
+
+- id: wildwalkers_step
+  name: "Wildwalker's Step"
+  description: "Steps into a tree, a shadow, a body of water — and out of another, anywhere that has the same. The wilderness recognizes its own."
+  classes: [ranger]
+  min_level: 17
+  effect_kind: buff
+  damage_dice: null
+  damage_per_level: null
+  range: self
+  area: self
+  uses_per_rest: 1
+  stat: wisdom
+  difficulty: hard
+  tags: [nature, mobility, legendary]
