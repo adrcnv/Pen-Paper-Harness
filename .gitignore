@@ -40,3 +40,6 @@ tests/test_*
 
 # Scratch markdown (tracked docs stay tracked)
 *.md
+
+# Shadow-planner diagnostic corpus (derived from gitignored research notes)
+/shadow_corpus.jsonl

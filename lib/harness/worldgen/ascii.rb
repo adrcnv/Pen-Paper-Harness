@@ -47,6 +47,10 @@ module Harness
       end
 
       def self.kingdom_marker(id)
+        # Player-created wilderness (wilderness_leaf) is a top-level coordinated
+        # location with no kingdom — it lands here with a nil id. Mark it as
+        # uncharted rather than crashing on the comparison.
+        return "*" if id.nil?
         return id.to_s if id < 10
         ("A".ord + (id - 10)).chr
       end

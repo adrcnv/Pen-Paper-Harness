@@ -66,6 +66,8 @@ module Harness
         maybe_resolve_pending_appearances(loc)
         maybe_run_quest_generation(loc)
         maybe_run_materialize(loc, materialize_target)
+        maybe_pull_traveler(loc)
+        maybe_draw_local(loc)
         maybe_seed_location_items(loc)
 
         snapshot = ::Harness::Scene::Assembler.for(location: loc)
@@ -100,6 +102,11 @@ module Harness
           @context.game_time || 0,
           logger: logger
         )
+
+        # Clear non-residents from the scene we're leaving: transients go home,
+        # pure-flavor strangers evaporate. Stops the "merchants stranded at the
+        # crossing forever" pile-up.
+        ::Harness::Scene::Evictor.evict!(@active.location, logger: logger)
 
         @active = nil
         @context.active_scene = nil
@@ -204,6 +211,30 @@ module Harness
         logger.warn { "[Scene::Manager] auto-materialize failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
 
+      # Keep populated towns from freezing: occasionally a resident of another
+      # city wanders in (Scene::TravelerPull). Pure relocation of an existing
+      # row — no LLM, no spawn — but gated on llm_grunt like the other rich-
+      # assembly steps, so headless/no-LLM contexts stay deterministic.
+      def maybe_pull_traveler(loc)
+        return unless @context.llm_grunt
+        ::Harness::Scene::TravelerPull.maybe_pull(loc, rng: @rng, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] traveler pull failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # Intra-city draw: at a sublocation, occasionally a same-city resident
+      # drifts in so the place feels connected to its town (Scene::LocalDraw).
+      # Self-gates to sublocations — a no-op at the city tier, where residents
+      # are already present. Pure relocation of an existing row (no LLM, no
+      # spawn) but gated on llm_grunt like the other rich-assembly steps so
+      # headless/no-LLM contexts stay deterministic.
+      def maybe_draw_local(loc)
+        return unless @context.llm_grunt
+        ::Harness::Scene::LocalDraw.maybe_draw(loc, rng: @rng, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] local draw failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
       # Quest generation on first entry — debt-spreading per QUESTS_DESIGN.md.
       # The trigger is "first-time entry to a city or one of its sublocations,
       # while the city still has unspent quest_debt." Each fire authors ONE
@@ -221,6 +252,7 @@ module Harness
       # on failure so we don't retry on every re-entry.
       def maybe_run_quest_generation(loc)
         return unless @context.llm_grunt
+        return unless ::Harness::Quests.enabled?  # HARNESS_QUESTS=on gate
 
         # Always mark first-entry regardless of whether we fire. Stops infinite
         # retries on repeat entry to a location quest gen failed at.

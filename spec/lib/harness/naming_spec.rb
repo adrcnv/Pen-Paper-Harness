@@ -92,6 +92,50 @@ RSpec.describe Harness::Naming do
     end
   end
 
+  describe ".gender_for" do
+    it "resolves a male pool name to male" do
+      expect(described_class.gender_for("Bjorn")).to eq("male")
+      expect(described_class.gender_for("Garrick")).to eq("male")
+    end
+
+    it "resolves a female pool name to female" do
+      expect(described_class.gender_for("Astrid")).to eq("female")
+      expect(described_class.gender_for("Sasha")).to eq("female") # the reported case
+    end
+
+    it "ignores the family name (checks the first token only)" do
+      expect(described_class.gender_for("Astrid Stenholm")).to eq("female")
+    end
+
+    it "returns nil for a name in no pool (LLM-invented)" do
+      expect(described_class.gender_for("Zxqwflorn")).to be_nil
+      expect(described_class.gender_for("")).to be_nil
+    end
+  end
+
+  describe ".for gender grounding" do
+    it "always draws a name whose gender is recoverable via gender_for" do
+      # Every mechanically-drawn name must round-trip: the pool it came from
+      # is exactly what gender_for reports. This is the invariant Hatchery
+      # leans on to ground properties.gender without threading gender through.
+      50.times do
+        name   = described_class.for(location: sub, rng: Random.new(Random.new_seed))
+        first  = name.split(" ", 2).first
+        expect(described_class.gender_for(first)).to be_in(%w[male female]),
+          "drawn name #{first.inspect} is in neither gendered pool"
+      end
+    end
+
+    it "draws from both gendered pools across many rolls" do
+      nord = Harness::Naming::Library.find("nord")
+      genders = 100.times.map do
+        described_class.gender_for(described_class.for(location: sub, rng: Random.new(Random.new_seed)).split(" ").first)
+      end
+      expect(genders).to include("male")
+      expect(genders).to include("female")
+    end
+  end
+
   describe ".assign_to_kingdoms!" do
     it "assigns a culture_id to every kingdom missing one" do
       bare = Faction.create!(name: "Bareland", subrole: "kingdom", is_kingdom: true, properties: {})

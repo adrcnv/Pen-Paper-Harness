@@ -98,14 +98,16 @@ module Harness
           participants: participants
         )
 
+        anchor_desc = item.character_id ? "in character_id=#{item.character_id}" : "at location_id=#{item.location_id}"
         {
-          "item_id"      => item.id,
-          "name"         => item.name,
-          "subrole"      => item.subrole,
-          "location_id"  => item.location_id,
-          "character_id" => item.character_id,
-          "event_id"     => event.id,
-          "game_time"    => context.game_time
+          "item_id"           => item.id,
+          "name"              => item.name,
+          "subrole"           => item.subrole,
+          "location_id"       => item.location_id,
+          "character_id"      => item.character_id,
+          "event_id"          => event.id,
+          "game_time"         => context.game_time,
+          "committed_summary" => "[committed item_id=#{item.id}] #{item.name} (#{item.subrole}) #{anchor_desc}"
         }
       end
     end

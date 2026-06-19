@@ -35,13 +35,18 @@ RSpec.describe Harness::Travel::EncounterPolicy do
   end
 
   describe ".pick_bucket" do
-    # NOTE: PLAYTEST MODE — combat weight is 1.0, others 0. Every fired
-    # encounter is currently a fight. When weights are dialed back to the
-    # long-term ratio (social 0.55 / discovery 0.30 / combat 0.15) these
-    # tests should be re-tuned to assert the distribution.
-    it "picks combat in playtest mode (weight 1.0, others 0)" do
-      buckets = 200.times.map { described_class.pick_bucket }
-      expect(buckets.uniq).to eq([ "combat" ])
+    # Current weights (see encounter_policy.rb): social 0.70 / discovery 0.15
+    # / combat 0.15. Effective per-segment combat rate = ENCOUNTER_RATE × 0.15.
+    it "distributes across all three buckets with social weighted highest" do
+      buckets = 2000.times.map { described_class.pick_bucket }
+      social_count    = buckets.count("social")
+      discovery_count = buckets.count("discovery")
+      combat_count    = buckets.count("combat")
+      # Generous bounds — Ruby's rand is acceptable as a smoke check, not a
+      # statistical test. 70/15/15 should land roughly there over 2000 rolls.
+      expect(social_count).to    be_between(1200, 1600)  # ~1400 expected
+      expect(discovery_count).to be_between( 200,  450)  # ~300 expected
+      expect(combat_count).to    be_between( 200,  450)  # ~300 expected
     end
 
     it "respects custom weights when callers pass alternate distributions" do

@@ -1,0 +1,140 @@
+#!/usr/bin/env ruby
+# Batch replay for the shadow planner. Runs the PLANNER over a corpus of
+# inputs WITHOUT playing the game — no agentic loop, no narration, no DB
+# scene. Decouples planner-data gathering from interactive play so we don't
+# grind turns.
+#
+# Usage:
+#   bin/shadow_replay                       # reads shadow_corpus.jsonl
+#   bin/shadow_replay path/to/corpus.jsonl
+#
+# Model config (same env as bin/play):
+#   single model:  HARNESS_MODEL=... (or HARNESS_BACKEND=openai-compat + local server)
+#   two tiers:     HARNESS_GRUNT_MODEL=<a> HARNESS_NUANCE_MODEL=<b>
+# LOCAL use is single-model — that's the only configuration that runs on a
+# single GPU. The two-tier diff is for a future hosted backend (see
+# Harness::Shadow); don't reach for it locally. Single-model replay still
+# answers the local question: does the planner produce bounded, sane plans
+# across the full corpus, or does it balloon / parse-fail?
+#
+# Each corpus line is JSON: { input, world, agentic } where:
+#   world   — {present_characters?, present_items?, nearby_locations?, recent_history?}
+#   agentic — {tool_count, silent, tool_sequence?} the live loop's known
+#             outcome for this input (transcribed from execution_flows_observed.md),
+#             carried through so bin/shadow_report can compare side-by-side.
+#
+# Output: log/shadow_replay.jsonl. Read it with:
+#   bin/shadow_report log/shadow_replay.jsonl
+
+require "json"
+require "optparse"
+
+# .env loader (mirror bin/play): KEY=value, # comments, shell wins over file.
+env_path = File.expand_path("../.env", __dir__)
+if File.exist?(env_path)
+  File.foreach(env_path) do |line|
+    line = line.strip
+    next if line.empty? || line.start_with?("#")
+    key, _, value = line.partition("=")
+    next if key.empty?
+    value = value.strip
+    value = value[1..-2] if value.start_with?('"') && value.end_with?('"')
+    value = value[1..-2] if value.start_with?("'") && value.end_with?("'")
+    ENV[key.strip] ||= value
+  end
+end
+
+corpus_path = ARGV[0] || File.expand_path("../shadow_corpus.jsonl", __dir__)
+abort "No corpus at #{corpus_path}" unless File.exist?(corpus_path)
+
+ENV["RAILS_ENV"] ||= "development"
+require_relative "../config/environment"
+
+logger = Logger.new($stderr)
+logger.level = Logger::WARN
+
+backend = (ENV["HARNESS_BACKEND"] || "anthropic").downcase
+api_key = ENV["ANTHROPIC_API_KEY"]
+if backend == "anthropic" && (api_key.nil? || api_key.empty?)
+  abort "ANTHROPIC_API_KEY not set (or set HARNESS_BACKEND=openai-compat for a local server)."
+end
+
+build_adapter = ->(model_name, name) {
+  case backend
+  when "anthropic"
+    Harness::LLM::AnthropicAdapter.new(api_key: api_key, model: model_name, logger: logger, name: name)
+  when "openai-compat", "openai_compat", "local"
+    Harness::LLM::OpenAICompatAdapter.new(
+      base_url: ENV["HARNESS_OPENAI_BASE_URL"] || "http://127.0.0.1:8080/v1",
+      api_key:  ENV["HARNESS_OPENAI_API_KEY"]  || "local",
+      model:    model_name,
+      logger:   logger,
+      name:     name
+    )
+  else
+    abort "Unknown HARNESS_BACKEND=#{backend.inspect}."
+  end
+}
+
+grunt_model  = ENV["HARNESS_GRUNT_MODEL"].to_s.strip
+nuance_model = ENV["HARNESS_NUANCE_MODEL"].to_s.strip
+single_model = ENV["HARNESS_MODEL"].to_s.strip
+single_model = "claude-sonnet-4-6" if single_model.empty? && backend == "anthropic"
+
+adapters_by_tier =
+  if !grunt_model.empty? && !nuance_model.empty?
+    { "grunt" => build_adapter.call(grunt_model, :grunt), "nuance" => build_adapter.call(nuance_model, :nuance) }
+  elsif !grunt_model.empty? || !nuance_model.empty?
+    abort "Half-configured tiers: set BOTH HARNESS_GRUNT_MODEL and HARNESS_NUANCE_MODEL, or neither."
+  else
+    { "shared" => build_adapter.call(single_model, :shared) }
+  end
+
+tier_desc = adapters_by_tier.map { |t, a| "#{t}=#{a.display_model}" }.join(", ")
+puts "Shadow replay — backend=#{backend} — #{tier_desc}"
+
+entries = File.readlines(corpus_path).filter_map { |l|
+  l = l.strip
+  next if l.empty?
+  JSON.parse(l)
+}
+puts "Corpus: #{entries.size} inputs"
+
+out_path = Rails.root.join("log/shadow_replay.jsonl")
+require "fileutils"
+FileUtils.mkdir_p(File.dirname(out_path))
+File.delete(out_path) if File.exist?(out_path)
+
+entries.each_with_index do |entry, i|
+  input = entry["input"].to_s
+  label = "#{entry['session']}T#{entry['turn']}"
+  print "  [#{i + 1}/#{entries.size}] #{label} #{input[0, 50].inspect} ... "
+  $stdout.flush
+
+  result = Harness::Shadow::Planner.run_offline(
+    input:            input,
+    world:            entry["world"] || {},
+    adapters_by_tier: adapters_by_tier,
+    logger:           logger
+  )
+
+  record = {
+    "turn"    => label,
+    "input"   => input,
+    "world"   => result["world"],
+    "planner" => result["plans"],
+    "agentic" => entry["agentic"] || {}
+  }
+  File.open(out_path, "a") { |f| f.puts(JSON.generate(record)) }
+
+  plans = result["plans"].map { |t, p|
+    p["plan"] ? p["plan"].map { |s| s["runner"] }.join("→") : "FAIL"
+  }.join(" | ")
+  puts plans
+rescue StandardError => e
+  puts "ERROR: #{e.class}: #{e.message}"
+end
+
+puts
+puts "Wrote #{out_path}"
+puts "Report:  bin/shadow_report #{out_path}"

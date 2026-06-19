@@ -355,6 +355,7 @@ puts "  backend:   #{backend}"
 puts "  nuance:    #{nuance_adapter.display_model}"
 puts "  grunt:     #{grunt_adapter.display_model}"
 puts "  log level: #{options[:log_level]}"
+puts "  mode:      #{loop_obj.mode}  (HARNESS_MODE=agentic for the legacy loop)"
 puts "  debug log: #{debug_log_path}  (tail -f #{debug_log_path} to follow live)" if debug_log_path
 puts "─" * 72
 puts
@@ -875,6 +876,10 @@ loop do
 
   puts
   puts transcript.narration
+  if transcript.notice
+    puts
+    puts transcript.notice
+  end
   puts
   turn_cost = Harness::CostTracker.turn_total
   if turn_cost > 0

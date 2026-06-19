@@ -21,12 +21,14 @@ module Harness
       end
 
       def self.input_hash(character, prose_context)
+        props = character.properties || {}
         h = {
           "name"       => character.name,
           "subrole"    => character.subrole,
+          "gender"     => props["gender"],
           "level"      => character.level,
           "stats"      => ::Character::STATS.each_with_object({}) { |s, acc| acc[s] = character.read_attribute(s) },
-          "properties" => character.properties || {}
+          "properties" => props
         }
         h["context"] = prose_context if prose_context.is_a?(String) && !prose_context.strip.empty?
         h

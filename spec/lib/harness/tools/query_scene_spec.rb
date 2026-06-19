@@ -63,19 +63,21 @@ RSpec.describe Harness::Tools::QueryScene do
       a
     end
 
-    it "omits should_push_now when silent count is below threshold" do
+    it "agenda.push_now=false when silent count is below threshold" do
       context.active_scene = active_with_agenda(silent_turns: 0)
       out = described_class.new.call({}, context)
       char = out["present_characters"].find { |c| c["id"] == npc.id }
-      expect(char["agenda"]).to be_present
-      expect(char).not_to have_key("should_push_now")
+      expect(char["agenda"]).to be_a(Hash)
+      expect(char["agenda"]["text"]).to be_present
+      expect(char["agenda"]["push_now"]).to be(false)
+      expect(char).not_to have_key("should_push_now")  # collapsed; top-level key gone
     end
 
-    it "surfaces should_push_now=true once silent count crosses threshold" do
+    it "agenda.push_now=true once silent count crosses threshold" do
       context.active_scene = active_with_agenda(silent_turns: Harness::Scene::AGENDA_PUSH_THRESHOLD)
       out = described_class.new.call({}, context)
       char = out["present_characters"].find { |c| c["id"] == npc.id }
-      expect(char["should_push_now"]).to be(true)
+      expect(char["agenda"]["push_now"]).to be(true)
     end
 
     it "does NOT set should_push_now on NPCs without an agenda (no agenda field)" do
@@ -114,6 +116,23 @@ RSpec.describe Harness::Tools::QueryScene do
       out = described_class.new.call({}, context)
       entry = out["present_characters"].find { |c| c["id"] == explicit_no.id }
       expect(entry).not_to have_key("following_player")
+    end
+  end
+
+  describe "gender surfacing in present_characters" do
+    it "surfaces stored gender inline so narration uses the right pronoun" do
+      woman = Npc.create!(name: "Sasha", location: tavern, character_class: "commoner",
+                          properties: { "gender" => "female" })
+      out   = described_class.new.call({}, context)
+      entry = out["present_characters"].find { |c| c["id"] == woman.id }
+      expect(entry["gender"]).to eq("female")
+    end
+
+    it "omits gender when none is stored (legacy rows)" do
+      ungendered = Npc.create!(name: "Drifter", location: tavern, character_class: "commoner")
+      out   = described_class.new.call({}, context)
+      entry = out["present_characters"].find { |c| c["id"] == ungendered.id }
+      expect(entry).not_to have_key("gender")
     end
   end
 

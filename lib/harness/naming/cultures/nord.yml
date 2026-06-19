@@ -4,7 +4,8 @@ id: nord
 weight: 7
 flavor: "norse-ish — patronymics, stone-and-sea family names, harsh consonants"
 
-given:
+# Split by gender; pools DISJOINT. Library derives `given` = the two combined.
+given_male:
   - Arn
   - Asger
   - Bjorn
@@ -30,6 +31,8 @@ given:
   - Torsten
   - Ulf
   - Vidar
+
+given_female:
   - Astrid
   - Borghild
   - Frida
@@ -39,6 +42,13 @@ given:
   - Saga
   - Sigrid
   - Thora
+  - Gerd
+  - Ragnhild
+  - Solveig
+  - Yrsa
+  - Dagny
+  - Hellevi
+  - Ingrid
 
 family:
   - Arnesson

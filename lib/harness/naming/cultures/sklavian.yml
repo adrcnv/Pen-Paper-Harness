@@ -4,7 +4,9 @@ id: sklavian
 weight: 8
 flavor: "slavic-ish — hard consonants, riverine and stone-rooted family names"
 
-given:
+# Split by gender; pools DISJOINT. Sasha here is female (sits with Anya/Tanya);
+# Olek is male. Library derives `given` = given_male + given_female.
+given_male:
   - Bohdan
   - Branko
   - Dragan
@@ -25,6 +27,9 @@ given:
   - Zenek
   - Borys
   - Cyril
+  - Olek
+
+given_female:
   - Anya
   - Dushka
   - Helka
@@ -33,12 +38,14 @@ given:
   - Lyudmila
   - Mira
   - Natka
-  - Olek
   - Petra
   - Rusalka
   - Sasha
   - Tanya
   - Vela
+  - Zora
+  - Vesna
+  - Danika
 
 family:
   - Borescu

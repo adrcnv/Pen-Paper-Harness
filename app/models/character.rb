@@ -18,6 +18,11 @@ class Character < ApplicationRecord
   serialize :abilities, coder: JSON
 
   belongs_to :location, optional: true
+  # Where this character BELONGS (settlement residence), distinct from
+  # `location` (where they are NOW). Nil for hostiles / wilderness creatures
+  # and not-yet-engaged transients — see AddHomeLocationToCharacters and
+  # Scene::Evictor. Settled townsfolk rest with location == home_location.
+  belongs_to :home_location, class_name: "Location", optional: true
 
   has_many :event_participants, foreign_key: :character_id, dependent: :nullify
   has_many :events,             through: :event_participants

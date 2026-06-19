@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_05_12_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_18_120000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -20,6 +20,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_05_12_120000) do
     t.datetime "created_at", null: false
     t.integer "current_hp", default: 0, null: false
     t.integer "dexterity"
+    t.integer "home_location_id"
     t.integer "intelligence"
     t.integer "level", default: 1, null: false
     t.integer "location_id"
@@ -32,6 +33,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_05_12_120000) do
     t.datetime "updated_at", null: false
     t.integer "wisdom"
     t.integer "xp", default: 0, null: false
+    t.index ["home_location_id"], name: "index_characters_on_home_location_id"
     t.index ["location_id"], name: "index_characters_on_location_id"
     t.index ["subrole"], name: "index_characters_on_subrole"
     t.index ["type"], name: "index_characters_on_type"

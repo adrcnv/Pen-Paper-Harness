@@ -10,9 +10,9 @@ RSpec.describe Harness::Turn::Loop do
   let!(:player) { Player.create!(name: "Hero", subrole: "adventurer", location: tavern) }
   let(:context) { Harness::Turn::Context.new(player_location: tavern) }
 
-  def run(reasoning:, narration: "(narration)")
+  def run(reasoning:, narration: "(narration)", mode: nil)
     adapter = Harness::LLM::FakeAdapter.new(reasoning: reasoning, narration: narration)
-    described_class.new(adapter: adapter, context: context).run_turn(input: "player input")
+    described_class.new(adapter: adapter, context: context, mode: mode).run_turn(input: "player input")
   end
 
   describe "happy path" do
@@ -183,6 +183,63 @@ RSpec.describe Harness::Turn::Loop do
     end
   end
 
+  describe "off-scene creation partitioning for narration" do
+    # Regression: "look for a tavern" makes a runner create a sublocation +
+    # its proprietor + a kickoff event at the NEW location while the player
+    # stays put. Those creation tool_calls used to reach narration verbatim
+    # and the weak model rendered them as the present scene — teleporting the
+    # player in and staging the proprietor's greeting. The partition strips
+    # off-scene creations before narration; new places surface only as a flat
+    # `discovered_nearby` list, off-scene characters/events are dropped.
+    let(:loop_obj) {
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
+      described_class.new(adapter: adapter, context: context)
+    }
+    let(:here_id) { tavern.id }
+    let(:elsewhere) { tavern.id + 999 } # a location that is not where the player stands
+
+    it "collapses an off-scene propose_location into discovered_nearby (name + description only)" do
+      tcs = [ {
+        "name" => "propose_location",
+        "args" => { "name" => "The Muddy Pint", "description" => "A smoke-choked dockside tavern.", "type" => "sublocation" },
+        "result" => { "location_id" => elsewhere }
+      } ]
+      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
+      expect(kept).to be_empty
+      expect(discoveries).to eq([ { "name" => "The Muddy Pint", "description" => "A smoke-choked dockside tavern." } ])
+    end
+
+    it "drops off-scene propose_character and propose_event entirely (no discovery, not kept)" do
+      tcs = [
+        { "name" => "propose_character", "args" => { "name" => "Garrick", "location_id" => elsewhere }, "result" => { "character_id" => 7 } },
+        { "name" => "propose_event", "args" => { "location_id" => elsewhere, "details" => "Garrick looks up as you enter." }, "result" => { "event_id" => 9 } }
+      ]
+      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
+      expect(kept).to be_empty
+      expect(discoveries).to be_empty
+    end
+
+    it "keeps creation calls AT the player's current location" do
+      tcs = [
+        { "name" => "propose_location", "args" => { "name" => "Cellar" }, "result" => { "location_id" => here_id } },
+        { "name" => "propose_event", "args" => { "location_id" => here_id, "details" => "Maren slams the tankard down." }, "result" => { "event_id" => 3 } }
+      ]
+      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
+      expect(kept).to eq(tcs)
+      expect(discoveries).to be_empty
+    end
+
+    it "leaves non-creation tool_calls untouched" do
+      tcs = [
+        { "name" => "query_scene", "args" => {}, "result" => { "present_characters" => [] } },
+        { "name" => "resolve", "args" => { "actor_id" => 1 }, "result" => { "outcome" => "success" } }
+      ]
+      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
+      expect(kept).to eq(tcs)
+      expect(discoveries).to be_empty
+    end
+  end
+
   describe "narration sees current_scene after a mid-turn rebuild" do
     # Regression: when the reasoning loop fires transition + query_scene
     # in one turn, query_scene returns the destination's PRE-materialization
@@ -211,6 +268,105 @@ RSpec.describe Harness::Turn::Loop do
       expect(captured_narration_user).to include("\"current_scene\"")
       expect(captured_narration_user).to include("Bram")
       expect(captured_narration_user).to include("Silt")
+    end
+
+    it "sends static set-dressing only on the establishing narration of a scene" do
+      # Repeated-narration driver: re-feeding the location description + extras
+      # prose every turn invites the model to reprint them. They go out only on
+      # the first narration of a scene (narrations empty); later turns get the
+      # name + present set only.
+      tannery = Location.create!(name: "Tannery", description: "The reek of lye and wet hide hangs over the vats.")
+      context.player_location = tannery
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
+      loop_inst = described_class.new(adapter: adapter, context: context)
+      sm = loop_inst.instance_variable_get(:@scene_manager)
+      transcript = Harness::Turn::Transcript.new(input: "x", location_id: tannery.id)
+
+      establishing_scene = Harness::Scene::Active.new(
+        location: tannery, snapshot: Harness::Scene::Assembler.for(location: tannery),
+        narrations: [], extras: [ "a vat of foul brown liquid" ]
+      )
+      sm.instance_variable_set(:@active, establishing_scene)
+      first = loop_inst.send(:narration_user_message, "look around", transcript)
+      expect(first).to include("The reek of lye and wet hide") # description present
+      expect(first).to include("a vat of foul brown liquid")   # extras present
+
+      later_scene = Harness::Scene::Active.new(
+        location: tannery, snapshot: Harness::Scene::Assembler.for(location: tannery),
+        narrations: [ { "input" => "look around", "narration" => "(already established)" } ],
+        extras: [ "a vat of foul brown liquid" ]
+      )
+      sm.instance_variable_set(:@active, later_scene)
+      later = loop_inst.send(:narration_user_message, "wait a beat", transcript)
+      expect(later).to include("Tannery")                          # name still present
+      expect(later).not_to include("The reek of lye and wet hide") # description dropped
+      expect(later).not_to include("a vat of foul brown liquid")   # extras dropped
+    end
+
+    it "surfaces an `unresolved` field to narration when transcript.unresolved is set" do
+      # Graceful terminal: a chain that dead-ends must tell narration the action
+      # did NOT happen, so it renders a non-event instead of fabricating success.
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
+      loop_inst = described_class.new(adapter: adapter, context: context)
+      transcript = Harness::Turn::Transcript.new(input: "walk into a forest", location_id: tavern.id)
+      transcript.unresolved = "destination 'forest' not found"
+
+      msg = loop_inst.send(:narration_user_message, "walk into a forest", transcript)
+      expect(msg).to include("\"unresolved\"")
+      expect(msg).to include("destination 'forest' not found")
+    end
+
+    it "omits `unresolved` from narration on a normal turn" do
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
+      loop_inst = described_class.new(adapter: adapter, context: context)
+      transcript = Harness::Turn::Transcript.new(input: "look", location_id: tavern.id)
+      msg = loop_inst.send(:narration_user_message, "look", transcript)
+      expect(msg).not_to include("\"unresolved\"")
+    end
+
+    it "builds an out-of-character notice from the unresolved reason" do
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
+      loop_inst = described_class.new(adapter: adapter, context: context)
+      notice = loop_inst.send(:unresolved_notice, "destination 'forest' not found")
+      expect(notice).to match(/out of character/i)
+      expect(notice).to include("destination 'forest' not found")
+      expect(notice).to match(/rephras/i)
+    end
+
+    # The dice bracket line is rendered by Ruby from the real resolve, never
+    # by the narration model (which fabricated rolls for movement/inspection).
+    describe "dice bracket rendering (system-owned)" do
+      let(:loop_inst) { described_class.new(adapter: Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)"), context: context) }
+
+      it "drops a fabricated bracket on a no-resolve turn (movement)" do
+        prose = "[Transition — Movement 1 vs 0: success, decisive]\n\nYou step through the gate into the square."
+        out = loop_inst.send(:compose_narration, prose, [ { "name" => "transition", "result" => {} } ])
+        expect(out).to eq("You step through the gate into the square.")
+      end
+
+      it "discards the model's bracket and renders the authoritative one from the resolve result" do
+        prose = "[Whatever — Bogus 1 vs 1: nonsense]\n\nYour blade bites deep."
+        tcs = [ { "name" => "resolve", "result" => {
+          "action" => "Heavy Strike", "ability_name" => "Heavy Strike", "stat" => "strength",
+          "roll" => 17, "against" => 12, "outcome" => "success", "margin" => "clear"
+        } } ]
+        out = loop_inst.send(:compose_narration, prose, tcs)
+        expect(out).to eq("[Heavy Strike — Heavy Strike 17 vs 12: success, clear]\n\nYour blade bites deep.")
+      end
+
+      it "labels with the capitalized stat when there's no ability_name, and flags criticals" do
+        tcs = [ { "name" => "resolve", "result" => {
+          "action" => "Climb the wall", "stat" => "strength", "roll" => 20, "against" => 10,
+          "outcome" => "critical_success", "margin" => "decisive", "critical" => true
+        } } ]
+        expect(loop_inst.send(:resolve_bracket_lines, tcs))
+          .to eq([ "[Climb the wall — Strength 20 vs 10: critical_success, decisive, critical]" ])
+      end
+
+      it "leaves bracketless prose untouched on a non-resolve turn" do
+        out = loop_inst.send(:compose_narration, "The square is quiet under a grey sky.", [ { "name" => "query_scene" } ])
+        expect(out).to eq("The square is quiet under a grey sky.")
+      end
     end
 
     it "current_scene is empty {} shape when no scene active" do
@@ -394,6 +550,49 @@ RSpec.describe Harness::Turn::Loop do
       expect(context.scene_dirty).to be(false)
       # Bootstrap-yield with no rounds → regular narration step ran.
       expect(transcript.narration).to eq("regular narration body")
+    end
+  end
+
+  describe "shadow planner hook" do
+    it "does not run or log when HARNESS_SHADOW_PLANNER is off" do
+      allow(Harness::Shadow).to receive(:enabled?).and_return(false)
+      expect(Harness::Shadow::Planner).not_to receive(:run)
+      expect(Harness::Shadow::Log).not_to receive(:append)
+      run(reasoning: [ { tool: "query_scene", args: {} } ], narration: "n", mode: :agentic)
+    end
+
+    it "is skipped in state-machine mode even when enabled (dispatcher plans live)" do
+      allow(Harness::Shadow).to receive(:enabled?).and_return(true)
+      expect(Harness::Shadow::Planner).not_to receive(:run)
+      expect(Harness::Shadow::Log).not_to receive(:append)
+      run(reasoning: [], narration: "n", mode: :state_machine)
+    end
+
+    it "runs the planner and appends one record when enabled (agentic mode)" do
+      allow(Harness::Shadow).to receive(:enabled?).and_return(true)
+      appended = []
+      allow(Harness::Shadow::Log).to receive(:append) { |record, **| appended << record }
+
+      run(reasoning: [ { tool: "query_scene", args: {} } ], narration: "n", mode: :agentic)
+
+      expect(appended.size).to eq(1)
+      rec = appended.first
+      expect(rec["input"]).to eq("player input")
+      expect(rec["agentic"]["tool_sequence"]).to eq([ "query_scene" ])
+      expect(rec["agentic"]["silent"]).to be(false)
+      # FakeAdapter.complete returns the narration string (not JSON), so the
+      # planner records a parse_error rather than a plan — proving the hook is
+      # wired end-to-end without depending on a JSON-capable fake.
+      expect(rec["planner"]).to be_a(Hash)
+    end
+
+    it "never breaks the turn when the planner raises" do
+      allow(Harness::Shadow).to receive(:enabled?).and_return(true)
+      allow(Harness::Shadow::Planner).to receive(:run).and_raise("planner exploded")
+
+      transcript = run(reasoning: [ { tool: "query_scene", args: {} } ], narration: "n", mode: :agentic)
+      expect(transcript.narration).to eq("n")
+      expect(transcript.error).to be_nil
     end
   end
 end

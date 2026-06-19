@@ -83,6 +83,11 @@ module Harness
           name:          name,
           subrole:       subrole,
           location:      location,
+          # A proposed character belongs where they're placed — if it's a
+          # residence (a settlement, or a lair). Promoted extras and
+          # worldbuilding NPCs in a town or a bandit lair get a home; one
+          # created at a social waypoint / open wild stays homeless.
+          home_location_id: (location.residence? ? location.id : nil),
           properties:    properties,
           prose_context: connection
         )
@@ -114,12 +119,13 @@ module Harness
         )
 
         {
-          "character_id" => npc.id,
-          "name"         => npc.name,
-          "subrole"      => npc.subrole,
-          "location_id"  => npc.location_id,
-          "event_id"     => event.id,
-          "game_time"    => context.game_time
+          "character_id"      => npc.id,
+          "name"              => npc.name,
+          "subrole"           => npc.subrole,
+          "location_id"       => npc.location_id,
+          "event_id"          => event.id,
+          "game_time"         => context.game_time,
+          "committed_summary" => "[committed character_id=#{npc.id}] #{npc.name} (#{npc.subrole}) at location_id=#{npc.location_id} — #{connection.to_s[0, 100]}"
         }
       end
 

@@ -11,7 +11,9 @@ module Harness
   #      `faction_id` pointing at an `is_kingdom: true` faction.
   #   2. Read `kingdom.properties.culture_id`.
   #   3. Look up culture in Library; if not found, fall back to default.
-  #   4. Uniform-random `given + family` from the culture's pools.
+  #   4. Roll a gender, sample a `given` from that gender's pool, and a
+  #      `family` from the shared family pool. The drawn name therefore
+  #      implies a gender (recoverable via .gender_for).
   #
   # Idempotency: every call is independent. The same location can produce
   # different names on different calls (that's the point). Use rng for
@@ -24,9 +26,26 @@ module Harness
     class << self
       def for(location:, rng: Random.new)
         culture = culture_for(location) || Library.default
-        given   = sample(culture["given"], rng)
+        given   = sample(given_pool(culture, rng), rng)
         family  = culture["family"].any? ? sample(culture["family"], rng) : nil
         [ given, family ].compact.reject(&:empty?).join(" ")
+      end
+
+      # Which gender a given name belongs to, by membership in the culture
+      # pools. Checks the first token (the given name) across ALL cultures —
+      # a name's gender is a property of the name, not of the kingdom that
+      # drew it. Returns "male" / "female", or nil for a name in no pool
+      # (an LLM-invented name from propose_character). The pools are disjoint
+      # so the answer is unambiguous. Hatchery uses this to ground
+      # properties.gender at spawn so every downstream reader agrees.
+      def gender_for(name)
+        first = name.to_s.strip.split(/\s+/).first
+        return nil if first.nil? || first.empty?
+        Library.all.each do |c|
+          return "male"   if Array(c["given_male"]).include?(first)
+          return "female" if Array(c["given_female"]).include?(first)
+        end
+        nil
       end
 
       # Same as `.for` but avoids name collisions with existing Character
@@ -89,6 +108,21 @@ module Harness
       end
 
       private
+
+      # Roll a gender, return the matching given-name pool. Falls back to the
+      # combined/legacy `given` pool when a culture lacks the gendered pools
+      # (test stubs, hand-built culture hashes). The gender roll consumes one
+      # rng draw before the name sample, which is fine — callers that need
+      # determinism seed their own rng.
+      def given_pool(culture, rng)
+        male   = Array(culture["given_male"])
+        female = Array(culture["given_female"])
+        if male.any? && female.any?
+          rng.rand < 0.5 ? male : female
+        else
+          Array(culture["given"])
+        end
+      end
 
       def sample(pool, rng)
         pool[rng.rand(pool.size)]

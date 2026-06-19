@@ -60,9 +60,13 @@ RSpec.describe "Turn::Loop + AnthropicAdapter" do
       logger: Logger.new(IO::NULL)
     )
 
+    # This proves the AGENTIC loop ↔ real-adapter interface; the HTTP queue is
+    # written for that path. The state-machine path (dispatcher + runners) is
+    # covered by executor_spec with a stubbed planner.
     loop = Harness::Turn::Loop.new(
       adapter: adapter,
       context: context,
+      mode:    :agentic,
       logger:  Logger.new(IO::NULL)
     )
 

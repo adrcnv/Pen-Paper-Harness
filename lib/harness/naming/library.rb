@@ -7,12 +7,19 @@ module Harness
     # Harness::Items::Library and Harness::Quests::Library.
     #
     # Each culture exposes:
-    #   id      — unique string slug ("anglish", "nord", ...)
-    #   weight  — integer for kingdom-assignment weighted pick
-    #   given   — non-empty array of given names
-    #   family  — array of family names (can be empty for cultures that
-    #             only use given names)
-    #   flavor  — optional human-readable note (debug aid only)
+    #   id           — unique string slug ("anglish", "nord", ...)
+    #   weight       — integer for kingdom-assignment weighted pick
+    #   given_male   — non-empty array of male given names
+    #   given_female — non-empty array of female given names
+    #   given        — DERIVED at load: given_male + given_female (the
+    #                  combined pool; readers that don't care about gender,
+    #                  and the gender-agnostic membership checks, use this)
+    #   family       — array of family names (can be empty for cultures that
+    #                  only use given names)
+    #   flavor       — optional human-readable note (debug aid only)
+    #
+    # The two given pools are kept DISJOINT in the YAML so a name maps to
+    # exactly one gender — Naming.gender_for relies on that.
     #
     # Names are sampled uniformly within a culture; the only weight is the
     # PER-KINGDOM assignment of which culture that kingdom uses. Inside a
@@ -73,6 +80,8 @@ module Harness
             raw = YAML.safe_load_file(path, permitted_classes: [], aliases: false)
             raise InvalidLibrary, "#{path}: expected top-level Hash" unless raw.is_a?(Hash)
             validate!(raw, path)
+            # Derived combined pool — gender-agnostic readers use this.
+            raw["given"] = Array(raw["given_male"]) + Array(raw["given_female"])
             raise InvalidLibrary, "duplicate culture id=#{raw['id']}" if @by_id.key?(raw["id"])
             @cultures << raw
             @by_id[raw["id"]] = raw
@@ -81,14 +90,18 @@ module Harness
         end
 
         def validate!(raw, path)
-          %w[id weight given family].each do |f|
+          %w[id weight given_male given_female family].each do |f|
             raise InvalidLibrary, "#{path}: missing #{f}" if raw[f].nil?
           end
           raise InvalidLibrary, "#{path}: id must be non-empty String"            unless raw["id"].is_a?(String) && !raw["id"].empty?
           raise InvalidLibrary, "#{path}: weight must be positive Integer"        unless raw["weight"].is_a?(Integer) && raw["weight"] > 0
-          unless raw["given"].is_a?(Array) && raw["given"].any? && raw["given"].all? { |x| x.is_a?(String) && !x.empty? }
-            raise InvalidLibrary, "#{path}: given must be non-empty Array of non-empty Strings"
+          %w[given_male given_female].each do |pool|
+            unless raw[pool].is_a?(Array) && raw[pool].any? && raw[pool].all? { |x| x.is_a?(String) && !x.empty? }
+              raise InvalidLibrary, "#{path}: #{pool} must be non-empty Array of non-empty Strings"
+            end
           end
+          overlap = raw["given_male"] & raw["given_female"]
+          raise InvalidLibrary, "#{path}: given_male/given_female overlap (#{overlap.join(', ')}) — pools must be disjoint" if overlap.any?
           unless raw["family"].is_a?(Array) && raw["family"].all? { |x| x.is_a?(String) }
             raise InvalidLibrary, "#{path}: family must be Array of Strings (empty allowed)"
           end

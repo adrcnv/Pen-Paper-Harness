@@ -13,7 +13,7 @@ module Harness
     # turns since the NPC last took a structural action. Reset to 0 when the
     # NPC acts (committed as actor in any propose_event / resolve this turn);
     # incremented otherwise. When the count crosses AGENDA_PUSH_THRESHOLD,
-    # query_scene surfaces `should_push_now: true` for that character — the
+    # query_scene surfaces `agenda.push_now: true` for that character — the
     # reasoning prompt's AGENDAS rule turns that into a forced beat.
     AGENDA_PUSH_THRESHOLD = 2
 

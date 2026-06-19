@@ -18,6 +18,24 @@ module Harness
       end
 
       def call(_args, context)
+        self.class.build(context)
+      end
+
+      # Class-method form used both by the tool call and by Turn::Loop to
+      # pre-inject scene state into the reasoning prompt (so the model
+      # doesn't need to spend a round-trip on a defensive query_scene call
+      # at the start of every turn — see INPUT.scene in the reasoning
+      # prompt).
+      #
+      # `condense_mood:` when true, internal_state prose is suppressed from
+      # each present_character entry. Caller passes true on turns where the
+      # scene has already produced narration this scene — the model has
+      # already seen the mood line via prior turns and doesn't need it
+      # re-read every iteration. (Mood may also have drifted from the cached
+      # scene-entry snapshot; narration's no-invention rule already wants the
+      # model to render from this-turn's tool results, not from the cached
+      # mood.) See AUDIT in execution_flows_observed.md.
+      def self.build(context, condense_mood: false)
         snap = ::Harness::Scene::Assembler.for(location: context.player_location)
         active = context.active_scene
         # If the player moved mid-turn (transition / travel), the cached active
@@ -55,6 +73,12 @@ module Harness
           "children" => children,
           "present_characters" => snap.present_characters.map { |c|
             entry = { "id" => c.id, "name" => c.name, "subrole" => c.subrole }
+            # Surface gender so the reasoning loop and narration use the right
+            # pronouns instead of re-guessing from an ambiguous name each turn.
+            # Grounded once at spawn (Hatchery), authoritative over the name.
+            if c.properties.is_a?(Hash) && c.properties["gender"]
+              entry["gender"] = c.properties["gender"]
+            end
             # Surface the follower flag so the reasoning loop knows allegiance
             # at-a-glance. A follower is the player's structural ally and
             # should act on their behalf in combat — see the FOLLOWERS rule
@@ -76,17 +100,20 @@ module Harness
             # (the hardcoded `unarmed_strike` 1d4 fallback always works).
             abilities = Array(c.abilities)
             entry["abilities"] = abilities.map { |a| { "name" => a["name"], "uses_remaining" => a["uses_remaining"] } } if abilities.any?
-            state = active&.state_for(c.id)
-            entry["internal_state"] = state if state
+            unless condense_mood
+              state = active&.state_for(c.id)
+              entry["internal_state"] = state if state
+            end
             agenda = active&.agenda_for(c.id)
             if agenda
-              # At most ONE NPC per scene has this — when present, treat as
-              # a structural hook (push when an opening arises). When the
-              # NPC has gone N+ turns without acting, `should_push_now`
-              # forces a beat THIS turn — see the AGENDAS rule in the
-              # reasoning prompt.
-              entry["agenda"] = agenda
-              entry["should_push_now"] = true if active&.agenda_overdue?(c.id)
+              # Collapsed shape: `agenda: { text:, push_now: }`.
+              # push_now=true means the NPC has gone N+ turns silent and the
+              # system wants a beat THIS turn regardless of player input
+              # opening. See the AGENDAS rule in the reasoning prompt.
+              entry["agenda"] = {
+                "text"     => agenda,
+                "push_now" => active&.agenda_overdue?(c.id) || false
+              }
             end
             entry
           },
@@ -114,9 +141,7 @@ module Harness
         }.compact
       end
 
-      private
-
-      def combat_payload(active)
+      def self.combat_payload(active)
         return nil unless active&.in_combat?
         state = active.combat
         player = ::Player.first

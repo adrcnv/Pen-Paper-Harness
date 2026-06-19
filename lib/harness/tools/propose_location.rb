@@ -95,13 +95,14 @@ module Harness
         intro_event = log_introduction(loc, parent, connection, context, scope: "personal")
 
         {
-          "location_id"     => loc.id,
-          "name"            => loc.name,
-          "type"            => TYPE_SUBLOCATION,
-          "parent_id"       => parent.id,
+          "location_id"       => loc.id,
+          "name"              => loc.name,
+          "type"              => TYPE_SUBLOCATION,
+          "parent_id"         => parent.id,
           "events_backfilled" => backfilled,
-          "event_id"        => intro_event.id,
-          "game_time"       => context.game_time
+          "event_id"          => intro_event.id,
+          "game_time"         => context.game_time,
+          "committed_summary" => "[committed location_id=#{loc.id}] #{loc.name} (sublocation of #{parent.name}) — #{description.to_s[0, 100]}"
         }
       end
 
@@ -147,7 +148,8 @@ module Harness
           "biome"             => loc.biome,
           "events_backfilled" => backfilled,
           "event_id"          => intro_event.id,
-          "game_time"         => context.game_time
+          "game_time"         => context.game_time,
+          "committed_summary" => "[committed location_id=#{loc.id}] #{loc.name} (wilderness_leaf, #{loc.biome}) — #{description.to_s[0, 100]}"
         }
       end
 

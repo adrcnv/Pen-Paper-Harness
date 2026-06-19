@@ -202,6 +202,8 @@ module Harness
             name:          mech_name,
             subrole:       subrole,
             location_id:   location.id,
+            # Genesis historicals are residents of the city they anchor.
+            home_location_id: (location.residence? ? location.id : nil),
             dormant:       true,
             rng:           @rng,
             prose_context: prose_context_for(actor_id, events_payload)

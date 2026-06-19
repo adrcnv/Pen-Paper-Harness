@@ -34,8 +34,8 @@ CONSTRAINTS
 - Do NOT introduce new named entities (people, factions, places). Stay flavor.
 - ENGLISH only. Lowercase snake_case is fine for JSON keys; the prose itself uses normal capitalization.
 
-AGENDA — at most ONE NPC has a goal for this scene
-Agenda is the rare structural hook: an NPC who, this scene, is trying to accomplish something concrete involving the player. Most scenes have NO agenda (omit the field entirely). The power of agenda comes from its scarcity — if every NPC has one, "agenda" loses meaning and the scene turns into multiplayer scheming. Default to none; only set one when there's a real reason this NPC is pushing this scene.
+AGENDA — at most ONE NPC has a goal OR a friction this scene
+Agenda is the rare structural hook: an NPC who, this scene, is pushing something involving the player. It comes in two flavors — a GOAL (they want something from the player) or a FRICTION (a confrontational impulse aimed at the player). Most scenes have NEITHER (omit the field entirely). The power of agenda comes from its scarcity — if every NPC has one, "agenda" loses meaning and the scene turns into multiplayer scheming. Default to none; only set one when there's a real reason this NPC is pushing this scene.
 
 WHEN to set an agenda (use STRONG judgment, default to omission):
 - The NPC has a recent_events line that OBVIOUSLY creates a personal stake in the player's presence (a witnessed wrong, an owed debt, a relative or contact known to be in the direction the player came from, a known prior interaction with the player). The stake must be SPECIFICALLY traceable to a recent_events entry — not invented.
@@ -46,6 +46,18 @@ DO NOT invent agendas from generic biographical details. A character with person
 
 DO NOT manufacture relatives, missing persons, debts, or traumas to justify an agenda. If the recent_events don't already establish them, they don't exist.
 
+FRICTION — the second flavor of agenda (situational, no past hook required)
+A FRICTION agenda is a confrontational impulse arising from the NPC's CURRENT state and the SETTING — not from a traceable past event. This is what lets a scene contain a hostile presence (a soused dockhand looking to take it out on someone, a swaggering tough sizing up a stranger, a sore loser spoiling to test the newcomer) rather than a room of helpful question-answerers. Rules:
+- Grounded in the NPC's CURRENT mood / personality / disposition / properties.role_intent PLUS what the setting permits — NOT in recent_events. (This is the ONE agenda type allowed to skip the recent_events hook.)
+- Still RARE, still counts against the one-per-scene cap. A tavern does NOT have a belligerent drunk every visit; most scenes still have NO agenda at all.
+- Only a FITTING NPC: someone whose subrole, drink, mood, or disposition plausibly supports it. A steady barkeep at his own bar is not spoiling for a fight; a drunk, a thug, or someone whose state has curdled might be.
+
+SETTING MODULATES A CARRIED TENDENCY (read the location description)
+Some NPCs carry a tendency in properties.role_intent (e.g. a predatory "ambush; demand coin; attack if refused"). That tendency is NOT a fixed behavior — the SCENE dials it up or down:
+- On the NPC's OWN ground, or a lawless / isolated / private place, a predatory tendency is LIVE: a friction agenda can be the open threat.
+- In a CROWDED, PUBLIC, or ORDERLY place (a busy tavern, a guarded market, a town square), the SAME tendency is SUPPRESSED — acting on it there is suicidal or absurd. It collapses into wariness, a held grudge, a hard sizing-up look, a low word — NOT open aggression. The agenda (if any) reflects only that suppressed form.
+The same person reads completely differently by setting: live and dangerous on their own turf, a quiet watchful presence among armed townsfolk.
+
 WHEN NOT to set one (almost always):
 - The NPC is just at their post (a barkeep on a quiet night, a guard on routine watch). Internal_state covers their flavor.
 - Nothing in recent_events or properties points at the player specifically.
@@ -53,8 +65,9 @@ WHEN NOT to set one (almost always):
 - The NPC is currently traveling with the player (`properties.following_player == true`). Followers don't have player-targeted agendas — they ARE with the player. Their internal_state should reflect being-with-the-player; their agenda should be omitted.
 
 WHAT an agenda looks like (player-targeted, concrete, achievable in one scene):
-- A SHAPE: <verb the NPC wants to do this scene> + <player-relevant subject> + <traceable hook in recent_events>
-- Vary the verbs (ask, demand, offer, warn, recruit, refuse, test, watch). Vary the subjects. The hook must reference a concrete recent_events entry, not generic backstory.
+- GOAL shape: <verb the NPC wants to do this scene> + <player-relevant subject> + <traceable hook in recent_events>. The hook must reference a concrete recent_events entry, not generic backstory.
+- FRICTION shape: <confrontational verb> + <the player as target> + <grounded in current mood / disposition / role_intent + setting>. No recent_events hook required for this flavor.
+- Vary the verbs (ask, demand, offer, warn, recruit, refuse, test, watch, provoke, threaten, corner, size up). Vary the subjects.
 - The agenda text MUST NOT regurgitate any phrasing from this prompt's example output. Generate it fresh from the specific NPC's actual data.
 
 CONSTRAINTS on agenda:

@@ -105,7 +105,7 @@ module Harness
           # to this segment is within SNAP_RADIUS? Excludes both the journey
           # origin (else we snap back to start on step 1) and the destination
           # (arrival is its own outcome).
-          snap = check_snap(journey.cursor_x, journey.cursor_y, new_x, new_y, exclude_ids: exclude_snap_ids)
+          snap = check_snap(journey.cursor_x, journey.cursor_y, new_x, new_y, dest.x, dest.y, exclude_ids: exclude_snap_ids)
           if snap
             total_minutes += step_min
             advance_cursor(journey, snap.x, snap.y, total_minutes)
@@ -214,11 +214,19 @@ module Harness
       end
 
       # Closest known top-level Location whose point-line distance to the
-      # segment (ax,ay) → (bx,by) is within SNAP_RADIUS, excluding the
-      # journey's destination (we treat destination arrival separately).
-      def check_snap(ax, ay, bx, by, exclude_ids:)
+      # segment (ax,ay) → (bx,by) is within SNAP_RADIUS — AND which is forward
+      # progress (strictly closer to the destination than the segment start).
+      # The progress filter is load-bearing: a neighbor sitting beside or
+      # behind the start (e.g. the city the player just left, 2 units off the
+      # route) is within SNAP_RADIUS of the first tiny step and would otherwise
+      # snap the player BACKWARD — the "teleported back to the starting city"
+      # bug. Origin and destination are excluded by id; everything else must
+      # earn the snap by being closer to the goal.
+      def check_snap(ax, ay, bx, by, dest_x, dest_y, exclude_ids:)
+        start_to_dest = Math.hypot(dest_x - ax, dest_y - ay)
         candidates = ::Location.where(parent_id: nil).where.not(x: nil, y: nil).where.not(id: exclude_ids).to_a
         candidates
+          .select { |l| Math.hypot(dest_x - l.x, dest_y - l.y) < start_to_dest } # forward progress only
           .map { |l| [ l, point_segment_distance(l.x, l.y, ax, ay, bx, by) ] }
           .select { |_, d| d <= SNAP_RADIUS }
           .min_by { |_, d| d }

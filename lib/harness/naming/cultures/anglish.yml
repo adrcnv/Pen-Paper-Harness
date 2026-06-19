@@ -4,7 +4,11 @@ id: anglish
 weight: 10
 flavor: "anglish / old english — earthy, monosyllabic, occupational surnames"
 
-given:
+# Given names are split by gender; the engine rolls a gender, then draws from
+# the matching pool, so a drawn name implies a gender (Hilde female, Garrick
+# male). Keep the two pools DISJOINT — a name in both makes gender_for
+# ambiguous. Library derives a combined `given` = given_male + given_female.
+given_male:
   - Aelric
   - Alden
   - Bram
@@ -28,6 +32,8 @@ given:
   - Tomis
   - Wystan
   - Wilmer
+
+given_female:
   - Bess
   - Aleth
   - Hilde
@@ -37,6 +43,13 @@ given:
   - Annwyn
   - Goda
   - Mereth
+  - Rowena
+  - Maud
+  - Aelfwyn
+  - Wynflaed
+  - Leofgyth
+  - Saewara
+  - Cwenild
 
 family:
   - Ashford

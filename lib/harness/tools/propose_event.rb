@@ -289,15 +289,25 @@ module Harness
       end
 
       def success_result(event, scope, location, game_time, participants, mode:, extra: {})
+        # Echo back a summary of WHAT was committed so the model has a fat
+        # positive feedback signal in its own context. Without this, the
+        # only thing the tool result tells the model is "an id was created" —
+        # in long tool-use loops, the model loses track of its prior call's
+        # args and re-emits the same propose_event multiple times.
+        details = event.details.is_a?(Hash) ? event.details : {}
+        trigger = details["trigger"]
+        summary_source = trigger.presence || details["summary"].presence || details["narrative"].to_s.presence
+        committed_summary = "[committed event_id=#{event.id}] #{summary_source.to_s[0, 120]}"
         {
-          "event_id"     => event.id,
-          "mode"         => mode,
-          "scope"        => scope,
-          "location_id"  => location&.id,
-          "game_time"    => game_time,
-          "participants" => participants.map { |p|
+          "event_id"          => event.id,
+          "mode"              => mode,
+          "scope"             => scope,
+          "location_id"       => location&.id,
+          "game_time"         => game_time,
+          "participants"      => participants.map { |p|
             { "character_id" => p[:character].id, "role" => p[:role] }
-          }
+          },
+          "committed_summary" => committed_summary
         }.merge(extra)
       end
     end

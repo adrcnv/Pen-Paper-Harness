@@ -77,12 +77,13 @@ module Harness
         )
 
         {
-          "faction_id" => faction.id,
-          "name"       => faction.name,
-          "subrole"    => faction.subrole,
-          "is_kingdom" => faction.is_kingdom,
-          "event_id"   => event.id,
-          "game_time"  => context.game_time
+          "faction_id"        => faction.id,
+          "name"              => faction.name,
+          "subrole"           => faction.subrole,
+          "is_kingdom"        => faction.is_kingdom,
+          "event_id"          => event.id,
+          "game_time"         => context.game_time,
+          "committed_summary" => "[committed faction_id=#{faction.id}] #{faction.name} (#{faction.subrole}#{faction.is_kingdom ? ', kingdom' : ''})"
         }
       end
     end

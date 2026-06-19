@@ -166,6 +166,10 @@ module Harness
               name:          mech_name,
               subrole:       e["subrole"],
               location_id:   location.id,
+              # Residents (settlement dwellers, lair occupants like bandits/
+              # hermits) live where they're spawned; NPCs filling a social
+              # waypoint / open wild stay homeless (evicted/culled on exit).
+              home_location_id: (location.residence? ? location.id : nil),
               properties:    props,
               prose_context: ctx_parts.any? ? ctx_parts.join("\n") : nil
             )

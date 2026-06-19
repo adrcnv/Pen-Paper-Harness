@@ -99,6 +99,26 @@ RSpec.describe Harness::Tools::Travel do
       expect(Journey.active.destination_id).to eq(saltkeep.id)
     end
 
+    it "never snaps backward to a neighbor that sits behind the start" do
+      # Regression: "continue traveling to Iron Pass" snapped the player BACK to
+      # the city they'd just left, because that city was within SNAP_RADIUS of
+      # the first tiny step even though it was FARTHER from the destination.
+      # Real coords from the playthrough.
+      crossing  = Location.create!(name: "Crossing",  x: 91.1, y: 49.5, biome: "lowland")
+      iron_pass = Location.create!(name: "Iron Pass", x: 86.6, y: 29.1, biome: "lowland")
+      osmere    = Location.create!(name: "Osmere",    x: 91.5, y: 51.5, biome: "lowland") # behind the start
+      ctx = Harness::Turn::Context.new(player_location: crossing, game_time: 100)
+
+      result = described_class.new.call({ "destination_id" => iron_pass.id }, ctx)
+
+      # Osmere is closer to the start than to the destination → filtered out as a
+      # snap target. With no forward snap candidate, the trip simply arrives.
+      expect(ctx.player_location).not_to eq(osmere)
+      expect(result["snapped_to"]).to be_nil
+      expect(result["outcome"]).to eq("arrived")
+      expect(ctx.player_location).to eq(iron_pass)
+    end
+
     it "does not snap to the destination itself (arrival path handles that)" do
       # Place a tiny location very close to the destination — it should NOT
       # snap there before arriving (destination is excluded from snap candidates).

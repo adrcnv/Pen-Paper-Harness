@@ -84,6 +84,21 @@ RSpec.describe Harness::Scene::InternalState do
     expect(out.agendas).to eq({ maren.id => "wants to ask the player about the docks; her brother went missing last week and the player just walked in" })
   end
 
+  it "carries a FRICTION agenda (hostile, no recent_events hook) through unchanged" do
+    # move 2: a confrontational agenda is a first-class agenda. The plumbing
+    # must not special-case or reject hostile text — it's just an agenda string.
+    maren
+    llm = StubLLM.new { |_p|
+      good_output([ "Maren" ], agenda: {
+        "character_name" => "Maren",
+        "text"           => "drunk and spoiling for a fight, sizing up the newcomer for an excuse"
+      })
+    }
+    out = described_class.new(llm_client: llm, logger: logger)
+                         .generate(location: tavern, characters: [ maren ])
+    expect(out.agendas).to eq({ maren.id => "drunk and spoiling for a fight, sizing up the newcomer for an excuse" })
+  end
+
   it "agendas default to {} when LLM omits the field" do
     maren
     llm = StubLLM.new { |_p| good_output([ "Maren" ]) }

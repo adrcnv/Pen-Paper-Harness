@@ -5,7 +5,8 @@ id: myrr
 weight: 5
 flavor: "archaic high-fantasy — apostrophes, vowel clusters, ceremonial roots"
 
-given:
+# Split by gender; pools DISJOINT. Library derives `given` = the two combined.
+given_male:
   - Aelorin
   - Caelthen
   - Daerion
@@ -16,7 +17,6 @@ given:
   - Joren
   - Kaervas
   - Lorimar
-  - Maerith
   - Nelarion
   - Oryn
   - Pellanor
@@ -29,6 +29,9 @@ given:
   - Yorvel
   - Zarvian
   - Cael
+
+given_female:
+  - Maerith
   - Sariel
   - Aerin
   - Nymria
@@ -36,6 +39,14 @@ given:
   - Velora
   - Vaelis
   - Iselle
+  - Lirien
+  - Naeris
+  - Sylith
+  - Caelis
+  - Ysme
+  - Vaela
+  - Elaeth
+  - Maelyn
 
 family:
   - Aurinvale

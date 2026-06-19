@@ -73,7 +73,9 @@ module Harness
     # COMBAT_TOOLS; otherwise the supplied normal-mode registry (defaults to
     # DEFAULT_TOOLS).
     def self.tools_for(context, normal_tools: DEFAULT_TOOLS)
-      context&.active_scene&.in_combat? ? COMBAT_TOOLS : normal_tools
+      return COMBAT_TOOLS if context&.active_scene&.in_combat?
+      return normal_tools if ::Harness::Quests.enabled?
+      normal_tools.reject { |t| t == Tools::AcceptQuest }
     end
 
     def initialize(context:, tools: DEFAULT_TOOLS, logger: Rails.logger)

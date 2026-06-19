@@ -13,16 +13,14 @@ module Harness
     #   combat     — bandits at a defile, marauders at a rotted shrine, raiders
     #                watching the road. Hostile NPCs that initiate fighting.
     #
-    # WEIGHTS BELOW ARE PLAYTEST MODE — combat is set to 100% so every fired
-    # encounter is a fight. Once combat is verified end-to-end (resolve →
-    # damage → HP → downed → XP) the long-term weights should land roughly:
-    #
-    #   social    : 0.55
-    #   discovery : 0.30
-    #   combat    : 0.15
-    #
-    # That puts hostile encounters at ~1.5% of traversal segments overall
-    # (10% encounter-rate × 15% combat-bucket × cooldown gating).
+    # Weights are relative; pick_bucket normalizes against their sum. Effective
+    # per-segment rate per bucket = ENCOUNTER_RATE × (weight / sum_of_weights).
+    # At the current ENCOUNTER_RATE=0.25 and weights below, that's roughly:
+    #   social    : 0.25 × 0.70 ≈ 17.5% of segments
+    #   discovery : 0.25 × 0.15 ≈  3.75%
+    #   combat    : 0.25 × 0.15 ≈  3.75%
+    # Cross-region trips (~15 segments) still hit at least one encounter ~98%
+    # of the time, but most are non-hostile.
     #
     # environmental (storm, washout, river crossing) was dropped for v1 —
     # off-scene dex/hp-drain mechanics felt annoying without the rest of the
@@ -32,9 +30,9 @@ module Harness
       COOLDOWN_MINUTES = 30    # game-time minutes after a fire before dice may roll again
 
       BUCKET_WEIGHTS = {
-        "social"    => 0.0,
-        "discovery" => 0.0,
-        "combat"    => 1.0
+        "social"    => 0.70,
+        "discovery" => 0.15,
+        "combat"    => 0.15
       }.freeze
 
       # Returns true when the dice fires AND the journey isn't on cooldown.

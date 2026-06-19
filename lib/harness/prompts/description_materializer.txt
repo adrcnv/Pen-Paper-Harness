@@ -32,6 +32,7 @@ INPUT format
 {
   "name":          "<character name>",
   "subrole":       "<archetype>",
+  "gender":        "<male | female>",
   "level":         <int>,
   "stats":         { "strength": <int>, "dexterity": <int>, "constitution": <int>, "intelligence": <int>, "wisdom": <int>, "charisma": <int> },
   "properties":    <object: existing properties; may include appearance_intent, faction_id, personality (existing), etc>,
@@ -50,6 +51,7 @@ HARD RULES
 - Output VALID JSON. No leading/trailing prose.
 - Both keys present. No extra fields.
 - Each value is a string between 30 and 400 characters.
-- Do NOT use the character's name in either field — the prose describes them in third-person attributes only ("he is", "she is", "they are" — name-less).
+- Use pronouns that MATCH INPUT.gender: male → he/him/his, female → she/her/hers. This is a fixed fact about the character, decided upstream — never contradict it, and stay consistent within both fields. (Their NAME may read either way to you; the gender field is authoritative, not your read of the name.)
+- Do NOT use the character's name in either field — the prose describes them in third-person attributes only (using the gendered pronoun above — name-less).
 - Do NOT contradict the input. If subrole is "barkeep" and scenario is absent, do NOT make them a soldier in disguise. The scenario is what creates legitimate hidden depths; without one, the character is what they appear to be.
 - Description MUST be observable. No "he is wracked by guilt over the war" (interior state, not visible). YES "he looks tired in a way sleep doesn't fix" (observable inference).

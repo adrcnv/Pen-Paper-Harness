@@ -33,6 +33,38 @@ RSpec.describe Harness::Naming::Library do
     end
   end
 
+  it "requires non-empty, disjoint gendered given pools" do
+    described_class.all.each do |c|
+      expect(c["given_male"]).to be_an(Array).and(be_present)
+      expect(c["given_female"]).to be_an(Array).and(be_present)
+      expect(c["given_male"] & c["given_female"]).to be_empty,
+        "#{c['id']}: gendered pools overlap"
+    end
+  end
+
+  it "derives `given` as the union of the gendered pools" do
+    described_class.all.each do |c|
+      expect(c["given"]).to match_array(c["given_male"] + c["given_female"])
+    end
+  end
+
+  it "rejects a culture whose gendered pools overlap" do
+    bad = Tempfile.new([ "overlap_culture", ".yml" ])
+    bad.write({
+      "id" => "ovl", "weight" => 1,
+      "given_male" => [ "Sasha" ], "given_female" => [ "Sasha" ], "family" => []
+    }.to_yaml)
+    bad.flush
+    stub_const("Harness::Naming::Library::LIBRARY_DIR", Pathname.new(File.dirname(bad.path)))
+    described_class.reload!
+    expect { described_class.all }.to raise_error(described_class::InvalidLibrary, /disjoint/)
+  ensure
+    bad&.close
+    bad&.unlink
+    stub_const("Harness::Naming::Library::LIBRARY_DIR", Rails.root.join("lib/harness/naming/cultures"))
+    described_class.reload!
+  end
+
   it "validates each culture's family pool is an array of strings" do
     described_class.all.each do |c|
       expect(c["family"]).to be_an(Array)
@@ -42,7 +74,7 @@ RSpec.describe Harness::Naming::Library do
 
   it "rejects malformed YAML at load time" do
     bad = Tempfile.new([ "bad_culture", ".yml" ])
-    bad.write({ "id" => "x" }.to_yaml)  # missing weight/given/family
+    bad.write({ "id" => "x" }.to_yaml)  # missing weight/given_male/given_female/family
     bad.flush
 
     stub_const("Harness::Naming::Library::LIBRARY_DIR", Pathname.new(File.dirname(bad.path)))

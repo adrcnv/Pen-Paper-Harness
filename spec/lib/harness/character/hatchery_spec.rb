@@ -78,10 +78,11 @@ RSpec.describe Harness::Character::Hatchery do
       expect(char).to be_persisted
       expect(char.level).to eq(1)
       expect(char.strength).to eq(10)
-      # description never ran, so properties contain only what apply_defaults
-      # sets — Lens.apply! runs in the fallback path so a `lens` key is the
-      # only property present.
-      expect(char.properties.keys).to eq([ "lens" ])
+      # description never ran, so properties contain only what the always-on
+      # steps set: gender (grounded before stats, so it survives the fallback)
+      # and lens (Lens.apply! runs in the fallback path).
+      expect(char.properties.keys).to contain_exactly("gender", "lens")
+      expect(%w[male female]).to include(char.properties["gender"])
       expect(Harness::Character::Lens::VALID).to include(char.properties["lens"])
     end
 
@@ -96,6 +97,37 @@ RSpec.describe Harness::Character::Hatchery do
 
       expect(char.properties["personality"]).to be_present
       expect(char.properties["appearance"]).to be_present
+    end
+
+    describe "gender grounding" do
+      it "grounds gender from the name's pool membership (mechanical names round-trip)" do
+        llm = llm_returning
+        # "Astrid" is a nord female pool name; "Bjorn" is nord male.
+        she = described_class.spawn(llm_grunt: llm, name: "Astrid", subrole: "smith", location: city)
+        he  = described_class.spawn(llm_grunt: llm, name: "Bjorn",  subrole: "smith", location: city)
+        expect(she.properties["gender"]).to eq("female")
+        expect(he.properties["gender"]).to eq("male")
+      end
+
+      it "still sets a gender for a name in no pool (LLM-invented), so it's never nil" do
+        char = described_class.spawn(llm_grunt: nil, name: "Zxqwflorn", subrole: "drunk", location: city)
+        expect(%w[male female]).to include(char.properties["gender"])
+      end
+
+      it "is deterministic for an out-of-pool name given a fixed rng" do
+        a = described_class.spawn(llm_grunt: nil, name: "Zxqwflorn", subrole: "x", location: city, rng: Random.new(7))
+        b = described_class.spawn(llm_grunt: nil, name: "Zxqwflorn", subrole: "x", location: city, rng: Random.new(7))
+        expect(a.properties["gender"]).to eq(b.properties["gender"])
+      end
+
+      it "respects a gender already set by the caller (no overwrite)" do
+        # Even though "Astrid" reads female, an explicit caller-set gender wins.
+        char = described_class.spawn(
+          llm_grunt: nil, name: "Astrid", subrole: "smith", location: city,
+          properties: { "gender" => "male" }
+        )
+        expect(char.properties["gender"]).to eq("male")
+      end
     end
 
     it "keeps stats but skips description when only the description call fails" do

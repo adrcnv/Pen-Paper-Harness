@@ -89,6 +89,12 @@ module Harness
             return character
           end
 
+          # Ground gender as a stored fact BEFORE the description materializer
+          # runs (it reads it to pick consistent pronouns) and so every
+          # downstream reader — internal_state, reasoning loop, narration —
+          # agrees instead of re-guessing from an ambiguous name each turn.
+          ensure_gender!(character, rng: rng)
+
           if llm_grunt.nil?
             apply_defaults(character)
             roll_inventory_if_empty(character, rng: rng)
@@ -146,6 +152,22 @@ module Harness
         end
 
         private
+
+        # Guarantee properties.gender is set ("male" / "female"). Source of
+        # truth, in order: a gender already on the row (respect callers /
+        # re-spawn), the name's pool membership (mechanical names came from a
+        # gendered pool, so this is exact; LLM names that happen to be pool
+        # names resolve too), and finally a 50/50 roll for an invented name in
+        # no pool — stored ONCE so it stays consistent forever after. Idempotent.
+        def ensure_gender!(character, rng:)
+          props = character.properties || {}
+          existing = props["gender"]
+          return character if existing.is_a?(String) && !existing.strip.empty?
+
+          gender = ::Harness::Naming.gender_for(character.name) || (rng.rand < 0.5 ? "male" : "female")
+          character.update!(properties: props.merge("gender" => gender))
+          character
+        end
 
         # Set properties.dormant = true on the attrs hash. Existing
         # properties are preserved; dormant just adds to them.

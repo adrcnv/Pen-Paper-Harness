@@ -5,7 +5,7 @@ module Harness
     # a bad turn later = loading this row, reading tool_calls in order.
     class Transcript
       attr_accessor :input, :reasoning_prompt, :narration, :narration_prompt,
-                    :location_id, :error, :combat
+                    :location_id, :error, :combat, :unresolved, :notice
       attr_reader :tool_calls
 
       def initialize(input:, location_id: nil)
@@ -17,6 +17,16 @@ module Harness
         @narration        = nil
         @error            = nil
         @combat           = nil
+        # When a chain dead-ends (redispatch cap, unbuilt runner, failed
+        # re-plan), this holds the intent that could not be carried out. It's
+        # the signal to narration that the player's action did NOT happen — so
+        # it renders a non-event instead of fabricating success.
+        @unresolved       = nil
+        # Out-of-character line shown to the PLAYER (not the fiction, not
+        # recorded into scene history) when a turn dead-ends — a justified
+        # wall-break so they know it was an engine limit, not an in-world
+        # refusal, and can rephrase. The frontend prints it after narration.
+        @notice           = nil
       end
 
       def record_tool_call(call, result)
@@ -25,6 +35,13 @@ module Harness
           "args"   => call.args,
           "result" => result
         }
+      end
+
+      # Append pre-built tool_call records ({name:, args:, result:} hashes) —
+      # the shape runners return in their Outcome. Used by the state-machine
+      # executor; the agentic loop uses record_tool_call (ToolCall + result).
+      def record_tool_calls(calls)
+        @tool_calls.concat(Array(calls))
       end
 
       # Returns the persisted TurnLog row.

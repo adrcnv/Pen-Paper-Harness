@@ -122,6 +122,7 @@ module Harness
           name:          name,
           subrole:       faction.subrole || "stranger",
           location_id:   current_location.id,
+          home_location_id: (current_location.residence? ? current_location.id : nil),
           properties:    props,
           prose_context: "Sent by #{faction.name} (#{faction.subrole}). #{pa.intent_text}"
         )

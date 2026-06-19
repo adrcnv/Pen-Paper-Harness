@@ -417,6 +417,33 @@ RSpec.describe "Harness::Tools propose family" do
       expect(korr.subrole).to eq("stranger")
     end
 
+    it "homes a character spawned in a settlement (home == spawn location)" do
+      described_class.new.call(
+        { "name" => "Bess", "subrole" => "weaver", "connection" => "lives in town" }, context
+      )
+      expect(Npc.find_by(name: "Bess").home_location_id).to eq(tavern.id)
+    end
+
+    it "leaves a character spawned at a social waypoint homeless (a passing traveler)" do
+      waypoint = Location.create!(name: "Crossing", x: 5.0, y: 5.0, biome: "lowland",
+                                  properties: { "kind" => "wilderness_leaf", "encounter_type" => "social" })
+      ctx = Harness::Turn::Context.new(player_location: waypoint, game_time: 100)
+      described_class.new.call(
+        { "name" => "Hodge", "subrole" => "traveler", "connection" => "passing through" }, ctx
+      )
+      expect(Npc.find_by(name: "Hodge").home_location_id).to be_nil
+    end
+
+    it "homes a character spawned at a lair to the lair (a bandit lives at his ambush site)" do
+      lair = Location.create!(name: "Ambush Bend", x: 6.0, y: 6.0, biome: "lowland",
+                              properties: { "kind" => "wilderness_leaf", "encounter_type" => "combat" })
+      ctx = Harness::Turn::Context.new(player_location: lair, game_time: 100)
+      described_class.new.call(
+        { "name" => "Vorn", "subrole" => "bandit", "connection" => "ambushes the pass" }, ctx
+      )
+      expect(Npc.find_by(name: "Vorn").home_location_id).to eq(lair.id)
+    end
+
     it "stores initial properties" do
       described_class.new.call(
         {

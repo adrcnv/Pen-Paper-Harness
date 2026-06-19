@@ -93,18 +93,32 @@ RSpec.describe Harness::Resolver do
   end
 
   describe ".tools_for" do
-    it "returns DEFAULT_TOOLS when no active scene" do
+    # Default state: HARNESS_QUESTS unset → quests disabled → AcceptQuest
+    # filtered out of the LLM-visible registry. See lib/harness/quests.rb.
+    let(:default_tools_no_quests) { Harness::Resolver::DEFAULT_TOOLS.reject { |t| t == Harness::Tools::AcceptQuest } }
+
+    it "returns DEFAULT_TOOLS minus AcceptQuest when no active scene (quests disabled)" do
       ctx = Harness::Turn::Context.new(player_location: location)
-      expect(Harness::Resolver.tools_for(ctx)).to eq(Harness::Resolver::DEFAULT_TOOLS)
+      expect(Harness::Resolver.tools_for(ctx)).to eq(default_tools_no_quests)
     end
 
-    it "returns DEFAULT_TOOLS when scene is not in combat" do
+    it "returns DEFAULT_TOOLS minus AcceptQuest when scene is not in combat (quests disabled)" do
       ctx = Harness::Turn::Context.new(player_location: location)
       ctx.active_scene = Harness::Scene::Active.new(
         location: location, snapshot: nil, narrations: [], internal_state: {}, agendas: {},
         extras: [], entered_at_game_time: 0
       )
-      expect(Harness::Resolver.tools_for(ctx)).to eq(Harness::Resolver::DEFAULT_TOOLS)
+      expect(Harness::Resolver.tools_for(ctx)).to eq(default_tools_no_quests)
+    end
+
+    it "returns full DEFAULT_TOOLS when HARNESS_QUESTS=on" do
+      ctx = Harness::Turn::Context.new(player_location: location)
+      ENV["HARNESS_QUESTS"] = "on"
+      begin
+        expect(Harness::Resolver.tools_for(ctx)).to eq(Harness::Resolver::DEFAULT_TOOLS)
+      ensure
+        ENV.delete("HARNESS_QUESTS")
+      end
     end
 
     it "returns COMBAT_TOOLS when scene is in combat" do
