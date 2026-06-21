@@ -69,6 +69,31 @@ RSpec.describe Harness::Shadow::Planner do
     end
   end
 
+  describe "reasoning field" do
+    it "captures the planner's reasoning alongside the plan" do
+      body = {
+        "reasoning" => "The ridge is not in nearby_locations, so it must be created before it can be entered.",
+        "plan"      => [ { "runner" => "worldbuilding", "reason" => "make ridge" }, { "runner" => "movement", "reason" => "go" } ]
+      }.to_json
+      ctx = context_with(grunt: adapter(body), location: tavern)
+      sm  = scene_manager_for(tavern)
+
+      result = described_class.run(context: ctx, scene_manager: sm, input: "head up to the ridge")
+      expect(result["plans"]["shared"]["reasoning"]).to match(/must be created before/)
+      expect(result["plans"]["shared"]["plan"].map { |s| s["runner"] }).to eq(%w[worldbuilding movement])
+    end
+
+    it "leaves reasoning nil when the model omits it" do
+      body = { "plan" => [ { "runner" => "inspection", "reason" => "look" } ] }.to_json
+      ctx  = context_with(grunt: adapter(body), location: tavern)
+      sm   = scene_manager_for(tavern)
+
+      result = described_class.run(context: ctx, scene_manager: sm, input: "look")
+      expect(result["plans"]["shared"]["reasoning"]).to be_nil
+      expect(result["plans"]["shared"]["plan"].first["runner"]).to eq("inspection")
+    end
+  end
+
   describe "tolerant parsing" do
     it "strips code fences" do
       body = "```json\n{\"plan\": [{\"runner\": \"movement\", \"reason\": \"go\"}]}\n```"

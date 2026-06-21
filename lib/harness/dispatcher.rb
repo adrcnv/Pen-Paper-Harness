@@ -17,7 +17,7 @@ module Harness
     #   raw:         raw model output (for debugging a parse failure)
     #   ms:          planner latency
     #   model:       which model planned
-    Plan = Struct.new(:steps, :parse_error, :raw, :ms, :model, keyword_init: true) do
+    Plan = Struct.new(:steps, :reasoning, :parse_error, :raw, :ms, :model, keyword_init: true) do
       def empty?  = steps.nil? || steps.empty?
       def failed? = !parse_error.nil?
     end
@@ -41,6 +41,7 @@ module Harness
       }
       plan = Plan.new(
         steps:       steps,
+        reasoning:   res["reasoning"],
         parse_error: res["parse_error"],
         raw:         res["raw"],
         ms:          res["duration_ms"],
@@ -53,6 +54,7 @@ module Harness
       else
         seq = steps.map(&:runner).join(" → ")
         @logger.info  { "[Dispatcher] plan (#{plan.ms}ms, #{plan.model}): [#{seq}]" }
+        @logger.info  { "[Dispatcher] reasoning: #{plan.reasoning}" } if plan.reasoning.present?
         steps.each_with_index { |s, i| @logger.debug { "[Dispatcher]   step #{i + 1}: #{s.runner} — #{s.intent}" } }
         unbuilt = steps.map(&:runner).reject { |r| built?(r) }.uniq
         @logger.debug { "[Dispatcher] unbuilt runners in plan: #{unbuilt.inspect}" } if unbuilt.any?

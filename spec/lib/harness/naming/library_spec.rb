@@ -52,12 +52,40 @@ RSpec.describe Harness::Naming::Library do
     bad = Tempfile.new([ "overlap_culture", ".yml" ])
     bad.write({
       "id" => "ovl", "weight" => 1,
-      "given_male" => [ "Sasha" ], "given_female" => [ "Sasha" ], "family" => []
+      "given_male" => [ "Sasha" ], "given_female" => [ "Sasha" ], "family" => [],
+      "place_prefix" => [ "Oak" ], "place_suffix" => [ "haven" ], "kingdom_suffix" => [ "Reach" ]
     }.to_yaml)
     bad.flush
     stub_const("Harness::Naming::Library::LIBRARY_DIR", Pathname.new(File.dirname(bad.path)))
     described_class.reload!
     expect { described_class.all }.to raise_error(described_class::InvalidLibrary, /disjoint/)
+  ensure
+    bad&.close
+    bad&.unlink
+    stub_const("Harness::Naming::Library::LIBRARY_DIR", Rails.root.join("lib/harness/naming/cultures"))
+    described_class.reload!
+  end
+
+  it "validates each culture's place-name morphology pools" do
+    described_class.all.each do |c|
+      %w[place_prefix place_suffix kingdom_suffix].each do |pool|
+        expect(c[pool]).to be_an(Array).and(be_present), "#{c['id']}: #{pool}"
+        expect(c[pool]).to all(be_a(String))
+      end
+    end
+  end
+
+  it "rejects a culture missing the place-name pools" do
+    bad = Tempfile.new([ "no_place_culture", ".yml" ])
+    bad.write({
+      "id" => "npl", "weight" => 1,
+      "given_male" => [ "Garrick" ], "given_female" => [ "Hilde" ], "family" => []
+      # no place_prefix / place_suffix / kingdom_suffix
+    }.to_yaml)
+    bad.flush
+    stub_const("Harness::Naming::Library::LIBRARY_DIR", Pathname.new(File.dirname(bad.path)))
+    described_class.reload!
+    expect { described_class.all }.to raise_error(described_class::InvalidLibrary, /place_prefix/)
   ensure
     bad&.close
     bad&.unlink

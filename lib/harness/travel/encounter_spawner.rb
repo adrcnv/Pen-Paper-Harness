@@ -20,7 +20,18 @@ module Harness
     module EncounterSpawner
       def self.spawn(name:, description:, x:, y:, encounter_type:, context:)
         anchor = nearest_top_level(x, y)
-        biome  = anchor&.biome || ::Harness::Worldgen::Biome::LOWLAND
+        geo    = ::World.geography
+
+        props = { "kind" => "wilderness_leaf", "encounter_type" => encounter_type }
+        if geo
+          terrain = ::Harness::Worldgen::Terrain.at(geo: geo, x: x, y: y)
+          biome   = ::Harness::Worldgen::Biome.coarse(terrain)
+          props["terrain"]   = terrain.to_s
+          props["coastal"]   = geo.coastal?(x, y)
+          props["riverside"] = geo.riverside?(x, y)
+        else
+          biome = anchor&.biome || ::Harness::Worldgen::Biome::LOWLAND
+        end
 
         loc = ::ActiveRecord::Base.transaction do
           ::Location.create!(
@@ -29,10 +40,7 @@ module Harness
             x:           x,
             y:           y,
             biome:       biome,
-            properties:  {
-              "kind"           => "wilderness_leaf",
-              "encounter_type" => encounter_type
-            }
+            properties:  props
           )
         end
 

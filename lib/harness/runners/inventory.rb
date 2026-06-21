@@ -30,6 +30,15 @@ module Harness
         when "transfer_coins"
           return redispatch("transfer without to_id/amount", tcs) unless spec["to_id"] && spec["amount"]
           execute_tool(resolver, "transfer_coins", { "from_id" => from, "to_id" => spec["to_id"], "amount" => spec["amount"], "reason" => spec["reason"] }, into: tcs)
+        when "buy"
+          return redispatch("buy without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          execute_tool(resolver, "buy_item", { "item_id" => spec["item_id"], "merchant_id" => spec["to_id"], "buyer_id" => player.id }, into: tcs)
+        when "sell"
+          return redispatch("sell without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          execute_tool(resolver, "sell_item", { "item_id" => spec["item_id"], "merchant_id" => spec["to_id"], "seller_id" => player.id }, into: tcs)
+        when "open"
+          return redispatch("open without item_id", tcs) unless spec["item_id"]
+          execute_tool(resolver, "open_container", { "item_id" => spec["item_id"], "by_character_id" => player.id }, into: tcs)
         else
           return redispatch("unknown inventory action #{spec['action'].inspect}", tcs)
         end

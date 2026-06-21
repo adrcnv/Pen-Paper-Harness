@@ -4,6 +4,62 @@ id: nord
 weight: 7
 flavor: "norse-ish — patronymics, stone-and-sea family names, harsh consonants"
 
+# Place-name morphology — see anglish.yml for the full explanation.
+# place_prefix+place_suffix ("Frost"+"heim" → Frostheim) or place_prefix + a
+# space place_word ("Iron Fell"); kingdoms add a kingdom_suffix.
+place_prefix:
+  - Ulf
+  - Frost
+  - Iron
+  - Storm
+  - Vald
+  - Skag
+  - Thrand
+  - Haug
+  - Fjall
+  - Vik
+  - Nord
+  - Isen
+  - Grim
+  - Hrafn
+  - Eld
+  - Sten
+  - Hamar
+  - Drakk
+  - Kald
+  - Bjarn
+  - Svart
+  - Geir
+place_suffix:
+  - heim
+  - vik
+  - fjord
+  - gard
+  - by
+  - stad
+  - ness
+  - holt
+  - dal
+  - fell
+  - strand
+  - berg
+  - oyr
+place_word:
+  - Fell
+  - Strand
+  - Ness
+  - Watch
+  - Hold
+  - Bay
+  - Crag
+kingdom_suffix:
+  - Jarldom
+  - Holdfast
+  - Dominion
+  - Fells
+  - Reach
+  - Realm
+
 # Split by gender; pools DISJOINT. Library derives `given` = the two combined.
 given_male:
   - Arn

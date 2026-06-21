@@ -9,24 +9,24 @@ module Harness
     # session crashes mid-scene, the in-memory list is lost (extraction for
     # that scene gets skipped on next launch). Acceptable MVP weakness;
     # future `conversations` table can rebuild from TurnLog by scene_id.
-    # `agenda_silent_turns` (hash: character_id => integer) counts consecutive
-    # turns since the NPC last took a structural action. Reset to 0 when the
-    # NPC acts (committed as actor in any propose_event / resolve this turn);
-    # incremented otherwise. When the count crosses AGENDA_PUSH_THRESHOLD,
-    # query_scene surfaces `agenda.push_now: true` for that character — the
-    # reasoning prompt's AGENDAS rule turns that into a forced beat.
-    AGENDA_PUSH_THRESHOLD = 2
-
+    #
+    # `agendas` (hash: character_id => text) holds at most one per scene — the
+    # player-targeted GOAL/FRICTION seed from Scene::InternalState. It's inert
+    # CONTENT: surfaced as scene context, consumed by nothing here. The
+    # decision of WHEN an NPC acts on an agenda belongs to the (forthcoming)
+    # initiative pass, not to a silent-turn counter on this struct. The old
+    # push-pressure machinery (silent-turn ticking / overdue / push_now) was
+    # removed precisely to avoid two places deciding initiative timing.
+    # `initiative_cooldown` (int) + `initiative_pushes` (char_id => count) are
+    # the Scene::Initiative pass's OWN scene-scoped bookkeeping — cadence gate
+    # and per-agenda push count (for escalation). Not surfaced to query_scene,
+    # not the old per-character pressure that was torn out; this is the single
+    # place the pass tracks timing, and it dies with the scene.
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
-      :agenda_silent_turns, :combat,
+      :combat, :initiative_cooldown, :initiative_pushes,
       keyword_init: true
     ) do
-      def initialize(*)
-        super
-        self.agenda_silent_turns ||= Hash.new(0)
-      end
-
       # Combat sub-mode helpers. `combat` is nil when no fight is running; set
       # by Tools::StartCombat, cleared by Combat::Loop's end_combat!. While
       # set, the resolver serves the narrow combat-mode tool surface (see
@@ -45,28 +45,6 @@ module Harness
 
       def append_narration(input, narration)
         narrations << { "input" => input, "narration" => narration }
-      end
-
-      # End-of-turn bookkeeping for agenda push pressure. `acted_npc_ids` is
-      # the set of NPC character_ids who appeared as `actor` in any tool
-      # result this turn. NPCs with agendas who acted reset to 0; those who
-      # didn't increment by 1.
-      def tick_agendas!(acted_npc_ids)
-        ids = (acted_npc_ids || []).map(&:to_i).to_set
-        (agendas || {}).each_key do |char_id|
-          if ids.include?(char_id.to_i)
-            agenda_silent_turns[char_id] = 0
-          else
-            agenda_silent_turns[char_id] = agenda_silent_turns[char_id].to_i + 1
-          end
-        end
-      end
-
-      # True iff this NPC has an agenda AND it's been at least
-      # AGENDA_PUSH_THRESHOLD turns since they last acted.
-      def agenda_overdue?(character_id)
-        return false unless (agendas || {}).key?(character_id)
-        agenda_silent_turns[character_id].to_i >= AGENDA_PUSH_THRESHOLD
       end
 
       # Returns the prose line for this character_id, or nil if not generated

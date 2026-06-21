@@ -1,5 +1,8 @@
 class Location < ApplicationRecord
-  ALLOWED_TERRAINS   = %w[coast highland plains forest desert marsh mountain].freeze
+  # The single terrain vocabulary, sourced from worldgen's fine taxonomy so the
+  # LLM (fed this via the {{TERRAINS}} preamble token) speaks the same language
+  # the map is generated and stored in. No separate coarse list to drift.
+  ALLOWED_TERRAINS   = ::Harness::Worldgen::Terrain::LAND.map(&:to_s).freeze
   KINGDOM_ONLY_KINDS = %w[embassy garrison palace court barracks royal_residence].freeze
 
   belongs_to :parent,  class_name: "Location", optional: true

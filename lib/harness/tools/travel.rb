@@ -164,12 +164,14 @@ module Harness
       end
 
       def spawn_encounter(bucket, x, y, context)
-        anchor = ::Harness::Travel::EncounterSpawner.nearest_top_level(x, y)
-        biome  = anchor&.biome || ::Harness::Worldgen::Biome::LOWLAND
+        anchor  = ::Harness::Travel::EncounterSpawner.nearest_top_level(x, y)
+        terrain = ::World.terrain_at(x, y)&.to_s ||
+                  (anchor && anchor.properties.is_a?(Hash) && anchor.properties["terrain"]) ||
+                  anchor&.biome || ::Harness::Worldgen::Biome::LOWLAND
 
         place = ::Harness::Travel::EncounterPlace
           .new(llm_client: context.llm_grunt, logger: @logger)
-          .generate(bucket: bucket, biome: biome, anchor_name: anchor&.name)
+          .generate(bucket: bucket, terrain: terrain, anchor_name: anchor&.name)
 
         ::Harness::Travel::EncounterSpawner.spawn(
           name:           place.name,
@@ -200,9 +202,13 @@ module Harness
         [ cost, MIN_COST_MIN ].max
       end
 
-      # Approximation: the biome of the nearest known top-level. Without a
-      # persisted noise field we can't sample the underlying biome directly.
+      # Prefer the real terrain at the point (sampled from the persisted world's
+      # geography). Pre-geography saves have no world row — fall back to the
+      # coarse biome of the nearest known top-level.
       def biome_multiplier_at(x, y)
+        terrain_mult = ::World.cost_multiplier_at(x, y)
+        return terrain_mult if terrain_mult
+
         nearest = nearest_top_level(x, y)
         ::Harness::Worldgen::Biome.cost_multiplier(nearest&.biome)
       end

@@ -84,6 +84,7 @@ module Harness
           "conversation" => ::Harness::Runners::Conversation.new(logger: logger),
           "worldbuilding" => ::Harness::Runners::Worldbuilding.new(logger: logger),
           "dice"         => ::Harness::Runners::Dice.new(logger: logger),
+          "environment"  => ::Harness::Runners::Environment.new(logger: logger),
           "inventory"    => ::Harness::Runners::Inventory.new(logger: logger),
           "time-skip"    => ::Harness::Runners::TimeSkip.new(logger: logger),
           "combat"       => ::Harness::Runners::Combat.new(logger: logger),
@@ -148,6 +149,16 @@ module Harness
             run_state_machine(input, transcript)
           end
 
+          # Character initiative: after the player's chain resolved, a present
+          # NPC with a standing agenda may push it (cadence-gated). Placed
+          # BEFORE the combat hand-off so an escalation (start_combat) is driven
+          # this same turn. Skipped if the player's own action already entered
+          # combat, or if they're leaving the scene (scene_dirty) — the agenda
+          # belongs to the scene being left.
+          unless @scene_manager.active&.in_combat? || @context.scene_dirty
+            maybe_run_initiative(transcript)
+          end
+
           # Combat hand-off. While scene.in_combat?, Combat::Loop processes
           # NPC slots around the player's slot. The loop YIELDS at fresh
           # player slots (end_reason: :yielded) so the next turn's reasoning
@@ -204,7 +215,6 @@ module Harness
           @scene_manager.record_narration(input, narration)
           @context.append_turn(input: input, narration: narration)
           transcript.notice = unresolved_notice(transcript.unresolved) if transcript.unresolved
-          tick_agenda_pressure!(transcript)
           trim_history!
         rescue StandardError => e
           transcript.error = "#{e.class}: #{e.message}"
@@ -459,6 +469,21 @@ module Harness
           tail << "critical" if r["critical"]
           "[#{r['action']} — #{label}#{nums}: #{tail.join(', ')}]"
         end
+      end
+
+      # Character-initiative pass. Lets a present NPC with a standing agenda
+      # push it on a cadence (the system supplying the initiative the LLM never
+      # does on its own). Records any committed beat into the transcript so
+      # narration renders it; may escalate a fight-capable NPC to combat, which
+      # the hand-off below then drives. Failure-isolated.
+      def maybe_run_initiative(transcript)
+        active = @scene_manager.active
+        return unless active
+        ::Harness::Scene::Initiative.run(
+          context: @context, active: active, transcript: transcript, logger: logger
+        )
+      rescue StandardError => e
+        logger.warn { "[Turn::Loop] initiative pass failed: #{e.class}: #{e.message}" }
       end
 
       def run_combat(transcript)
@@ -762,9 +787,9 @@ module Harness
         }
       end
 
-      # Strip reasoning-loop-only flavor (internal_state, agenda,
-      # should_push_now) from query_scene results before forwarding to the
-      # narration step. These fields are scene-entry mood snapshots intended
+      # Strip reasoning-loop-only flavor (internal_state, agenda) from
+      # query_scene results before forwarding to the narration step. These
+      # fields are scene-entry mood snapshots intended
       # to inform the LLM's JUDGMENT — they are NOT meant to be rendered
       # verbatim in prose. Without this filter the narrator regurgitates
       # "Rask drums his axe handle" for the rest of the scene even after
@@ -774,7 +799,7 @@ module Harness
       # other tool results — resolve outcomes, mutate_character calls,
       # propose_event details) plus recent_history, not from the cached
       # mood line.
-      NARRATION_HIDDEN_FIELDS = %w[internal_state agenda should_push_now].freeze
+      NARRATION_HIDDEN_FIELDS = %w[internal_state agenda].freeze
 
       def sanitize_tool_calls_for_narration(tool_calls)
         tool_calls.map { |tc|
@@ -807,33 +832,6 @@ module Harness
       # narrator comes in fresh after a scene change. If felt, mitigations
       # include passing a one-line "you just left X" hint — not built
       # today; revisit if it bites in play.
-      # End-of-turn agenda pressure update. Scans this turn's tool calls for
-      # NPCs who appeared as `actor` (in propose_event participants or as
-      # resolve.actor_id), then ticks the active scene's agenda counters —
-      # actors reset to 0, silent NPCs increment. The next turn's query_scene
-      # surfaces `should_push_now: true` for any NPC whose silence crossed
-      # AGENDA_PUSH_THRESHOLD. No-op if scene_dirty (the next turn rebuilds
-      # the scene anyway and starts agenda counters fresh).
-      def tick_agenda_pressure!(transcript)
-        active = @scene_manager.active
-        return unless active
-        return if @context.scene_dirty
-        player_id = ::Player.first&.id
-
-        acted = transcript.tool_calls.flat_map { |tc|
-          ids = []
-          if (parts = tc.dig("result", "participants")).is_a?(Array)
-            ids.concat(parts.select { |p| p["role"].to_s == "actor" }.map { |p| p["character_id"] })
-          end
-          if tc["name"] == "resolve" && (a = tc.dig("result", "actor_id"))
-            ids << a
-          end
-          ids
-        }.compact.reject { |id| id == player_id }.uniq
-
-        active.tick_agendas!(acted)
-      end
-
       def scene_history
         @scene_manager.active&.narrations || []
       end

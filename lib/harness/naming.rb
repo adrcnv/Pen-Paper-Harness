@@ -1,3 +1,5 @@
+require "set"
+
 module Harness
   # Mechanical name generator. Replaces the LLM as the source of new
   # character names for background spawn paths (Quest gen / Genesis /
@@ -107,7 +109,111 @@ module Harness
         end
       end
 
+      # ── Place naming ──────────────────────────────────────────────────
+      # Locations and kingdoms are named MECHANICALLY, the same principle as
+      # people: per-culture morphology pools, NOT the LLM (which produced the
+      # "two Oakhavens plus an Oakhaven Reach" trope-pit). place_for compounds
+      # a prefix with a suffix ("Oak"+"haven" → Oakhaven) or, ~WORD_FORM_CHANCE
+      # of the time, a space-separated word ("Oak Ridge"). kingdom_name_for
+      # adds a realm word ("Oakhaven March", "The Grey Weald"). The unique_*
+      # variants reject collisions against BOTH Locations and Factions (so a
+      # city can't share a name with a kingdom) plus an optional in-memory
+      # `taken` set (worldgen names rows that aren't persisted yet, so the DB
+      # check alone wouldn't catch a sibling named earlier in the same pass).
+      WORD_FORM_CHANCE = 0.28
+
+      def place_for(culture:, rng: Random.new)
+        pre   = sample(place_prefix_pool(culture), rng)
+        words = Array(culture["place_word"])
+        if words.any? && rng.rand < WORD_FORM_CHANCE
+          "#{pre} #{sample(words, rng)}"
+        else
+          "#{pre}#{sample(place_suffix_pool(culture), rng)}"
+        end
+      end
+
+      def kingdom_name_for(culture:, rng: Random.new)
+        ksuf = sample(kingdom_suffix_pool(culture), rng)
+        if rng.rand < 0.5
+          "#{compound(culture, rng)} #{ksuf}"                      # "Oakhaven March"
+        else
+          "The #{sample(place_prefix_pool(culture), rng)} #{ksuf}" # "The Grey Weald"
+        end
+      end
+
+      def unique_place_for(culture:, rng: Random.new, taken: nil, attempts: 40)
+        resolve_unique(taken: taken, attempts: attempts) { place_for(culture: culture, rng: rng) } ||
+          disambiguated(taken: taken) { place_for(culture: culture, rng: rng) }
+      end
+
+      def unique_kingdom_name_for(culture:, rng: Random.new, taken: nil, attempts: 40)
+        resolve_unique(taken: taken, attempts: attempts) { kingdom_name_for(culture: culture, rng: rng) } ||
+          disambiguated(taken: taken) { kingdom_name_for(culture: culture, rng: rng) }
+      end
+
+      # Downcased name set of every existing Location + Faction — seed for a
+      # worldgen pass's `taken` set so incremental generation onto a populated
+      # save never reuses a name, and siblings named earlier in the same pass
+      # (not yet persisted) are still avoided.
+      def taken_set
+        set = ::Set.new
+        ::Location.pluck(:name).each { |n| set << n.to_s.downcase }
+        ::Faction.pluck(:name).each  { |n| set << n.to_s.downcase }
+        set
+      end
+
       private
+
+      DEFAULT_PLACE_PREFIX   = %w[Oak Ash Stone Grey Cold Fen Mire High Black Long].freeze
+      DEFAULT_PLACE_SUFFIX   = %w[haven hold ford ton mere field gate dale].freeze
+      DEFAULT_KINGDOM_SUFFIX = %w[March Reach Realm Dominion].freeze
+
+      def place_prefix_pool(culture)   = Array(culture["place_prefix"]).reject(&:empty?).presence || DEFAULT_PLACE_PREFIX
+      def place_suffix_pool(culture)   = Array(culture["place_suffix"]).reject(&:empty?).presence || DEFAULT_PLACE_SUFFIX
+      def kingdom_suffix_pool(culture) = Array(culture["kingdom_suffix"]).reject(&:empty?).presence || DEFAULT_KINGDOM_SUFFIX
+
+      def compound(culture, rng)
+        "#{sample(place_prefix_pool(culture), rng)}#{sample(place_suffix_pool(culture), rng)}"
+      end
+
+      # Try the generator up to `attempts` times for a free name; mark and
+      # return the first, or nil if all attempts collided.
+      def resolve_unique(taken:, attempts:)
+        attempts.times do
+          name = yield
+          next if name_taken?(name, taken)
+          mark!(name, taken)
+          return name
+        end
+        nil
+      end
+
+      # Last-resort disambiguation: prefix a direction, then (worst case) a
+      # Roman numeral — guaranteed to terminate.
+      def disambiguated(taken:)
+        base = yield
+        %w[North South East West Upper Lower Old New Far Near].each do |dir|
+          cand = "#{dir} #{base}"
+          next if name_taken?(cand, taken)
+          mark!(cand, taken)
+          return cand
+        end
+        n = 2
+        n += 1 while name_taken?("#{base} #{roman(n)}", taken)
+        cand = "#{base} #{roman(n)}"
+        mark!(cand, taken)
+        cand
+      end
+
+      def name_taken?(name, taken)
+        key = name.to_s.downcase
+        return true if taken&.include?(key)
+        ::Location.exists?(name: name) || ::Faction.exists?(name: name)
+      end
+
+      def mark!(name, taken)
+        taken << name.to_s.downcase if taken
+      end
 
       # Roll a gender, return the matching given-name pool. Falls back to the
       # combined/legacy `given` pool when a culture lacks the gendered pools

@@ -9,7 +9,9 @@ module Harness
     # cover: "I sleep 8 hours at the inn", "I wait until dusk", "I sit
     # watching the door for an hour".
     #
-    # Crossing IN_SCENE_THRESHOLD (default 60min) sets scene_dirty via Clock.
+    # A skip of >= IN_SCENE_THRESHOLD (60min) sets scene_dirty so the next turn
+    # rebuilds the scene. This is explicit, player-chosen time passing — not the
+    # silent conversation-accrual rebuild that caused scene whiplash (removed).
     # An 8-hour rest will rebuild the scene on the next turn (catch-up sim
     # gets a real gap to fill, internal-state regenerates, present
     # characters re-checked).
@@ -45,6 +47,15 @@ module Harness
 
         before = context.game_time || 0
         ::Harness::Clock.advance(context, minutes: duration, reason: "pass_time(#{intent})")
+
+        # Explicit, substantial time-skips rebuild the scene on the next turn
+        # (catch-up surfaces what changed while the player idled; internal
+        # states refresh). This is the ONLY accrual-style rebuild left, and it's
+        # safe from the "scene whiplash" because the PLAYER chose to let time
+        # pass — they expect the world to have moved. Short waits/lingers
+        # (< IN_SCENE_THRESHOLD) don't rebuild, so a quick "wait a moment"
+        # doesn't whiplash the scene.
+        context.scene_dirty = true if duration >= ::Harness::Clock::IN_SCENE_THRESHOLD
 
         # Restorative intents (rest / sleep) refresh the player's ability
         # uses_remaining back to each library entry's uses_per_rest, AND

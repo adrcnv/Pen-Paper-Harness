@@ -39,7 +39,7 @@ end
 # Precedence: CLI flag > ENV (HARNESS_MODEL / HARNESS_GRUNT_MODEL /
 # HARNESS_NUANCE_MODEL, picked up from .env or shell) > built-in default.
 options = {
-  model:         ENV["HARNESS_MODEL"] || "claude-sonnet-4-6",
+  model:         ENV["HARNESS_MODEL"],   # backend-aware default applied below once `backend` is known
   grunt_model:   ENV["HARNESS_GRUNT_MODEL"],
   nuance_model:  ENV["HARNESS_NUANCE_MODEL"],
   log_level:     ENV["HARNESS_LOG_LEVEL"] || "warn",
@@ -163,6 +163,12 @@ build_adapter = ->(model_name, name) {
     abort "Unknown HARNESS_BACKEND=#{backend.inspect}. Use 'anthropic' or 'openai-compat'."
   end
 }
+
+# Backend-aware default model. On a local server the model field is a LABEL
+# (most ignore it and run whatever's loaded), so default it to HARNESS_OPENAI_MODEL
+# (or "local") — NOT "claude-sonnet-4-6", which would mislabel every local run's
+# logs and request banner as Sonnet.
+options[:model] ||= backend == "anthropic" ? "claude-sonnet-4-6" : (ENV["HARNESS_OPENAI_MODEL"] || "local")
 
 nuance_model_name = options[:nuance_model] || options[:model]
 grunt_model_name  = options[:grunt_model]  || nuance_model_name

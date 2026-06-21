@@ -48,5 +48,27 @@ RSpec.describe Harness::Worldgen::Generator do
       end
     end
 
+    it "carries the geography the cities were placed on" do
+      map = described_class.generate(seed: 7)
+      expect(map.geography).to be_a(Harness::Worldgen::Geography)
+    end
+
+    it "places cities on habitable land, never in the open sea" do
+      map = described_class.generate(seed: 7, city_count: 12)
+      geo = map.geography
+      map.cities.each do |c|
+        expect(geo.sea?(c.x, c.y)).to be(false), "city #{c.id} sits in the sea"
+      end
+    end
+
+    it "denormalizes terrain + coastal/riverside facts onto each city" do
+      map = described_class.generate(seed: 7, city_count: 12)
+      map.cities.each do |c|
+        expect(Harness::Worldgen::Terrain::LAND.map(&:to_s)).to include(c.terrain)
+        expect([ true, false ]).to include(c.coastal)
+        expect([ true, false ]).to include(c.riverside)
+      end
+    end
+
   end
 end

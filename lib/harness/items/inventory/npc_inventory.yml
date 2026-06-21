@@ -60,9 +60,11 @@ fighter:
     armed_armored:
       - { category: weapons }
       - { category: armor }
+      - { specific: shield, chance: 0.5 }   # many armored fighters carry one — enables Shield Up
     veteran_kit:
       - { category: weapons }
       - { category: armor }
+      - { specific: shield, chance: 0.5 }
       - { category: jewelry, chance: 0.5 }
     legendary_outlier:
       - { category: weapons }

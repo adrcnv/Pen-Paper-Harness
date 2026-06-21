@@ -90,7 +90,8 @@ module Harness
         end
 
         def validate!(raw, path)
-          %w[id weight given_male given_female family].each do |f|
+          %w[id weight given_male given_female family
+             place_prefix place_suffix kingdom_suffix].each do |f|
             raise InvalidLibrary, "#{path}: missing #{f}" if raw[f].nil?
           end
           raise InvalidLibrary, "#{path}: id must be non-empty String"            unless raw["id"].is_a?(String) && !raw["id"].empty?
@@ -104,6 +105,16 @@ module Harness
           raise InvalidLibrary, "#{path}: given_male/given_female overlap (#{overlap.join(', ')}) — pools must be disjoint" if overlap.any?
           unless raw["family"].is_a?(Array) && raw["family"].all? { |x| x.is_a?(String) }
             raise InvalidLibrary, "#{path}: family must be Array of Strings (empty allowed)"
+          end
+          # Place morphology pools (mechanical location/kingdom naming).
+          %w[place_prefix place_suffix kingdom_suffix].each do |pool|
+            unless raw[pool].is_a?(Array) && raw[pool].any? && raw[pool].all? { |x| x.is_a?(String) && !x.empty? }
+              raise InvalidLibrary, "#{path}: #{pool} must be non-empty Array of non-empty Strings"
+            end
+          end
+          # place_word is the optional space-separated variety form ("Oak Ridge").
+          unless raw["place_word"].nil? || (raw["place_word"].is_a?(Array) && raw["place_word"].all? { |x| x.is_a?(String) })
+            raise InvalidLibrary, "#{path}: place_word must be Array of Strings (optional)"
           end
         end
       end

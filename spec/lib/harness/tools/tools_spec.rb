@@ -44,8 +44,7 @@ RSpec.describe "Harness::Tools" do
         )
         result = described_class.new.call({}, context)
         entry = result["present_characters"].find { |c| c["id"] == maren.id }
-        expect(entry["agenda"]["text"]).to match(/docks/)
-        expect(entry["agenda"]["push_now"]).to be(false)
+        expect(entry["agenda"]).to match(/docks/)
       end
 
       it "omits the agenda key on NPCs without one" do

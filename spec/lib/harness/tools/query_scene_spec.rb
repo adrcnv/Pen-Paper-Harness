@@ -44,55 +44,57 @@ RSpec.describe Harness::Tools::QueryScene do
     end
   end
 
-  describe "agenda push-pressure surfacing" do
+  describe "agenda text surfacing" do
     let(:npc) { Npc.create!(name: "Marta", location: tavern, character_class: "commoner") }
 
-    def active_with_agenda(silent_turns: 0)
-      snap = Struct.new(:location, :present_characters, :present_items)
-               .new(tavern, [ npc ], [])
-      a = Harness::Scene::Active.new(
-        location:             tavern,
-        snapshot:             snap,
-        narrations:           [],
-        internal_state:       { npc.id => "is twitchy and watchful" },
-        agendas:              { npc.id => "wants to ask about the docks" },
-        extras:               [],
-        entered_at_game_time: 0
-      )
-      silent_turns.times { a.tick_agendas!([]) }
-      a
-    end
-
-    it "agenda.push_now=false when silent count is below threshold" do
-      context.active_scene = active_with_agenda(silent_turns: 0)
-      out = described_class.new.call({}, context)
-      char = out["present_characters"].find { |c| c["id"] == npc.id }
-      expect(char["agenda"]).to be_a(Hash)
-      expect(char["agenda"]["text"]).to be_present
-      expect(char["agenda"]["push_now"]).to be(false)
-      expect(char).not_to have_key("should_push_now")  # collapsed; top-level key gone
-    end
-
-    it "agenda.push_now=true once silent count crosses threshold" do
-      context.active_scene = active_with_agenda(silent_turns: Harness::Scene::AGENDA_PUSH_THRESHOLD)
-      out = described_class.new.call({}, context)
-      char = out["present_characters"].find { |c| c["id"] == npc.id }
-      expect(char["agenda"]["push_now"]).to be(true)
-    end
-
-    it "does NOT set should_push_now on NPCs without an agenda (no agenda field)" do
+    def active_with(agendas:)
       snap = Struct.new(:location, :present_characters, :present_items).new(tavern, [ npc ], [])
-      a = Harness::Scene::Active.new(
+      Harness::Scene::Active.new(
         location: tavern, snapshot: snap, narrations: [],
-        internal_state: { npc.id => "fine" }, agendas: {}, extras: [],
-        entered_at_game_time: 0
+        internal_state: { npc.id => "is twitchy and watchful" },
+        agendas: agendas, extras: [], entered_at_game_time: 0
       )
-      Harness::Scene::AGENDA_PUSH_THRESHOLD.times { a.tick_agendas!([]) }
-      context.active_scene = a
-      out = described_class.new.call({}, context)
+    end
+
+    it "surfaces the agenda as a plain text string (no push_now object)" do
+      context.active_scene = active_with(agendas: { npc.id => "wants to ask about the docks" })
+      out  = described_class.new.call({}, context)
+      char = out["present_characters"].find { |c| c["id"] == npc.id }
+      expect(char["agenda"]).to eq("wants to ask about the docks")
+    end
+
+    it "omits agenda entirely for an NPC without one" do
+      context.active_scene = active_with(agendas: {})
+      out  = described_class.new.call({}, context)
       char = out["present_characters"].find { |c| c["id"] == npc.id }
       expect(char).not_to have_key("agenda")
-      expect(char).not_to have_key("should_push_now")
+    end
+  end
+
+  describe "settlement setting surfacing" do
+    it "surfaces the enclosing town's terrain + economic identity" do
+      city = Location.create!(
+        name: "Saltmere", x: 10.0, y: 10.0, biome: "lowland",
+        properties: {
+          "terrain" => "coastal", "coastal" => true, "riverside" => false,
+          "economic_basis" => "fishing", "size" => "village", "wealth" => "modest"
+        }
+      )
+      dock = Location.create!(name: "the Docks", parent: city)
+      context.player_location = dock
+      out = described_class.new.call({}, context)
+
+      setting = out["location"]["setting"]
+      expect(setting["terrain"]).to eq("coastal")
+      expect(setting["coastal"]).to be(true)
+      expect(setting["economic_basis"]).to eq("fishing")
+      expect(setting["size"]).to eq("village")
+      expect(setting["wealth"]).to eq("modest")
+    end
+
+    it "omits setting when the enclosing location has no profile (e.g. bare test loc)" do
+      out = described_class.new.call({}, context)  # tavern: no profile props
+      expect(out["location"]).not_to have_key("setting")
     end
   end
 

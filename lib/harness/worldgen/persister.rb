@@ -14,18 +14,31 @@ module Harness
         ActiveRecord::Base.transaction do
           kingdom_id_map = persist_kingdoms(map)
           city_id_map    = persist_cities(map, kingdom_id_map)
+          persist_world(map)
 
           { kingdoms: kingdom_id_map, cities: city_id_map }
         end
+      end
+
+      # Singleton world metadata (seed + cached rivers) so geography survives a
+      # restart and runtime can sample terrain at any point. No-op for hand-built
+      # maps without a geography (persistence-layer tests).
+      def self.persist_world(map)
+        return unless map.geography
+        ::World.record!(map.geography)
       end
 
       def self.persist_kingdoms(map)
         out = {}
         rng = Random.new
         map.kingdoms.each do |k|
-          culture = ::Harness::Naming::Library.weighted_pick(rng: rng)
-          props   = k.description ? { "description" => k.description } : {}
-          props["culture_id"] = culture["id"]
+          # Prefer the culture the naming pass rolled (so the persisted
+          # culture_id matches the one the kingdom's mechanical names were
+          # drawn from). Fall back to a fresh weighted pick only for maps
+          # persisted without a naming pass (persistence-layer tests).
+          culture_id = k.culture_id || ::Harness::Naming::Library.weighted_pick(rng: rng)["id"]
+          props      = k.description ? { "description" => k.description } : {}
+          props["culture_id"] = culture_id
           row = ::Faction.create!(
             name:       k.name || "Kingdom #{k.id}",
             subrole:    "kingdom",
@@ -76,11 +89,28 @@ module Harness
                when ::Harness::Worldgen::Biome::HIGHLAND then 1 + rng.rand(2)  # 1-2
                else 1
                end
-        {
+        props = {
           "tags"                  => tags,
           "quest_debt"            => debt,
           "quest_generated_count" => 0
         }
+        # Rich geography facts (additive; biome stays the legacy coarse fact).
+        props["terrain"]   = c.terrain   unless c.terrain.nil?
+        props["coastal"]   = c.coastal   unless c.coastal.nil?
+        props["riverside"] = c.riverside unless c.riverside.nil?
+
+        # Mechanical economic identity (economic_basis / size / wealth), rolled
+        # from the geography facts. The seed downstream sublocation manifests +
+        # shops read. See Harness::Settlement::Profile.
+        props.merge!(
+          ::Harness::Settlement::Profile.roll(
+            terrain:   c.terrain,
+            coastal:   c.coastal,
+            riverside: c.riverside,
+            rng:       rng
+          )
+        )
+        props
       end
 
     end

@@ -12,7 +12,7 @@ RSpec.describe Harness::Travel::EncounterPlace do
   it "returns a Result(name, description) on well-formed output" do
     llm = StubLLM.new { |_| good("the Old Carter's Cottage") }
     out = described_class.new(llm_client: llm, logger: logger)
-                         .generate(bucket: "discovery", biome: "lowland", anchor_name: saltmere.name)
+                         .generate(bucket: "discovery", terrain: "grassland", anchor_name: saltmere.name)
     expect(out.name).to eq("the Old Carter's Cottage")
     expect(out.description).to match(/cottage/)
   end
@@ -24,7 +24,7 @@ RSpec.describe Harness::Travel::EncounterPlace do
       attempts.size == 1 ? good("Bandit Camp") : good("the Old Carter's Cottage")
     }
     out = described_class.new(llm_client: llm, logger: logger)
-                         .generate(bucket: "social", biome: "lowland", anchor_name: saltmere.name)
+                         .generate(bucket: "social", terrain: "grassland", anchor_name: saltmere.name)
     expect(out.name).to eq("the Old Carter's Cottage")
     expect(attempts.size).to eq(2)
     expect(attempts.last).to match(/at least 3 words/)
@@ -45,7 +45,7 @@ RSpec.describe Harness::Travel::EncounterPlace do
       attempts.size == 1 ? good("Saltmere") : good("the Old Carter's Cottage")
     }
     out = described_class.new(llm_client: llm, logger: logger)
-                         .generate(bucket: "social", biome: "lowland", anchor_name: saltmere.name)
+                         .generate(bucket: "social", terrain: "grassland", anchor_name: saltmere.name)
     expect(out.name).to eq("the Old Carter's Cottage")
     expect(attempts.last).to match(/collides|at least 3 words/)
   end
@@ -54,7 +54,7 @@ RSpec.describe Harness::Travel::EncounterPlace do
     llm = StubLLM.new { |_| good("Bad") }  # always fails the 3-word rule
     expect {
       described_class.new(llm_client: llm, logger: logger, max_retries: 1)
-                     .generate(bucket: "social", biome: "lowland", anchor_name: saltmere.name)
+                     .generate(bucket: "social", terrain: "grassland", anchor_name: saltmere.name)
     }.to raise_error(described_class::InvalidOutput, /at least 3 words/)
   end
 
@@ -62,7 +62,7 @@ RSpec.describe Harness::Travel::EncounterPlace do
     llm = StubLLM.new { |_| "not json at all" }
     expect {
       described_class.new(llm_client: llm, logger: logger, max_retries: 0)
-                     .generate(bucket: "social", biome: "lowland", anchor_name: saltmere.name)
+                     .generate(bucket: "social", terrain: "grassland", anchor_name: saltmere.name)
     }.to raise_error(described_class::InvalidOutput, /not valid JSON/)
   end
 
@@ -70,7 +70,7 @@ RSpec.describe Harness::Travel::EncounterPlace do
     llm = StubLLM.new { |_| { "name" => "the Old Carter's Cottage", "description" => "tiny" }.to_json }
     expect {
       described_class.new(llm_client: llm, logger: logger, max_retries: 0)
-                     .generate(bucket: "social", biome: "lowland", anchor_name: saltmere.name)
+                     .generate(bucket: "social", terrain: "grassland", anchor_name: saltmere.name)
     }.to raise_error(described_class::InvalidOutput, /too short/)
   end
 end

@@ -1,0 +1,123 @@
+# Settlement manifest — the KNOWN SHAPE of a settlement, keyed off its
+# economic profile (Harness::Settlement::Profile). Given (economic_basis × size
+# × wealth), this produces the list of sublocations a town SHOULD have, so the
+# world is legible structure to navigate instead of something the player has to
+# squeeze ("is there a smith?"). The stubs are created mechanically on first
+# city entry; their CONTENTS (proprietor NPCs, items, rich description) fill in
+# on approach via the existing Scene::Materializer, which reads each stub's
+# name + description to spawn an appropriate proprietor.
+#
+# Entry fields:
+#   key        — unique slug; dedups within a settlement (one Smithy per town)
+#   subrole    — proprietor archetype hint (free-text; also stored on the row)
+#   min_size   — smallest settlement tier this appears at (hamlet<village<town<city)
+#   min_wealth — smallest wealth tier this appears at (poor<modest<comfortable<rich)
+#   names      — pool; one picked mechanically (variety without an LLM call)
+#   description— mechanical stub prose; signals the trade to the Materializer
+#
+# "type" of place is mechanical; the LLM only ever dresses the contents.
+
+# Present in EVERY settlement (size-gated). The civic spine.
+universal:
+  - key: tavern
+    subrole: barkeep
+    min_size: hamlet
+    names: [ "the Tavern", "the Alehouse", "the Public House", "the Common Room" ]
+    description: "A low-beamed taproom where the settlement drinks, eats, and trades talk."
+  - key: market_square
+    subrole: trader
+    min_size: village
+    shop: [ weapons, armor, jewelry ]   # a general market — a bit of everything
+    names: [ "the Market Square", "the Market Cross", "the Market Row" ]
+    description: "An open square of stalls and barrows where folk hawk what the land gives up."
+  - key: shrine
+    subrole: priest
+    min_size: village
+    names: [ "the Wayside Shrine", "the Old Chapel", "the Shrine" ]
+    description: "A small place of worship, candle-smoked and quiet, tended by one devout hand."
+  - key: inn
+    subrole: innkeeper
+    min_size: town
+    names: [ "the Inn", "the Travellers' Rest", "the Coaching Inn" ]
+    description: "Lodging for travellers, with stabling out back and a fire kept for paying strangers."
+
+# Services that only a larger settlement can sustain (size-gated, basis-agnostic).
+by_size:
+  - key: smithy
+    subrole: smith
+    min_size: village
+    shop: [ weapons, armor ]   # the place to buy gear and sell scavenged steel
+    names: [ "the Smithy", "the Forge", "the Smith's" ]
+    description: "A working forge, ringing with hammerfall; the settlement's tools and edges are made and mended here."
+  - key: temple
+    subrole: priest
+    min_size: town
+    names: [ "the Temple", "the Great Chapel" ]
+    description: "A proper temple of cut stone, larger than a wayside shrine, with a standing clergy."
+  - key: garrison
+    subrole: guard
+    min_size: town
+    names: [ "the Watch-House", "the Garrison", "the Guardpost" ]
+    description: "Where the settlement keeps its armed men — a rack of spears, a duty roster, a cell or two."
+  - key: moot_hall
+    subrole: reeve
+    min_size: town
+    names: [ "the Moot Hall", "the Town Hall", "the Reeve's Hall" ]
+    description: "The seat of whatever passes for local authority — disputes are heard and tolls are counted here."
+
+# Appears once a settlement is well-off enough to want it (wealth-gated).
+by_wealth:
+  - key: moneylender
+    subrole: moneylender
+    min_size: town
+    min_wealth: comfortable
+    names: [ "the Counting-House", "the Moneylender's", "the Strongroom" ]
+    description: "A shuttered, iron-bound office where coin is lent, changed, and kept under lock."
+
+# Trade-specific sublocations — the evocative long tail. These are what make a
+# charcoal hamlet feel like a charcoal hamlet and a salt town like a salt town.
+by_basis:
+  fishing:
+    - { key: docks,      subrole: fisher,     min_size: hamlet,  names: [ "the Docks", "the Fishing Jetty", "the Landing" ], description: "Weathered jetties and tied-up boats; the day's catch is landed and gutted here." }
+    - { key: fishmonger, subrole: fishmonger, min_size: village, names: [ "the Fishmonger", "the Fish Market", "the Wet Stalls" ], description: "Slab tables running with brine, the air sharp with fish and the cries of sellers." }
+    - { key: net_loft,   subrole: net_mender, min_size: hamlet,  names: [ "the Net-Loft", "the Mending Shed" ], description: "A drafty loft hung with drying nets and the smell of tar and twine." }
+  port:
+    - { key: harbor,    subrole: harbormaster, min_size: hamlet,  names: [ "the Harbour", "the Quayside" ], description: "Stone quays where seagoing ships tie up; cargo and gossip both come ashore here." }
+    - { key: warehouse, subrole: factor,       min_size: village, names: [ "the Warehouse", "the Bond Store" ], description: "A great timber store stacked with crated goods awaiting ship or buyer." }
+    - { key: customs,   subrole: customs_officer, min_size: town, names: [ "the Customs House", "the Toll Office" ], description: "Where landed cargo is weighed, taxed, and stamped before it moves inland." }
+  salt:
+    - { key: salt_pans,  subrole: salter,        min_size: hamlet,  names: [ "the Salt Pans", "the Evaporation Flats" ], description: "Shallow flats where seawater is left to the sun and wind until only salt remains." }
+    - { key: salt_store, subrole: salt_merchant, min_size: village, names: [ "the Salt Store", "the Salters' Hall" ], description: "A dry, raftered store where blocks of pale salt are stacked for sale and carriage." }
+  river_trade:
+    - { key: river_wharf, subrole: wharfinger, min_size: hamlet,  names: [ "the River Wharf", "the Barge Landing" ], description: "A plank wharf along the current where barges load and unload between towns." }
+    - { key: warehouse,   subrole: factor,     min_size: village, names: [ "the Warehouse", "the Goods Store" ], description: "A riverside store where cargo waits between barge and buyer." }
+  farming:
+    - { key: granary, subrole: granger, min_size: hamlet,  names: [ "the Granary", "the Grain Store" ], description: "A raised timber granary keeping the harvest dry and out of the rats' reach." }
+    - { key: mill,    subrole: miller,  min_size: village, names: [ "the Mill", "the Watermill", "the Windmill" ], description: "A grinding mill where the district brings its grain and leaves a share for the milling." }
+  milling:
+    - { key: mill,         subrole: miller, min_size: hamlet,  names: [ "the Mill", "the Great Mill" ], description: "A heavy grinding mill, the wheel turning day-long when there's grain to crush." }
+    - { key: grain_store,  subrole: factor, min_size: village, names: [ "the Grain Store", "the Flour Loft" ], description: "Sacked flour and grain stacked to the rafters, dusty and white-coated." }
+  herding:
+    - { key: stockyard, subrole: drover, min_size: hamlet,  names: [ "the Stockyard", "the Beast Market", "the Pens" ], description: "Muddy pens and rails where livestock is held, traded, and driven through." }
+    - { key: tannery,   subrole: tanner, min_size: village, names: [ "the Tannery", "the Curing Sheds" ], description: "A reeking yard of lime pits and stretched hides — downwind of everything, by custom." }
+  market:
+    - { key: market_row, subrole: trader, min_size: hamlet, names: [ "the Trade Row", "the Merchants' Row" ], description: "A run of permanent shopfronts and counting-tables — the settlement lives on what passes through." }
+    - { key: weighhouse, subrole: clerk,  min_size: town,   names: [ "the Weigh-House", "the Exchange" ], description: "Public scales and a clerk's ledger where bulk goods are weighed and deals are witnessed." }
+  logging:
+    - { key: timber_yard, subrole: timberwright, min_size: hamlet,  names: [ "the Timber Yard", "the Log Pond" ], description: "Stacked trunks and the bite of saws; felled wood is squared and sold here." }
+    - { key: sawpit,      subrole: sawyer,       min_size: village, names: [ "the Sawpit", "the Saw Shed" ], description: "A pit and frame where two-man saws rip logs into planks all the daylight long." }
+  charcoal:
+    - { key: charcoal_camp, subrole: charcoal_burner, min_size: hamlet, names: [ "the Charcoal Camp", "the Burning Hearths", "the Colliers' Camp" ], description: "Smouldering earth-covered mounds tended day and night, the whole place black with soot." }
+    - { key: wood_store,    subrole: woodward,        min_size: village, names: [ "the Wood Store", "the Cording Yard" ], description: "Cut cordwood stacked to season before it feeds the burners." }
+  mining:
+    - { key: minehead,  subrole: miner,     min_size: hamlet,  names: [ "the Minehead", "the Pit Mouth", "the Adit" ], description: "A timbered shaft into the hillside, spoil-heaps fanned out below and a winch creaking overhead." }
+    - { key: ore_buyer, subrole: ore_buyer, min_size: village, names: [ "the Ore-Buyer's Office", "the Assay Office" ], description: "Where raw ore is weighed, judged, and paid for before it goes to the smelters." }
+  quarrying:
+    - { key: quarry,   subrole: quarryman, min_size: hamlet,  names: [ "the Quarry", "the Stone Pit" ], description: "A stepped pit of cut rock, loud with mauls and the squeal of sledges hauling block." }
+    - { key: stoneyard, subrole: mason,    min_size: village, names: [ "the Stoneyard", "the Masons' Yard" ], description: "Squared blocks and half-finished work where masons dress stone for sale." }
+  peat:
+    - { key: peat_workings, subrole: peat_cutter, min_size: hamlet,  names: [ "the Peat Workings", "the Turbary", "the Diggings" ], description: "Black trenches in the bog where peat is cut in bricks and stood to dry." }
+    - { key: drying_sheds,  subrole: peat_monger,  min_size: village, names: [ "the Drying Sheds", "the Peat Stacks" ], description: "Open sheds where cut peat hardens into fuel before it's sold for the hearth." }
+  frontier:
+    - { key: watchpost, subrole: ranger, min_size: hamlet,  names: [ "the Watchpost", "the Palisade Gate", "the Marches Post" ], description: "A rough palisade and a lookout over the wild edge of settled land." }
+    - { key: waystation, subrole: factor, min_size: village, names: [ "the Waystation", "the Outpost Store" ], description: "A fortified store and rest-stop for those passing into or out of the frontier." }

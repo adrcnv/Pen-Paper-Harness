@@ -1,6 +1,6 @@
 module Harness
   module Travel
-    # Single small-model LLM call: given encounter bucket + biome + anchor +
+    # Single small-model LLM call: given encounter bucket + terrain + anchor +
     # existing-names blocklist, produce { name, description } for the
     # wilderness_leaf the encounter will spawn.
     #
@@ -32,12 +32,12 @@ module Harness
         @max_retries = max_retries
       end
 
-      def generate(bucket:, biome:, anchor_name:, existing_names: nil)
+      def generate(bucket:, terrain:, anchor_name:, existing_names: nil)
         existing_names ||= ::Location.pluck(:name)
 
         attempts = 0
         system   = preamble
-        user     = build_user(bucket: bucket, biome: biome, anchor_name: anchor_name, existing_names: existing_names)
+        user     = build_user(bucket: bucket, terrain: terrain, anchor_name: anchor_name, existing_names: existing_names)
 
         loop do
           attempts += 1
@@ -65,10 +65,10 @@ module Harness
         @preamble ||= File.read(PREAMBLE_PATH)
       end
 
-      def build_user(bucket:, biome:, anchor_name:, existing_names:)
+      def build_user(bucket:, terrain:, anchor_name:, existing_names:)
         payload = {
           "bucket"         => bucket,
-          "biome"          => biome,
+          "terrain"        => terrain,
           "anchor_name"    => anchor_name,
           "existing_names" => existing_names
         }

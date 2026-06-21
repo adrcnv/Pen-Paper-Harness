@@ -37,4 +37,56 @@ RSpec.describe Harness::Runners::Inventory do
     outcome = described_class.new.run(context: ctx, scene: scene, input: "pay", step: step)
     expect(outcome.status).to eq(:redispatch)
   end
+
+  describe "shop buy/sell dispatch (to_id is the merchant)" do
+    let(:shop) { Location.create!(name: "the Smithy", parent: Location.create!(name: "Town", x: 1, y: 1, properties: { "economic_basis" => "farming", "size" => "town", "wealth" => "modest" }), properties: { "shop" => %w[weapons armor] }) }
+    let!(:smith) { Npc.create!(name: "Brann", subrole: "smith", location: shop, coins: 500) }
+    let!(:ware) { Item.create!(name: "blade", subrole: "longblade", location: shop, properties: { "tags" => %w[weapon edged], "modifiers" => [], "effects" => [], "for_sale" => true }) }
+
+    before { player.update!(location: shop, coins: 200) }
+
+    it "routes buy → buy_item with to_id as merchant" do
+      ctx = context_with { { "action" => "buy", "item_id" => ware.id, "to_id" => smith.id }.to_json }
+      scene = Harness::Tools::QueryScene.build(ctx)
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "buy the blade", step: step)
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "buy_item" ])
+      expect(ware.reload.character_id).to eq(player.id)
+    end
+
+    it "routes sell → sell_item with to_id as merchant" do
+      owned = Item.create!(name: "my axe", subrole: "longblade", character: player, properties: { "tags" => %w[weapon], "modifiers" => [], "effects" => [] })
+      ctx = context_with { { "action" => "sell", "item_id" => owned.id, "to_id" => smith.id }.to_json }
+      scene = Harness::Tools::QueryScene.build(ctx)
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "sell my axe", step: step)
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "sell_item" ])
+      expect(owned.reload.location_id).to eq(shop.id)
+    end
+
+    it "re-dispatches buy without a merchant" do
+      ctx = context_with { { "action" => "buy", "item_id" => ware.id }.to_json }
+      scene = Harness::Tools::QueryScene.build(ctx)
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "buy it", step: step)
+      expect(outcome.status).to eq(:redispatch)
+    end
+  end
+
+  describe "open container dispatch" do
+    let!(:chest) { Harness::Treasure::Chest.place(location: tavern, rarity: "common", rng: Random.new(1)) }
+
+    it "routes open → open_container" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", roll: 20, against: 10))
+      ctx = context_with { { "action" => "open", "item_id" => chest.id }.to_json }
+      scene = Harness::Tools::QueryScene.build(ctx)
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "open the chest", step: step)
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "open_container" ])
+      expect(chest.reload.properties["state"]).to eq("open")
+    end
+
+    it "re-dispatches open without an item_id" do
+      ctx = context_with { { "action" => "open" }.to_json }
+      scene = Harness::Tools::QueryScene.build(ctx)
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "open it", step: step)
+      expect(outcome.status).to eq(:redispatch)
+    end
+  end
 end

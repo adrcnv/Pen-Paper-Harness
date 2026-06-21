@@ -5,7 +5,7 @@ INPUTS
   - social: a place where the player meets travelers, merchants, families, patrols, pilgrims. The place is incidental — the people are the point. Tone: friendly or neutral.
   - discovery: a place the player notices because it's there — a shrine, a small cottage, a ruined chapel, a wayside post. May or may not be currently occupied; if occupied, by 1-2 people with a quiet reason for being there. Tone: quiet, mysterious, or melancholy.
   - combat: a place where hostile inhabitants are waiting for travelers. Bandits at a defile, marauders camped at a rotted shrine, a feral cult holed up in a collapsed watchtower, a tribe of raiders watching the road. The description must make the hostility legible — name the threat, show the posture (weapons drawn, lookouts, blocked road, cookfires upwind), so the system reading this knows the people here are dangerous and the player should not expect a welcome. Tone: tense, predatory, or quietly menacing.
-- biome: the terrain (lowland, highland, coast, forest, desert, marsh, mountain). Shape the place to fit.
+- terrain: the land type here (e.g. coastal, river_valley, marsh, floodplain, grassland, moor, forest_lowland, forest_upland, crags, mountain). Shape the place to fit it.
 - anchor_name: the nearest known major location, for prose context.
 - existing_names: list of names already in use anywhere in the world. DO NOT collide.
 

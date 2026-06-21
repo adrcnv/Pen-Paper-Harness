@@ -36,18 +36,25 @@ RSpec.describe Harness::Tools::PassTime do
       expect(tool.call({ "intent" => "rest", "duration_minutes" => -5 }, context)).to have_key("error")
     end
 
-    it "sets scene_dirty when crossing threshold" do
-      active = Harness::Scene::Active.new(
+    def active_scene
+      Harness::Scene::Active.new(
         location: loc, snapshot: nil, narrations: [], internal_state: {},
         entered_at_game_time: 1000
       )
-      context.active_scene = active
+    end
 
-      tool.call({ "intent" => "sleep", "duration_minutes" => 480 }, context)
+    it "sets scene_dirty for a substantial skip (>= threshold) — an explicit, player-chosen rebuild" do
+      context.active_scene = active_scene
+      result = tool.call({ "intent" => "sleep", "duration_minutes" => 480 }, context)
       expect(context.scene_dirty).to be(true)
-      # The result echoes scene_dirty so the LLM knows the next turn will rebuild.
-      result = tool.call({ "intent" => "wait", "duration_minutes" => 5 }, context)
       expect(result["scene_dirty"]).to be(true)
+    end
+
+    it "does NOT set scene_dirty for a short skip (< threshold) — a quick wait shouldn't whiplash the scene" do
+      context.active_scene = active_scene
+      result = tool.call({ "intent" => "wait", "duration_minutes" => 5 }, context)
+      expect(context.scene_dirty).to be(false)
+      expect(result["scene_dirty"]).to be(false)
     end
   end
 

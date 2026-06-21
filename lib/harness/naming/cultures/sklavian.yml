@@ -4,6 +4,61 @@ id: sklavian
 weight: 8
 flavor: "slavic-ish — hard consonants, riverine and stone-rooted family names"
 
+# Place-name morphology — see anglish.yml for the full explanation.
+# place_prefix+place_suffix ("Bel"+"grad" → Belgrad) or place_prefix + a
+# space place_word ("Kras Most"); kingdoms add a kingdom_suffix.
+place_prefix:
+  - Bel
+  - Vol
+  - Zar
+  - Novi
+  - Stari
+  - Kras
+  - Cherno
+  - Gor
+  - Drav
+  - Rud
+  - Veli
+  - Mali
+  - Zlat
+  - Bor
+  - Vyse
+  - Lesno
+  - Tiho
+  - Dubr
+  - Kam
+  - Brod
+  - Loz
+  - Mok
+place_suffix:
+  - grad
+  - gorod
+  - ovo
+  - ino
+  - sk
+  - ovka
+  - polje
+  - dol
+  - vor
+  - itsa
+  - bor
+  - slav
+  - nik
+place_word:
+  - Most
+  - Polje
+  - Dol
+  - Vrata
+  - Kamen
+  - Brod
+kingdom_suffix:
+  - Voivodeship
+  - Dominion
+  - Krai
+  - Tsardom
+  - Reach
+  - Realm
+
 # Split by gender; pools DISJOINT. Sasha here is female (sits with Anya/Tanya);
 # Olek is male. Library derives `given` = given_male + given_female.
 given_male:

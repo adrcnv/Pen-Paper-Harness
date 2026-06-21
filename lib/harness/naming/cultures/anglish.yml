@@ -4,6 +4,79 @@ id: anglish
 weight: 10
 flavor: "anglish / old english — earthy, monosyllabic, occupational surnames"
 
+# Place-name morphology. Locations + kingdoms are named MECHANICALLY (no LLM),
+# same principle as people. A place is place_prefix+place_suffix joined
+# ("Oak"+"haven" → Oakhaven) or, sometimes, place_prefix + a space-separated
+# place_word ("Oak Ridge"). A kingdom is a compound or prefix + kingdom_suffix
+# ("Oakhaven March", "The Grey Weald"). See Harness::Naming.place_for /
+# .kingdom_name_for. Uniqueness is enforced across BOTH locations and factions.
+place_prefix:
+  - Oak
+  - Ash
+  - Thorn
+  - Brook
+  - Mire
+  - Fen
+  - Grit
+  - Black
+  - Cold
+  - Grey
+  - Marsh
+  - Bram
+  - Deep
+  - High
+  - Long
+  - Yarrow
+  - Elder
+  - Haw
+  - Crow
+  - Hollow
+  - Nether
+  - Stoke
+  - Wold
+  - Red
+  - White
+  - Stone
+  - Wych
+  - Bal
+place_suffix:
+  - haven
+  - hold
+  - ford
+  - wick
+  - mere
+  - stead
+  - bury
+  - ton
+  - ham
+  - field
+  - gate
+  - dale
+  - combe
+  - bourne
+  - leigh
+  - thorpe
+place_word:
+  - Keep
+  - Ridge
+  - Cross
+  - Watch
+  - Vale
+  - End
+  - Hollow
+  - Moor
+  - Hill
+  - Bridge
+  - Barrow
+kingdom_suffix:
+  - March
+  - Marches
+  - Weald
+  - Crownlands
+  - Holdfast
+  - Reach
+  - Realm
+
 # Given names are split by gender; the engine rolls a gender, then draws from
 # the matching pool, so a drawn name implies a gender (Hilde female, Garrick
 # male). Keep the two pools DISJOINT — a name in both makes gender_for

@@ -5,6 +5,62 @@ id: myrr
 weight: 5
 flavor: "archaic high-fantasy — apostrophes, vowel clusters, ceremonial roots"
 
+# Place-name morphology — see anglish.yml for the full explanation.
+# place_prefix+place_suffix ("Vael"+"en" → Vaelen) or place_prefix + a space
+# place_word ("Kael Spire"); kingdoms add a kingdom_suffix.
+place_prefix:
+  - Vael
+  - Kael
+  - Mor
+  - Sil
+  - Zeph
+  - Quel
+  - Thal
+  - Sor
+  - Ny
+  - Ael
+  - Cael
+  - Vyr
+  - Ery
+  - Sael
+  - Lyr
+  - Oth
+  - Myr
+  - Drael
+  - Ish
+  - Aza
+  - Ele
+  - Ona
+place_suffix:
+  - en
+  - eth
+  - ar
+  - is
+  - oth
+  - wyn
+  - ael
+  - ir
+  - oss
+  - une
+  - yr
+  - esh
+  - andor
+  - avel
+place_word:
+  - Spire
+  - Reach
+  - Hollow
+  - Gate
+  - Vault
+  - Crest
+kingdom_suffix:
+  - Ascendancy
+  - Dominion
+  - Concord
+  - Hegemony
+  - Sultanate
+  - Reach
+
 # Split by gender; pools DISJOINT. Library derives `given` = the two combined.
 given_male:
   - Aelorin

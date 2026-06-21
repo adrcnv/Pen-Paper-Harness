@@ -340,4 +340,31 @@ RSpec.describe Harness::Scene::Manager do
       expect { manager.exit }.not_to raise_error
     end
   end
+
+  describe "settlement layout on first city entry" do
+    let(:profiled_city) {
+      Location.create!(
+        name: "Brackton", x: 5.0, y: 5.0, biome: "lowland",
+        properties: { "kind" => "city", "terrain" => "coastal", "coastal" => true,
+                      "economic_basis" => "fishing", "size" => "town", "wealth" => "modest" }
+      )
+    }
+    let(:context) {
+      Harness::Turn::Context.new(player_location: profiled_city, llm_client: stub_llm)
+    }
+
+    it "lays out the manifest sublocations as children on first entry" do
+      manager.enter
+      keys = Location.where(parent_id: profiled_city.id).map { |c| c.properties["manifest_key"] }.compact
+      expect(keys).to include("tavern", "docks", "smithy")
+    end
+
+    it "marks the city laid out and does not duplicate on re-entry" do
+      manager.enter
+      count = Location.where(parent_id: profiled_city.id).count
+      expect(profiled_city.reload.properties["settlement_laid_out"]).to be(true)
+      manager.enter(materialize_target: 0)
+      expect(Location.where(parent_id: profiled_city.id).count).to eq(count)
+    end
+  end
 end

@@ -141,7 +141,7 @@ RSpec.describe Harness::Turn::Loop do
       described_class.new(adapter: adapter, context: context)
     }
 
-    it "strips internal_state, agenda, should_push_now from query_scene present_characters" do
+    it "strips internal_state and agenda from query_scene present_characters" do
       tcs = [ {
         "name" => "query_scene", "args" => {},
         "result" => {
@@ -150,7 +150,6 @@ RSpec.describe Harness::Turn::Loop do
             { "id" => 2, "name" => "Rask", "subrole" => "bandit",
               "internal_state" => "drumming his axe handle",
               "agenda" => "wants to demand toll",
-              "should_push_now" => true,
               "abilities" => [ { "name" => "Heavy Strike", "uses_remaining" => 3 } ] }
           ]
         }
@@ -161,7 +160,6 @@ RSpec.describe Harness::Turn::Loop do
       expect(char.keys).to contain_exactly("id", "name", "subrole", "abilities")
       expect(char).not_to have_key("internal_state")
       expect(char).not_to have_key("agenda")
-      expect(char).not_to have_key("should_push_now")
     end
 
     it "leaves non-query_scene tool_calls untouched" do

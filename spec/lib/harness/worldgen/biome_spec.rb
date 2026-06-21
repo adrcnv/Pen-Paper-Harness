@@ -1,24 +1,28 @@
 require "rails_helper"
 
 RSpec.describe Harness::Worldgen::Biome do
-  let(:noise) { Harness::Worldgen::Noise.new(seed: 42) }
-
-  describe ".at" do
-    it "returns a value from the enum" do
-      result = described_class.at(noise: noise, x: 5.0, y: 5.0)
-      expect(described_class::ALL).to include(result)
+  describe ".coarse (projection of fine terrain)" do
+    it "collapses elevated terrain to highland" do
+      %i[mountain crags forest_upland moor].each do |t|
+        expect(described_class.coarse(t)).to eq(described_class::HIGHLAND)
+      end
     end
 
-    it "is deterministic given the noise and coords" do
-      a = described_class.at(noise: noise, x: 3.0, y: 8.0)
-      b = described_class.at(noise: noise, x: 3.0, y: 8.0)
-      expect(a).to eq(b)
+    it "collapses low/flat terrain to lowland" do
+      %i[coastal river_valley marsh floodplain grassland forest_lowland].each do |t|
+        expect(described_class.coarse(t)).to eq(described_class::LOWLAND)
+      end
     end
 
-    it "produces both biomes across a sampled field" do
-      tiles = (0..30).flat_map { |x| (0..30).map { |y| described_class.at(noise: noise, x: x * 1.0, y: y * 1.0) } }
-      expect(tiles).to include(described_class::LOWLAND)
-      expect(tiles).to include(described_class::HIGHLAND)
+    it "accepts strings as well as symbols" do
+      expect(described_class.coarse("mountain")).to eq(described_class::HIGHLAND)
+      expect(described_class.coarse("grassland")).to eq(described_class::LOWLAND)
+    end
+
+    it "returns a value from the enum for every fine terrain" do
+      Harness::Worldgen::Terrain::LAND.each do |t|
+        expect(described_class::ALL).to include(described_class.coarse(t))
+      end
     end
   end
 

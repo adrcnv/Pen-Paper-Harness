@@ -28,21 +28,28 @@ RSpec.describe Harness::Worldgen::Naming do
     )
   end
 
-  it "names every kingdom and every city via one LLM call per kingdom" do
+  it "names mechanically (not from the LLM) and pulls only descriptions from the LLM call" do
+    # The LLM still emits names in its output, but they are DISCARDED — names
+    # come from the per-culture morphology pools. Use distinctive LLM names so
+    # a regression (reverting to LLM naming) would be obvious.
     responses = [
-      fake_response_for(kingdom_name: "Karhast", city_names: { "0" => "Stormcrag", "1" => "Holgren" }),
-      fake_response_for(kingdom_name: "Velen",   city_names: { "2" => "Mistmere" }),
+      fake_response_for(kingdom_name: "LLM_KINGDOM_A", city_names: { "0" => "LLM_CITY_0", "1" => "LLM_CITY_1" }),
+      fake_response_for(kingdom_name: "LLM_KINGDOM_B", city_names: { "2" => "LLM_CITY_2" }),
     ]
     fake_llm = double("llm")
     expect(fake_llm).to receive(:complete).twice.and_return(*responses)
 
     described_class.name!(map: map, llm: fake_llm)
 
-    expect(map.kingdoms[0].name).to eq("Karhast")
-    expect(map.kingdoms[1].name).to eq("Velen")
-    expect(map.cities[0].name).to eq("Stormcrag")
-    expect(map.cities[1].name).to eq("Holgren")
-    expect(map.cities[2].name).to eq("Mistmere")
+    all_names = map.kingdoms.map(&:name) + map.cities.map(&:name)
+    # None of the LLM-emitted names survive — naming is mechanical.
+    expect(all_names).to all(be_present)
+    expect(all_names).not_to include("LLM_KINGDOM_A", "LLM_KINGDOM_B", "LLM_CITY_0", "LLM_CITY_1", "LLM_CITY_2")
+    # Globally unique across kingdoms AND cities (case-insensitive).
+    expect(all_names.map(&:downcase).uniq.size).to eq(all_names.size)
+    # The culture the names were drawn from is recorded for the Persister.
+    expect(map.kingdoms.map(&:culture_id)).to all(be_present)
+    # Descriptions DO come from the LLM.
     expect(map.cities.map(&:description)).to all(be_present)
     expect(map.kingdoms.map(&:description)).to all(be_present)
   end
@@ -82,7 +89,8 @@ RSpec.describe Harness::Worldgen::Naming do
     good_response = fake_response_for(kingdom_name: "Karhast", city_names: { "0" => "Stormcrag", "1" => "Holgren" })
     expect(fake_llm).to receive(:complete).and_return(bad_response, good_response, fake_response_for(kingdom_name: "Velen", city_names: { "2" => "Mistmere" }))
     described_class.name!(map: map, llm: fake_llm, logger: nil)
-    expect(map.kingdoms[0].name).to eq("Karhast")
-    expect(map.kingdoms[1].name).to eq("Velen")
+    # Recovered: every kingdom + city got a mechanical name and a description.
+    expect((map.kingdoms.map(&:name) + map.cities.map(&:name))).to all(be_present)
+    expect(map.kingdoms.map(&:description)).to all(be_present)
   end
 end

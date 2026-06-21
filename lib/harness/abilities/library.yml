@@ -56,6 +56,7 @@
   uses_per_rest: 4
   opposed_by: dexterity
   tags: [martial, weapon]
+  requires_tags: [weapon]
 
 - id: shield_up
   name: "Shield Up"
@@ -70,6 +71,7 @@
   uses_per_rest: 3
   difficulty: easy
   tags: [martial, defense]
+  requires_tags: [shield]
 
 - id: shove
   name: "Shove"
@@ -114,6 +116,7 @@
   uses_per_rest: 3
   opposed_by: dexterity
   tags: [martial, weapon, area]
+  requires_tags: [weapon]
 
 - id: rallying_cry
   name: "Rallying Cry"
@@ -158,6 +161,7 @@
   uses_per_rest: 1
   opposed_by: dexterity
   tags: [martial, weapon, area]
+  requires_tags: [weapon]
 
 - id: last_stand
   name: "Last Stand"
@@ -172,6 +176,7 @@
   uses_per_rest: 1
   opposed_by: constitution
   tags: [martial, weapon, legendary, finisher]
+  requires_tags: [weapon]
 
 # ====================== MAGE ======================
 
@@ -465,6 +470,7 @@
   uses_per_rest: 3
   opposed_by: dexterity
   tags: [divine, weapon, radiant]
+  requires_tags: [weapon]
 
 - id: bless
   name: "Bless"

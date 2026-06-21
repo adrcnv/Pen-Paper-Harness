@@ -9,9 +9,9 @@ RSpec.describe Harness::Seeder, "#seed_frame" do
           { "name": "Ostmark", "subrole": "trade_league", "disposition": "mercantile" }
         ],
         "cities": [
-          { "name": "Duskwatch",    "description": "Fortress capital of Vanthir",    "kingdom": "Vanthir", "coastal": false, "terrain": "highland" },
-          { "name": "Saltmere",     "description": "Salt-stained harbor town",       "kingdom": "Vanthir", "coastal": true,  "terrain": "coast"    },
-          { "name": "Ostmark City", "description": "Mercantile heart of the league", "kingdom": "Ostmark", "coastal": true,  "terrain": "coast"    }
+          { "name": "Duskwatch",    "description": "Fortress capital of Vanthir",    "kingdom": "Vanthir", "coastal": false, "terrain": "crags"    },
+          { "name": "Saltmere",     "description": "Salt-stained harbor town",       "kingdom": "Vanthir", "coastal": true,  "terrain": "coastal"  },
+          { "name": "Ostmark City", "description": "Mercantile heart of the league", "kingdom": "Ostmark", "coastal": true,  "terrain": "coastal"  }
         ],
         "paths": [
           { "from": "Duskwatch", "to": "Saltmere",     "cost_minutes": 600,  "description": "The Salt Road" },
@@ -50,7 +50,7 @@ RSpec.describe Harness::Seeder, "#seed_frame" do
     saltmere = Location.find_by!(name: "Saltmere")
     expect(saltmere.description).to match(/harbor/)
     expect(saltmere.properties["coastal"]).to eq(true)
-    expect(saltmere.properties["terrain"]).to eq("coast")
+    expect(saltmere.properties["terrain"]).to eq("coastal")
     expect(saltmere.parent).to be_nil
   end
 

@@ -14,13 +14,18 @@ module Harness
   #   - All query_* tools, mutate_* — meta-state ops, not in-fiction
   #     player time. Mutations get bundled with whichever event caused them.
   #
-  # Scene-rebuild trigger: when accumulated in-scene time crosses
-  # IN_SCENE_THRESHOLD, scene_dirty is set so the next turn rebuilds the scene
-  # (catch-up sim runs, internal-state regenerates, present-character set
-  # refreshed). This catches the "player sat in the tavern for an hour
-  # chatting" case that no explicit transition or pass_time would otherwise
-  # mark dirty. Transition keeps its own explicit scene_dirty=true — moving
-  # always rebuilds, regardless of how little time the move cost.
+  # Scene rebuilds are EXPLICIT, not accrual-driven. They happen when the
+  # player actually changes scene (transition / travel, which set scene_dirty
+  # themselves) or deliberately skips time (pass_time, which dirties when the
+  # skip is substantial — see IN_SCENE_THRESHOLD). The clock does NOT rebuild
+  # the scene just because conversation/action minutes piled past an hour:
+  # that fired a destructive same-location rebuild mid-conversation (wiped
+  # scene-local narration continuity, re-rolled internal states + agendas) —
+  # the "scene whiplash" failure. Catch-up answers "what happened here while I
+  # was AWAY"; a player sitting and talking was never away, so there is nothing
+  # to catch up and nothing to justify the rug-pull. The constant lives here
+  # because pass_time reads it to decide whether an explicit skip is long
+  # enough to warrant a rebuild.
   module Clock
     IN_SCENE_THRESHOLD = 60
 
@@ -33,7 +38,6 @@ module Harness
       logger.info { "[Clock] +#{minutes}min reason=#{reason} #{before} -> #{context.game_time}" }
 
       maybe_fire_pending_appearances!(context, logger)
-      maybe_dirty_scene!(context, logger)
       context.game_time
     end
 
@@ -69,18 +73,5 @@ module Harness
       logger.warn { "[Clock] mid-scene PA resolution failed: #{e.class}: #{e.message}" }
     end
 
-    def self.maybe_dirty_scene!(context, logger)
-      scene = context.active_scene
-      return unless scene
-      return if context.scene_dirty
-      entered_at = scene.entered_at_game_time
-      return unless entered_at
-
-      in_scene = context.game_time - entered_at
-      if in_scene >= IN_SCENE_THRESHOLD
-        context.scene_dirty = true
-        logger.info { "[Clock] scene_dirty triggered: in_scene=#{in_scene}min crossed threshold=#{IN_SCENE_THRESHOLD}min" }
-      end
-    end
   end
 end

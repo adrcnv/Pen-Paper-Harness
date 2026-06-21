@@ -66,7 +66,16 @@ module Harness
             # Surfaces wilderness_leaf encounter context. Combat encounters
             # mean the present NPCs are hostile; see the ENCOUNTER SCENES
             # section in the reasoning prompt.
-            "encounter_type" => loc.properties.is_a?(Hash) ? loc.properties["encounter_type"] : nil
+            "encounter_type" => loc.properties.is_a?(Hash) ? loc.properties["encounter_type"] : nil,
+            # Persistent player-made changes to the place (mutate_location):
+            # a barred door, a breached wall. Surfaced so later turns honor
+            # them instead of re-describing the place as pristine.
+            "alterations"    => (loc.properties["alterations"] if loc.properties.is_a?(Hash) && loc.properties["alterations"].present?),
+            # Mechanical setting identity of the enclosing settlement — terrain
+            # + economic basis/size/wealth. Lets the reasoning loop & narration
+            # ground the place ("a poor coastal fishing hamlet") instead of
+            # defaulting every town to a generic fantasy village.
+            "setting"        => settlement_facts(loc)
           }.compact,
           "parent"   => loc.parent ? { "id" => loc.parent.id, "name" => loc.parent.name } : nil,
           "siblings" => siblings,
@@ -104,21 +113,31 @@ module Harness
               state = active&.state_for(c.id)
               entry["internal_state"] = state if state
             end
+            # Plain agenda TEXT — the player-targeted GOAL/FRICTION seed for
+            # this NPC, if any (at most one NPC per scene). Inert scene
+            # context; WHEN an NPC acts on it is the initiative pass's call,
+            # not a per-turn pressure flag surfaced here.
             agenda = active&.agenda_for(c.id)
-            if agenda
-              # Collapsed shape: `agenda: { text:, push_now: }`.
-              # push_now=true means the NPC has gone N+ turns silent and the
-              # system wants a beat THIS turn regardless of player input
-              # opening. See the AGENDAS rule in the reasoning prompt.
-              entry["agenda"] = {
-                "text"     => agenda,
-                "push_now" => active&.agenda_overdue?(c.id) || false
-              }
-            end
+            entry["agenda"] = agenda if agenda
             entry
           },
+          # Items anchored here. Shop wares (for_sale) carry the buy price the
+          # local settlement charges. Containers (chests) carry container/state/
+          # locked so the reasoning loop can call open_container; their contents
+          # stay hidden until opened.
           "present_items" => snap.present_items.map { |i|
-            { "id" => i.id, "name" => i.name }
+            props = i.properties.is_a?(Hash) ? i.properties : {}
+            entry = { "id" => i.id, "name" => i.name }
+            if props["for_sale"]
+              entry["for_sale"] = true
+              entry["price"]    = shop_price(i, loc)
+            end
+            if props["container"]
+              entry["container"] = true
+              entry["state"]     = props["state"] || "closed"
+              entry["locked"]    = props["locked"] if props["locked"]
+            end
+            entry
           },
           # Dead bodies still anchored here. Inert as `resolve` targets
           # (resolve rejects them with `target is dead`); kept narratable so
@@ -139,6 +158,24 @@ module Harness
           # COMBAT MODE in the reasoning prompt.
           "combat" => combat_payload(active)
         }.compact
+      end
+
+      # Buy price for a for-sale ware, using the enclosing settlement's wealth +
+      # economic basis. Falls back to bare item value if no profile is resolvable.
+      def self.shop_price(item, loc)
+        facts = ::Harness::Settlement::Facts.for(loc)
+        ::Harness::Economy::Pricing.buy_price(
+          item,
+          wealth:         facts["wealth"],
+          economic_basis: facts["economic_basis"]
+        )
+      end
+
+      # Mechanical setting identity, resolved from the enclosing top-level
+      # settlement (terrain + economic basis/size/wealth). nil when nothing to
+      # ground on (placeless / pre-geography). See Settlement::Facts.
+      def self.settlement_facts(loc)
+        ::Harness::Settlement::Facts.presentable(loc)
       end
 
       def self.combat_payload(active)

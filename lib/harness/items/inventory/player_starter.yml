@@ -22,6 +22,7 @@ fighter:
   items:
     - { specific: longblade }
     - { specific: medium_armor }
+    - { specific: shield }   # so Shield Up (requires_tags: [shield]) is usable from turn 1
 
 mage:
   coins: "2d10+15"

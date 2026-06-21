@@ -7,11 +7,11 @@ RSpec.describe Harness::Items::Inventory do
   after   { described_class.reload! }
 
   describe ".roll_for_player" do
-    it "rolls the deterministic fighter starter kit (longblade + medium_armor)" do
+    it "rolls the deterministic fighter starter kit (longblade + medium_armor + shield)" do
       player = Player.create!(name: "Hero", location: loc, character_class: "fighter")
       items  = described_class.roll_for_player(player, rng: Random.new(1))
       subroles = items.map(&:subrole).sort
-      expect(subroles).to eq(%w[longblade medium_armor].sort)
+      expect(subroles).to eq(%w[longblade medium_armor shield].sort)
       expect(items.map(&:character_id).uniq).to eq([ player.id ])
     end
 

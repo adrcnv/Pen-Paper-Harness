@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_18_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_21_120000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -193,6 +193,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_18_120000) do
     t.datetime "updated_at", null: false
     t.index ["location_id"], name: "index_turn_logs_on_location_id"
     t.index ["turn_number"], name: "index_turn_logs_on_turn_number"
+  end
+
+  create_table "worlds", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "river_count"
+    t.json "rivers", default: []
+    t.float "sea_level"
+    t.string "seed"
+    t.float "size"
+    t.datetime "updated_at", null: false
   end
 
   add_foreign_key "characters", "locations"

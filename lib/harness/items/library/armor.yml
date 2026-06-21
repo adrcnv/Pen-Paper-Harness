@@ -34,3 +34,14 @@
     - { stat: intelligence, op: add, range: [0, 1] }
     - { stat: wisdom,       op: add, range: [0, 1] }
   weight: 10
+
+# Shields are a distinct off-hand: the `shield` tag is what gates Shield Up and
+# any future block/guard ability (requires_tags: [shield]). The small CON nudge
+# is flavor; the gating IS the point — no shield, no shielding.
+- id: shield
+  kind_pool:    [round shield, kite shield, buckler, heater shield, targe]
+  flavor_pool:  [battered, banded, plain, studded, oaken, dented, painted]
+  base_tags:    [armor, shield]
+  modifier_table:
+    - { stat: constitution, op: add, range: [0, 1] }
+  weight: 14

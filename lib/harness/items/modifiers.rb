@@ -11,6 +11,22 @@ module Harness
     # a narration concern (and currently narration doesn't lean on item
     # attribution beyond the explicit using_item_id arg).
     module Modifiers
+      # Canonical equipment-gating vocabulary: the item tags an ability may
+      # list in `requires_tags` to demand the actor be equipped for it. An item
+      # supplies a tag via its `base_tags` (weapons carry "weapon", a shield
+      # carries "shield", a focus/robe "magical_implement", etc). The gate
+      # (has_required_tags?) is satisfied when the actor owns an item carrying
+      # ALL required tags. This is the SINGLE source of truth the myths rework's
+      # generated-ability path should draw from when emitting requires_tags —
+      # so generated abilities and generated/stock items agree on the same
+      # words rather than free-texting "spear" vs "polearm". Tag labels are all
+      # we have; keep this list and item base_tags in lockstep.
+      EQUIPMENT_TAGS = %w[
+        weapon edged blunt polearm reach ranged two_handed light
+        focus magical_implement
+        armor medium heavy shield
+      ].freeze
+
       class << self
         # Sum of `op: add` modifiers on `stat`, across all owned items.
         def stat_bonus(actor, stat)

@@ -29,7 +29,7 @@ RSpec.describe Harness::Clock do
     end
   end
 
-  describe "scene_dirty trigger" do
+  describe "scene_dirty (no accrual-driven rebuild)" do
     let(:active) {
       Harness::Scene::Active.new(
         location: loc, snapshot: nil, narrations: [], internal_state: {},
@@ -39,39 +39,22 @@ RSpec.describe Harness::Clock do
 
     before { context.active_scene = active }
 
-    it "does NOT set scene_dirty when in-scene time is below threshold" do
-      described_class.advance(context, minutes: 30, reason: "test", logger: logger)
+    # The old behavior — accrued conversation/action time crossing 60min
+    # forcing a same-location rebuild — was the "scene whiplash" failure and
+    # has been removed. Clock.advance NEVER dirties the scene from accrued
+    # time, however much piles up. Explicit skips (pass_time) and movement
+    # (transition/travel) own the rebuild now.
+    it "does NOT set scene_dirty from accrued time, even far past the old 60min threshold" do
+      described_class.advance(context, minutes: 65,  reason: "conversation", logger: logger)
+      expect(context.scene_dirty).to be(false)
+      described_class.advance(context, minutes: 500, reason: "more talk",    logger: logger)
       expect(context.scene_dirty).to be(false)
     end
 
-    it "sets scene_dirty when in-scene time crosses threshold (60min)" do
-      described_class.advance(context, minutes: 65, reason: "test", logger: logger)
-      expect(context.scene_dirty).to be(true)
-    end
-
-    it "sets scene_dirty exactly at threshold" do
-      described_class.advance(context, minutes: 60, reason: "test", logger: logger)
-      expect(context.scene_dirty).to be(true)
-    end
-
-    it "accumulates across multiple advances" do
-      described_class.advance(context, minutes: 30, reason: "first",  logger: logger)
-      expect(context.scene_dirty).to be(false)
-      described_class.advance(context, minutes: 35, reason: "second", logger: logger)
-      expect(context.scene_dirty).to be(true)
-    end
-
-    it "does not set scene_dirty when no active scene" do
-      context.active_scene = nil
-      described_class.advance(context, minutes: 1000, reason: "test", logger: logger)
-      expect(context.scene_dirty).to be(false)
-    end
-
-    it "does not re-fire if scene is already dirty (idempotent)" do
+    it "leaves an already-dirty scene dirty (doesn't clear it)" do
       context.scene_dirty = true
-      expect {
-        described_class.advance(context, minutes: 5, reason: "test", logger: logger)
-      }.not_to change { context.scene_dirty }
+      described_class.advance(context, minutes: 5, reason: "test", logger: logger)
+      expect(context.scene_dirty).to be(true)
     end
   end
 

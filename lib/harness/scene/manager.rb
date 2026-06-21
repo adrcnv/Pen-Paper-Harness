@@ -62,6 +62,7 @@ module Harness
         logger.info { "[Scene::Manager] enter location=#{loc.name}" }
 
         maybe_run_genesis(loc)
+        maybe_lay_out_settlement(loc)
         maybe_run_catch_up(loc)
         maybe_resolve_pending_appearances(loc)
         maybe_run_quest_generation(loc)
@@ -69,6 +70,8 @@ module Harness
         maybe_pull_traveler(loc)
         maybe_draw_local(loc)
         maybe_seed_location_items(loc)
+        maybe_stock_shop(loc)
+        maybe_seed_treasure(loc)
 
         snapshot = ::Harness::Scene::Assembler.for(location: loc)
         maybe_run_character_catch_up(snapshot.present_characters)
@@ -295,6 +298,42 @@ module Harness
           current = current.parent
         end
         nil
+      end
+
+      # Lay out a worldgen city's KNOWN SHAPE on entry — create the manifest's
+      # sublocations (the docks, the smithy, the moot hall…) as child stubs, so
+      # the town is legible structure to navigate rather than something the
+      # player squeezes for "is there a smith?". Pure mechanical (no LLM gate),
+      # idempotent via the city's `settlement_laid_out` flag. Only fires at the
+      # top-level city tier with a profile; sublocations/wilderness/fixtures are
+      # left to the existing lazy paths. Contents fill on approach (Materializer
+      # reads each stub's name+description). Failure non-fatal.
+      def maybe_lay_out_settlement(loc)
+        return unless loc.parent_id.nil? && loc.x.present? && loc.y.present?
+        return if loc.properties.is_a?(Hash) && loc.properties["kind"] == "wilderness_leaf"
+
+        ::Harness::Settlement::Layout.lay_out!(city: loc, rng: @rng, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] settlement layout failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # Stock a shop sublocation with wares on first entry (manifest stamped
+      # `shop` categories on the stub). Pure mechanical, idempotent via
+      # `shop_stocked`. No-op for non-shop locations. Failure non-fatal.
+      def maybe_stock_shop(loc)
+        return unless loc.properties.is_a?(Hash) && loc.properties["shop"].present?
+        ::Harness::Economy::ShopStock.stock!(loc, rng: @rng, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] shop stocking failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # Place a treasure chest on first entry to a location that warrants one
+      # (bandit hideout, discovery site). Pure mechanical, idempotent via
+      # `treasure_seeded`. Additive to scattered floor-loot. Failure non-fatal.
+      def maybe_seed_treasure(loc)
+        ::Harness::Treasure::Seeder.seed!(loc, rng: @rng, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] treasure seeding failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
 
       # Seed anchored items at this location on first scene entry.

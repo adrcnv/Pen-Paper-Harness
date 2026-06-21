@@ -67,6 +67,7 @@ module Harness
         return { "error" => "connection must be a non-empty string" }  unless connection.is_a?(String) && !connection.strip.empty?
         return { "error" => "type must be one of #{ALLOWED_TYPES.inspect}" } unless ALLOWED_TYPES.include?(type)
         return { "error" => "name #{name.inspect} already exists as a Location" } if ::Location.exists?(name: name)
+        return { "error" => "name #{name.inspect} already exists as a Faction (kingdom/guild) — pick a distinct place name" } if ::Faction.exists?(name: name)
 
         case type
         when TYPE_SUBLOCATION     then create_sublocation(name, description, parent_id, connection, context)
@@ -115,7 +116,8 @@ module Harness
         return { "error" => "could not place wilderness_leaf without colliding with existing locations after #{MAX_ATTEMPTS} attempts" } unless coords
 
         x, y = coords
-        biome = nearest_biome(x, y, existing) || ::Harness::Worldgen::Biome::LOWLAND
+        props = geography_facts(x, y, existing)
+        biome = props["biome"]
 
         loc = nil
         backfilled = 0
@@ -127,6 +129,7 @@ module Harness
             y:           y,
             biome:       biome,
             properties:  { "kind" => TYPE_WILDERNESS_LEAF }
+                           .merge(props.except("biome"))
           )
           backfilled = backfill_prose(name, loc.id)
         end
@@ -145,11 +148,12 @@ module Harness
           "type"              => TYPE_WILDERNESS_LEAF,
           "x"                 => loc.x,
           "y"                 => loc.y,
+          "terrain"           => (loc.properties.is_a?(Hash) ? loc.properties["terrain"] : nil) || loc.biome,
           "biome"             => loc.biome,
           "events_backfilled" => backfilled,
           "event_id"          => intro_event.id,
           "game_time"         => context.game_time,
-          "committed_summary" => "[committed location_id=#{loc.id}] #{loc.name} (wilderness_leaf, #{loc.biome}) — #{description.to_s[0, 100]}"
+          "committed_summary" => "[committed location_id=#{loc.id}] #{loc.name} (wilderness_leaf, #{(loc.properties.is_a?(Hash) ? loc.properties['terrain'] : nil) || loc.biome}) — #{description.to_s[0, 100]}"
         }
       end
 
@@ -168,9 +172,27 @@ module Harness
         nil
       end
 
-      def nearest_biome(x, y, existing)
-        nearest = existing.min_by { |loc| Math.hypot(loc.x - x, loc.y - y) }
-        nearest&.biome
+      # Terrain facts for a freshly-placed wilderness leaf. Prefer sampling the
+      # persisted world's geography at the point (real terrain + coastal/
+      # riverside + derived biome); fall back to the nearest existing
+      # top-level's stored facts for pre-geography saves.
+      def geography_facts(x, y, existing)
+        geo = ::World.geography
+        if geo
+          terrain = ::Harness::Worldgen::Terrain.at(geo: geo, x: x, y: y)
+          {
+            "terrain"   => terrain.to_s,
+            "coastal"   => geo.coastal?(x, y),
+            "riverside" => geo.riverside?(x, y),
+            "biome"     => ::Harness::Worldgen::Biome.coarse(terrain)
+          }
+        else
+          nearest = existing.min_by { |loc| Math.hypot(loc.x - x, loc.y - y) }
+          nprops  = nearest&.properties.is_a?(Hash) ? nearest.properties : {}
+          facts   = { "biome" => nearest&.biome || ::Harness::Worldgen::Biome::LOWLAND }
+          facts["terrain"] = nprops["terrain"] if nprops["terrain"]
+          facts
+        end
       end
 
       # Find any prior events whose prose referenced this name (via

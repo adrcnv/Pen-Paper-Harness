@@ -100,6 +100,7 @@ module Harness
           "model"       => safe_model_name(adapter),
           "duration_ms" => elapsed_ms,
           "raw"         => raw.to_s[0, 4000],
+          "reasoning"   => parsed[:reasoning],
           "plan"        => parsed[:plan],
           "parse_error" => parsed[:error]
         }
@@ -123,13 +124,14 @@ module Harness
         rescue StandardError
           fallback_extract(raw)
         end
-        return { plan: nil, error: "no JSON object found" } unless obj.is_a?(Hash)
+        return { plan: nil, reasoning: nil, error: "no JSON object found" } unless obj.is_a?(Hash)
 
+        reasoning = obj["reasoning"].to_s.strip[0, 600].presence
         steps = obj["plan"]
-        return { plan: nil, error: "missing 'plan' array" } unless steps.is_a?(Array)
+        return { plan: nil, reasoning: reasoning, error: "missing 'plan' array" } unless steps.is_a?(Array)
 
         normalized = steps.map { |s| normalize_step(s) }
-        { plan: normalized, error: nil }
+        { plan: normalized, reasoning: reasoning, error: nil }
       end
 
       def normalize_step(step)

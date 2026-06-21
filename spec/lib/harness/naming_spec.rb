@@ -92,6 +92,81 @@ RSpec.describe Harness::Naming do
     end
   end
 
+  describe ".place_for" do
+    let(:nord) { Harness::Naming::Library.find("nord") }
+
+    it "compounds a prefix with a suffix or a space-word from the culture pools" do
+      100.times do
+        name = described_class.place_for(culture: nord, rng: Random.new(Random.new_seed))
+        expect(name).to be_present
+        if name.include?(" ")
+          pre, word = name.split(" ", 2)
+          expect(nord["place_prefix"]).to include(pre)
+          expect(nord["place_word"]).to include(word)
+        else
+          # prefix + suffix joined: some prefix must be a leading substring and
+          # the remainder a known suffix.
+          ok = nord["place_prefix"].any? do |pre|
+            name.start_with?(pre) && nord["place_suffix"].include?(name[pre.length..])
+          end
+          expect(ok).to be(true), "#{name.inspect} not a prefix+suffix compound"
+        end
+      end
+    end
+
+    it "is stable with a fixed rng" do
+      a = described_class.place_for(culture: nord, rng: Random.new(7))
+      b = described_class.place_for(culture: nord, rng: Random.new(7))
+      expect(a).to eq(b)
+    end
+  end
+
+  describe ".kingdom_name_for" do
+    let(:nord) { Harness::Naming::Library.find("nord") }
+
+    it "always ends in a kingdom_suffix from the culture" do
+      50.times do
+        name = described_class.kingdom_name_for(culture: nord, rng: Random.new(Random.new_seed))
+        expect(nord["kingdom_suffix"]).to include(name.split(" ").last)
+      end
+    end
+  end
+
+  describe ".unique_place_for / .unique_kingdom_name_for" do
+    let(:nord) { Harness::Naming::Library.find("nord") }
+
+    it "never collides with an existing Location, Faction, or an in-memory taken set" do
+      taken = described_class.taken_set
+      names = []
+      40.times do
+        n = described_class.unique_place_for(culture: nord, taken: taken, rng: Random.new(Random.new_seed))
+        names << n
+      end
+      # All globally distinct (case-insensitive) and none pre-existing.
+      expect(names.map(&:downcase).uniq.size).to eq(names.size)
+      names.each { |n| expect(Location.exists?(name: n)).to be(false) }
+    end
+
+    it "avoids a name already held by a Faction (city can't equal a kingdom)" do
+      Faction.create!(name: "Frostfell", subrole: "kingdom", is_kingdom: true)
+      # Stub a 1-combo culture that would ONLY ever produce "Frostfell" so the
+      # collision path must engage the disambiguator.
+      tiny = { "id" => "tiny", "place_prefix" => [ "Frost" ], "place_suffix" => [ "fell" ],
+               "place_word" => [], "kingdom_suffix" => [ "Reach" ] }
+      name = described_class.unique_place_for(culture: tiny, rng: Random.new(0))
+      expect(name).not_to eq("Frostfell")
+      expect(name).to match(/Frostfell/) # disambiguated form, e.g. "North Frostfell"
+    end
+
+    it "seeds taken_set from both Locations and Factions" do
+      Location.create!(name: "Ironby", parent: nil)
+      Faction.create!(name: "The Storm Jarldom", subrole: "kingdom", is_kingdom: true)
+      set = described_class.taken_set
+      expect(set).to include("ironby")
+      expect(set).to include("the storm jarldom")
+    end
+  end
+
   describe ".gender_for" do
     it "resolves a male pool name to male" do
       expect(described_class.gender_for("Bjorn")).to eq("male")

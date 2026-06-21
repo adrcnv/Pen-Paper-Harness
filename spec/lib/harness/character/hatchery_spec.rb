@@ -295,7 +295,7 @@ RSpec.describe Harness::Character::Hatchery do
     it "rolls the deterministic player starter kit on materialize!" do
       player = Player.create!(name: "Hero", location: city, character_class: "fighter")
       described_class.materialize!(player, llm_grunt: nil)
-      expect(player.items.pluck(:subrole).sort).to eq(%w[longblade medium_armor].sort)
+      expect(player.items.pluck(:subrole).sort).to eq(%w[longblade medium_armor shield].sort)
     end
 
     it "rolls NPC inventory in the LLM-success path (fighter table mostly produces items)" do
