@@ -13,8 +13,7 @@ RSpec.describe Harness::Runners::Conversation do
 
   it "stages dialogue for narration WITHOUT persisting it (no soul-pollution)" do
     ctx = context_with do
-      { "dialogue_events" => [ { "actor_id" => barkeep.id, "summary" => "greets the player", "prose" => "Aye, what'll it be?" } ],
-        "resolve_call" => nil, "ignorance" => [] }.to_json
+      { "speak" => true, "dialogue" => { "summary" => "greets the player", "prose" => "Aye, what'll it be?" } }.to_json
     end
     scene = Harness::Tools::QueryScene.build(ctx)
 
@@ -32,9 +31,9 @@ RSpec.describe Harness::Runners::Conversation do
 
   it "persists a durable event only when the exchange is flagged memorable" do
     ctx = context_with do
-      { "dialogue_events" => [ { "actor_id" => barkeep.id, "summary" => "warns", "prose" => "Cross me and you'll regret it." } ],
-        "resolve_call" => nil, "ignorance" => [],
-        "memorable" => { "actor_id" => barkeep.id, "gist" => "Tomas threatened the player over the dock debt" } }.to_json
+      { "speak" => true,
+        "dialogue" => { "summary" => "warns", "prose" => "Cross me and you'll regret it." },
+        "memorable" => { "gist" => "Tomas threatened the player over the dock debt" } }.to_json
     end
     scene = Harness::Tools::QueryScene.build(ctx)
 
@@ -47,23 +46,23 @@ RSpec.describe Harness::Runners::Conversation do
     expect(ev.event_participants.pluck(:character_id)).to include(barkeep.id, player.id)
   end
 
-  it "fires a persuasion resolve when the model asks for one" do
+  it "fires a persuasion resolve when the character asks for one (player rolls, character is target)" do
     ctx = context_with do
-      { "dialogue_events" => [],
-        "resolve_call" => { "actor_id" => player.id, "stat" => "charisma", "action" => "press for the secret", "target_id" => barkeep.id, "difficulty" => "moderate" },
-        "ignorance" => [] }.to_json
+      { "speak" => true, "dialogue" => nil,
+        "resolve_call" => { "stat" => "charisma", "action" => "press for the secret", "difficulty" => "moderate" } }.to_json
     end
     scene = Harness::Tools::QueryScene.build(ctx)
 
     outcome = described_class.new.run(context: ctx, scene: scene, input: "tell me who runs the docks", step: step)
-    expect(outcome.tool_calls.map { |t| t["name"] }).to include("resolve")
+    resolve = outcome.tool_calls.find { |t| t["name"] == "resolve" }
+    expect(resolve).to be_present
+    expect(resolve.dig("args", "actor_id")).to eq(player.id)
+    expect(resolve.dig("args", "target_id")).to eq(barkeep.id)
   end
 
   it "records asserted ignorance as a personal-scope event" do
     ctx = context_with do
-      { "dialogue_events" => [],
-        "resolve_call" => nil,
-        "ignorance" => [ { "actor_id" => barkeep.id, "topic" => "the Shadow Hand" } ] }.to_json
+      { "speak" => true, "ignorance" => { "topic" => "the Shadow Hand" } }.to_json
     end
     scene = Harness::Tools::QueryScene.build(ctx)
 
@@ -73,16 +72,13 @@ RSpec.describe Harness::Runners::Conversation do
   end
 
   it "realizes a claimed person into a grounded row (GROUND v0)" do
-    # The barkeep names a contact who has no row. The runner should surface it
-    # as a claim and the realizer should mint a findable character + a
-    # `realize_claim` tool_call, without touching the no-invention restraint.
     allow(Harness::Character::Hatchery).to receive(:spawn) do |**kw|
       Npc.create!(name: kw[:name], subrole: kw[:subrole], location: kw[:location], properties: kw[:properties] || {})
     end
     ctx = context_with do
-      { "dialogue_events" => [ { "actor_id" => barkeep.id, "summary" => "points the way", "prose" => "Ask for Harek at the relay." } ],
-        "resolve_call" => nil, "ignorance" => [],
-        "claims" => [ { "actor_id" => barkeep.id, "name" => "Harek", "subrole" => "contact", "gist" => "the relay contact" } ] }.to_json
+      { "speak" => true,
+        "dialogue" => { "summary" => "points the way", "prose" => "Ask for Harek at the relay." },
+        "claims" => { "name" => "Harek", "subrole" => "contact", "gist" => "the relay contact" } }.to_json
     end
     scene = Harness::Tools::QueryScene.build(ctx)
 
@@ -99,9 +95,9 @@ RSpec.describe Harness::Runners::Conversation do
     allow(Harness::Character::Hatchery).to receive(:spawn).and_call_original
     Npc.create!(name: "Harek", subrole: "contact", location: tavern)
     ctx = context_with do
-      { "dialogue_events" => [ { "actor_id" => barkeep.id, "summary" => "points the way", "prose" => "Ask for Harek." } ],
-        "resolve_call" => nil, "ignorance" => [],
-        "claims" => [ { "actor_id" => barkeep.id, "name" => "Harek", "subrole" => "contact" } ] }.to_json
+      { "speak" => true,
+        "dialogue" => { "summary" => "points the way", "prose" => "Ask for Harek." },
+        "claims" => { "name" => "Harek", "subrole" => "contact" } }.to_json
     end
     scene = Harness::Tools::QueryScene.build(ctx)
 
@@ -111,7 +107,7 @@ RSpec.describe Harness::Runners::Conversation do
     expect(Harness::Character::Hatchery).not_to have_received(:spawn)
   end
 
-  it "exposes the live thread and the NPC's personality/mood/agenda to the emit" do
+  it "exposes the live thread and the character's OWN personality/mood/agenda to its call" do
     barkeep.update!(properties: { "personality" => "gruff, taciturn" })
     active = Harness::Scene::Active.new(
       location: tavern, snapshot: nil,
@@ -122,17 +118,58 @@ RSpec.describe Harness::Runners::Conversation do
     )
     captured = nil
     ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
-      llm_nuance: StubLLM.new { |user| captured = user; { "dialogue_events" => [], "resolve_call" => nil, "ignorance" => [] }.to_json })
+      llm_nuance: StubLLM.new { |full| captured = full; { "speak" => false }.to_json })
     ctx.active_scene = active
     scene = Harness::Tools::QueryScene.build(ctx)
 
     described_class.new.run(context: ctx, scene: scene, input: "still here", step: step)
 
-    expect(captured).to include("exchange_so_far", "who runs this place?")          # the thread
+    expect(captured).to include("exchange_so_far", "who runs this place?")          # the shared thread
     expect(captured).to include("gruff, taciturn", "wary of strangers", "wants the player to drink or leave") # the soul
   end
 
-  it "re-dispatches when no NPC is present" do
+  it "does NOT expose another present character's private events to a character's call (theory-of-mind boundary)" do
+    # Ysme holds a PERSONAL-scope memory (private — not local-public, so it isn't
+    # shared by being-in-the-room). When the barkeep is voiced, Ysme's memory
+    # must not appear in his prompt — only the public roster entry (name + role).
+    # It MUST still reach Ysme's own call: same event, holder sees it, others don't.
+    ysme = Npc.create!(name: "Ysme", subrole: "bouncer", location: tavern)
+    secret = Event.create!(game_time: 50, scope: "personal", location: tavern,
+      details: { "summary" => "Ysme hauled the rogue barge off the pilings in the storm." })
+    EventParticipant.create!(event: secret, character: ysme, role: "actor")
+
+    seen = []
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full| seen << full; { "speak" => false }.to_json })
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "anything interesting, barkeep?", step: step("ask the barkeep"))
+
+    # Key on the holder id — it appears ONLY in that character's own `you`
+    # block (the roster carries names + roles, no ids), so this picks the right call.
+    barkeep_call = seen.find { |s| s.include?(%("id": #{barkeep.id},)) }
+    ysme_call    = seen.find { |s| s.include?(%("id": #{ysme.id},)) }
+    expect(barkeep_call).to be_present
+    expect(barkeep_call).to include("Ysme")                                  # public identity is fine
+    expect(barkeep_call).not_to include("hauled the rogue barge")            # private knowledge is NOT
+    expect(ysme_call).to include("hauled the rogue barge")                   # but the holder DOES have it
+  end
+
+  it "stops after two characters have spoken (early exit)" do
+    # Four present; if two answer, the rest are never polled.
+    Npc.create!(name: "Ada", subrole: "patron", location: tavern)
+    Npc.create!(name: "Bo", subrole: "patron", location: tavern)
+    Npc.create!(name: "Cy", subrole: "patron", location: tavern)
+    polled = []
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full| polled << full; { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "Hello." } }.to_json })
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "hello everyone", step: step("greet the room"))
+    expect(polled.size).to eq(2)
+  end
+
+  it "re-dispatches when no one is present" do
     empty = Location.create!(name: "Empty Road")
     player.update!(location: empty)
     ctx = context_with { "{}" }
@@ -143,7 +180,7 @@ RSpec.describe Harness::Runners::Conversation do
     expect(outcome.status).to eq(:redispatch)
   end
 
-  it "re-dispatches (no crash) on unparseable emit" do
+  it "re-dispatches (no crash) when every voice emit is unparseable" do
     ctx = context_with { "definitely not json" }
     scene = Harness::Tools::QueryScene.build(ctx)
     outcome = described_class.new.run(context: ctx, scene: scene, input: "hi", step: step)
@@ -151,11 +188,8 @@ RSpec.describe Harness::Runners::Conversation do
   end
 
   # Regression: the runner used to hand the model truncated Ruby-inspect of the
-  # whole `details` hash (it read top-level "trigger"/"summary"/"details", none
-  # of which exist on a query_events row) — so a barkeep holding the town's
-  # founding event still had "nothing interesting" to say. event_text now digs
-  # the readable line out of details ({"summary"} and {"narrative"=>{...}}).
-  it "passes CLEAN, readable event text to the model (not truncated hash-inspect)" do
+  # whole `details` hash. event_text now digs the readable line out of details.
+  it "passes CLEAN, readable event text to the character's call (not truncated hash-inspect)" do
     summary_ev = Event.create!(game_time: 50, scope: "local", location: tavern,
       details: { "summary" => "The founder drives the first pilings into the marsh, founding the town." })
     EventParticipant.create!(event: summary_ev, character: barkeep, role: "actor")
@@ -166,32 +200,32 @@ RSpec.describe Harness::Runners::Conversation do
 
     captured = nil
     ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
-      llm_nuance: StubLLM.new { |user|
-        captured = user
-        { "dialogue_events" => [], "resolve_call" => nil, "ignorance" => [] }.to_json
-      })
+      llm_nuance: StubLLM.new { |full| captured = full; { "speak" => false }.to_json })
     scene = Harness::Tools::QueryScene.build(ctx)
     described_class.new.run(context: ctx, scene: scene, input: "anything interesting?", step: step)
 
     expect(captured).to include("The founder drives the first pilings into the marsh")
     expect(captured).to include("the great flood")
     expect(captured).to include("The river took the lower docks one spring")
-    # No raw hash-inspect leakage (the old mangled form).
     expect(captured).not_to include('"summary" =>')
     expect(captured).not_to include('"narrative" =>')
   end
 
-  # Regression: speaking to an ambient extra used to be silently redirected to
-  # the nearest real NPC. A dialogue_event referencing an extra_index now
-  # materializes that figure and speaks AS it.
+  # Regression: speaking to an ambient extra materializes that figure and speaks
+  # AS it (rather than redirecting to the nearest real NPC).
   describe "promoting an extra speaker" do
     let(:recruit_desc) { "a young recruit shivering by the hearth, trying to dry his socks" }
 
-    it "materializes the extra and commits a dialogue event spoken by the new character" do
-      ctx = context_with do
-        { "dialogue_events" => [ { "extra_index" => 0, "subrole" => "recruit", "summary" => "stammers a reply", "prose" => "The young one mumbles a nervous answer." } ],
-          "resolve_call" => nil, "ignorance" => [] }.to_json
-      end
+    it "materializes the extra and stages a dialogue line spoken by the new character" do
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+        llm_nuance: StubLLM.new { |full|
+          if full.include?(recruit_desc)   # only the extra's own call carries its description
+            { "speak" => true, "subrole" => "recruit",
+              "dialogue" => { "summary" => "stammers a reply", "prose" => "The young one mumbles a nervous answer." } }.to_json
+          else
+            { "speak" => false }.to_json   # the barkeep stays out of it
+          end
+        })
       ctx.active_scene = Harness::Scene::Active.new(
         location: tavern,
         snapshot: Harness::Scene::Assembler.for(location: tavern),
@@ -200,15 +234,15 @@ RSpec.describe Harness::Runners::Conversation do
       scene = Harness::Tools::QueryScene.build(ctx)
 
       expect {
-        @outcome = described_class.new.run(context: ctx, scene: scene, input: "talk to the recruit", step: step)
+        @outcome = described_class.new.run(context: ctx, scene: scene, input: "talk to the recruit", step: step("address the recruit"))
       }.to change(Npc, :count).by(1)
 
       pc = @outcome.tool_calls.find { |t| t["name"] == "propose_character" }
       new_id = pc.dig("result", "character_id")
       expect(pc.dig("args", "from_extra")).to eq(recruit_desc)
 
-      dlg = @outcome.tool_calls.select { |t| t["name"] == "propose_event" }.find { |t| t.dig("args", "trigger") != "asserted ignorance" }
-      actor_ids = dlg.dig("args", "participants").select { |p| p["role"] == "actor" }.map { |p| p["character_id"] }
+      say = @outcome.tool_calls.find { |t| t["name"] == "propose_event" && t.dig("result", "staged") }
+      actor_ids = say.dig("args", "participants").select { |p| p["role"] == "actor" }.map { |p| p["character_id"] }
       expect(actor_ids).to eq([ new_id ]) # the recruit speaks, not the barkeep
     end
   end

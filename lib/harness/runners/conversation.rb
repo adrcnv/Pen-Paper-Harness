@@ -1,53 +1,146 @@
 module Harness
   module Runners
-    # The player speaks to / asks / persuades the NPC(s) present. Structured
-    # emit: ONE LLM call returns dialogue + an optional roll + asserted
-    # ignorance as JSON; the runner commits each via tools in Ruby. This makes
-    # the propose_event-as-narration runaway STRUCTURALLY impossible — at most
-    # one event per responding NPC (+ optional roll + ignorance), never a
-    # 20-call spray.
+    # The player speaks to the room. Each PRESENT character is voiced by its OWN
+    # structured-emit call that sees ONLY its own events — so no character can
+    # recite another's history (hard theory-of-mind). The weak local model can't
+    # honor a "use only your own sub-array" rule when everyone's events sit in
+    # one prompt, so we enforce the boundary mechanically: identities are public
+    # (others_present — names + roles), knowledge is private (per-call events).
     #
-    # Step-2 scope: speech (dialogue_events → propose_event), persuasion
-    # (resolve_call → resolve), asserted ignorance (→ personal propose_event).
-    # Disclosed-past-facts (the backward two-event dance) and supplements are
-    # deferred to playtest-driven refinement.
+    # Each character self-decides whether it is being addressed, so there is no
+    # mechanical addressee resolver. We poll the named-likely characters first
+    # (so a chime-in can't fill the answer before the addressee is asked) and
+    # stop once two have spoken — a question usually draws one answer, sometimes
+    # two at once, as in life.
+    #
+    # Per-character emit: speech (dialogue → staged propose_event), persuasion
+    # (resolve_call → resolve), asserted ignorance (→ personal event), a durable
+    # beat (memorable → propose_event), and a named person (claims → Realizer).
     class Conversation < Base
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/conversation.txt")
-      MAX_NPCS = 4
       EVENT_SUMMARY_CAP = 10
+      EVENT_TEXT_CAP = 220
+      THREAD_CAP  = 6
+      THREAD_CHARS = 700
+      MAX_SPEAKERS = 2
 
       def run(context:, scene:, input:, step:)
-        present = Array(scene["present_characters"]).first(MAX_NPCS)
-        return redispatch("no NPC present to converse with") if present.empty?
+        present = Array(scene["present_characters"])
+        extras  = Array(scene["present_extras"])
+        return redispatch("no one present to converse with") if present.empty? && extras.empty?
 
         player = ::Player.first
         return redispatch("no player row") unless player
 
         resolver = resolver_for(context)
-        tcs = []
-        promo = {} # extra_index → promoted character_id (memoized across commits)
+        active   = context.active_scene
+        tcs      = []
+        promo    = {}
+        thread   = conversation_thread(context)
+        roster   = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
 
-        npcs = present.map { |c| npc_knowledge(resolver, c, tcs, context.active_scene) }
-        emit = converse(context, input, step, player, npcs, scene)
-        return redispatch("conversation emit unparseable", tcs) unless emit
+        spoken     = 0
+        parsed_any = false
+        poll_order(present, extras, input, step).each do |v|
+          break if spoken >= MAX_SPEAKERS
+          emit = voice_one(context, input, step, player, v, roster, thread, resolver, tcs, active)
+          next unless emit
+          parsed_any = true
+          spoken += 1 if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
+        end
 
-        commit_resolve(resolver, context, scene, emit["resolve_call"], player, promo, tcs)
-        stage_dialogue(resolver, context, scene, emit["dialogue_events"], player, promo, tcs)
-        commit_memorable(resolver, emit["memorable"], player, present, tcs)
-        commit_ignorance(resolver, emit["ignorance"], player, present, tcs)
-        commit_claims(context, emit["claims"], present, tcs)
-
+        return redispatch("conversation emit unparseable", tcs) unless parsed_any
         Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
       end
 
       private
 
-      # Prefetch what this NPC could plausibly know (Ruby/SQL, no LLM) AND who
-      # they are to voice — personality (stored at materialization), current mood
-      # and scene agenda (seeded at scene entry). Without these the model voices
-      # a bare subrole and re-improvises the character every turn (the "drunk
-      # patron drifts into town-enforcer" failure). The data already exists; this
-      # just exposes it to the context that animates them.
+      # Poll order: characters the player NAMED (by first name or role, in the
+      # input or the planner intent) go FIRST — so an addressee is always asked
+      # before the two-speaker cap can be filled by chime-ins (otherwise two
+      # bystanders piping up could silence the person actually addressed). Extras
+      # last: ambient figures only get drawn in if the named cast didn't already
+      # answer the room. This is poll ORDER, not a speech ruling — each character
+      # still self-decides whether it speaks.
+      def poll_order(present, extras, input, step)
+        hay = "#{input} #{step&.intent}".downcase
+        npcs = present.map { |c| { kind: :npc, char: c } }
+        named, rest = npcs.partition { |v| addressed_by_name?(v[:char], hay) }
+        named + rest + Array(extras).each_with_index.map { |desc, i| { kind: :extra, index: i, desc: desc } }
+      end
+
+      def addressed_by_name?(char, hay)
+        first = char["name"].to_s.split.first.to_s.downcase
+        sub   = char["subrole"].to_s.downcase.tr("_", " ")
+        (first.length >= 2 && hay.include?(first)) || (sub.length >= 2 && hay.include?(sub))
+      end
+
+      # Voice ONE character. The call sees this character's own events (or, for
+      # an extra, just its description), the public roster of who else is here,
+      # and the shared thread — never anyone else's events.
+      def voice_one(context, input, step, player, v, roster, thread, resolver, tcs, active)
+        you =
+          if v[:kind] == :extra
+            { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }
+          else
+            npc_knowledge(resolver, v[:char], tcs, active)
+          end
+        others = v[:kind] == :npc ? roster.reject { |r| r["name"] == v[:char]["name"] } : roster
+        user = JSON.pretty_generate(
+          "you"             => you,
+          "others_present"  => others,
+          "exchange_so_far" => thread,
+          "player"          => { "id" => player.id, "name" => player.name },
+          "player_input"    => input,
+          "intent"          => step&.intent
+        )
+        raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
+          llm(context).complete(system: preamble, user: "INPUT:\n#{user}")
+        end
+        parse_emit(raw)
+      rescue StandardError => e
+        @logger.warn { "[Runner conversation] voice failed: #{e.class}: #{e.message}" }
+        nil
+      end
+
+      # Commit one character's emit. Returns true if the character SPOKE (so the
+      # caller counts it toward the two-speaker cap). Raw dialogue is STAGED for
+      # narration only; resolve / ignorance / memorable / claims persist on their
+      # own consequential paths.
+      def apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
+        dlg     = emit["dialogue"]
+        prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
+        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["ignorance"] || emit["claims"] || emit["memorable"]
+        return false unless engaged
+
+        actor_id = actor_id_for(v, emit, resolver, context, scene, promo, tcs)
+        return false unless actor_id
+
+        spoke = false
+        if prose != ""
+          stage_line(actor_id, player, dlg, tcs)
+          spoke = true
+        end
+        commit_resolve(resolver, emit["resolve_call"], player, actor_id, tcs)
+        commit_ignorance(resolver, emit["ignorance"], player, actor_id, tcs)
+        commit_memorable(resolver, emit["memorable"], player, actor_id, tcs)
+        commit_claim(context, emit["claims"], actor_id, tcs)
+        spoke
+      end
+
+      # The speaker's character_id: a real NPC carries its own id; an ambient
+      # extra is materialized on first engagement (mechanical name, emit-supplied
+      # subrole, description carried forward) via the shared promote path.
+      def actor_id_for(v, emit, resolver, context, scene, promo, tcs)
+        return v[:char]["id"] if v[:kind] == :npc
+        promote_extra(resolver, context, scene, v[:index], emit["subrole"], into: tcs, cache: promo)
+      end
+
+      # Prefetch what THIS character could plausibly know (Ruby/SQL, no LLM) AND
+      # who they are to voice — personality (stored at materialization), current
+      # mood and scene agenda (seeded at scene entry). query_events already
+      # scopes to this holder (own + witnessed + local), so the events list is
+      # strictly this character's knowledge; no other character's memories enter.
       def npc_knowledge(resolver, char, tcs, active)
         res, _ = execute_tool(resolver, "query_events", { "for_holder_id" => char["id"], "limit" => EVENT_SUMMARY_CAP }, into: tcs)
         events = Array(res.is_a?(Hash) ? res["events"] : res)
@@ -69,13 +162,7 @@ module Harness
       # Pull the human-readable line out of a query_events row. `details` is a
       # JSON hash, NOT a flat string: genesis/catch-up events carry
       # {"summary" => "..."}, propose_event/conversation events carry
-      # {"narrative" => {"trigger", "details"}}. The old code read top-level
-      # "trigger"/"summary"/"details" (none of which exist there), fell back to
-      # `details.to_s`, and truncated the Ruby-inspect string mid-word at 120
-      # chars — handing the model garbage like `{"summary" => "The Great Silt`.
-      # That's why a barkeep sitting on the founding-of-the-town event still
-      # had "nothing interesting" to say.
-      EVENT_TEXT_CAP = 220
+      # {"narrative" => {"trigger", "details"}}.
       def event_text(e)
         return e.to_s[0, EVENT_TEXT_CAP] unless e.is_a?(::Hash)
         d = e["details"]
@@ -93,33 +180,10 @@ module Harness
         text.to_s.strip[0, EVENT_TEXT_CAP].to_s
       end
 
-      def converse(context, input, step, player, npcs, scene)
-        user = JSON.pretty_generate(
-          "exchange_so_far" => conversation_thread(context),
-          "player_input" => input,
-          "intent"       => step&.intent,
-          "player"       => { "id" => player.id, "name" => player.name },
-          "npcs"         => npcs,
-          "present_extras" => extras_for_emit(scene)
-        )
-        raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
-          llm(context).complete(system: preamble, user: "INPUT:\n#{user}")
-        end
-        parse_emit(raw)
-      rescue StandardError => e
-        @logger.warn { "[Runner conversation] emit failed: #{e.class}: #{e.message}" }
-        nil
-      end
-
-      # The scene's thread up to now — the prior input→narration pairs the model
-      # has been blind to. This is the fix for the conversation runner reasoning
-      # in a vacuum: with the exchange in hand it holds the addressee, reacts to
-      # what was actually said, and stops repeating itself. Runners execute
-      # BEFORE this turn's narration is appended, so `narrations` is exactly the
-      # conversation up to (not including) the current line. Capped + truncated
-      # to keep the local model's context lean — enough to react, not the saga.
-      THREAD_CAP  = 6
-      THREAD_CHARS = 700
+      # The scene's thread up to now — the prior input→narration pairs, shared
+      # across every character's call (what was said aloud is public). Runners
+      # execute BEFORE this turn's narration is appended, so `narrations` is the
+      # conversation up to (not including) the current line.
       def conversation_thread(context)
         active = context.active_scene
         return [] unless active
@@ -128,124 +192,84 @@ module Harness
         end
       end
 
-      # Index present_extras so the model can reference an ambient figure it
-      # wants to address/promote by its position in this list.
-      def extras_for_emit(scene)
-        Array(scene && scene["present_extras"]).each_with_index.map { |d, i| { "index" => i, "desc" => d } }
+      # Stage a line for NARRATION without PERSISTING it. Committing every "she
+      # slams her mug" as a durable event is what fills a thin character's soul
+      # with atmosphere and feeds it back as knowledge next turn. Intra-scene
+      # memory comes from exchange_so_far; durable memory comes only from
+      # memorable (+ resolve / ignorance / claims, consequential by nature).
+      def stage_line(actor_id, player, dlg, tcs)
+        args = {
+          "scope"        => "local",
+          "participants" => [
+            { "character_id" => actor_id,  "role" => "actor" },
+            { "character_id" => player.id, "role" => "participant" }
+          ],
+          "trigger"      => dlg["summary"].to_s[0, 60].presence || "exchange",
+          "details"      => dlg["prose"],
+          "time_minutes" => 5
+        }
+        tcs << tool_call("propose_event", args, { "staged" => true, "summary" => "[dialogue — rendered, not persisted]" })
       end
 
-      def commit_resolve(resolver, context, scene, rc, player, promo, tcs)
+      # Persuasion: the PLAYER rolls charisma to extract something the character
+      # would hesitate to share. actor is always the player; target is this
+      # character.
+      def commit_resolve(resolver, rc, player, target_id, tcs)
         return unless rc.is_a?(Hash) && rc["action"]
-        target_id = rc["target_id"]
-        if target_id.nil? && rc["target_extra_index"].is_a?(Integer)
-          target_id = promote_extra(resolver, context, scene, rc["target_extra_index"], rc["target_subrole"], into: tcs, cache: promo)
-        end
         execute_tool(resolver, "resolve", {
-          "actor_id"   => rc["actor_id"] || player.id,
-          "stat"       => rc["stat"] || "charisma",
-          "action"     => rc["action"],
-          "target_id"  => target_id,
-          "difficulty" => rc["difficulty"],
+          "actor_id"     => player.id,
+          "stat"         => rc["stat"] || "charisma",
+          "action"       => rc["action"],
+          "target_id"    => target_id,
+          "difficulty"   => rc["difficulty"],
           "time_minutes" => rc["time_minutes"] || 5
         }, into: tcs)
       end
 
-      # Stage each NPC line for NARRATION without PERSISTING it. Committing every
-      # "she slams her mug" as a durable event is what fills a thin NPC's soul
-      # with atmosphere and feeds it back as her "knowledge" next turn (the Gerd
-      # death-spiral). Raw dialogue is ephemeral now: intra-scene memory comes
-      # from exchange_so_far; durable memory comes ONLY from commit_memorable (+
-      # resolve / ignorance / claims, which are consequential by nature). The
-      # staged record keeps the propose_event shape narration already reads, but
-      # writes no Event row. Extra-promotion still persists (a new NPC appearing
-      # IS consequential).
-      def stage_dialogue(resolver, context, scene, events, player, promo, tcs)
-        Array(events).each do |de|
-          next unless de.is_a?(Hash) && de["prose"].to_s.strip != ""
-          actor_id = de["actor_id"]
-          if actor_id.nil? && de["extra_index"].is_a?(Integer)
-            actor_id = promote_extra(resolver, context, scene, de["extra_index"], de["subrole"], into: tcs, cache: promo)
-          end
-          next unless actor_id
-          args = {
-            "scope"        => "local",
-            "participants" => [
-              { "character_id" => actor_id,  "role" => "actor" },
-              { "character_id" => player.id, "role" => "participant" }
-            ],
-            "trigger"      => de["summary"].to_s[0, 60].presence || "exchange",
-            "details"      => de["prose"],
-            "time_minutes" => 5
-          }
-          tcs << tool_call("propose_event", args, { "staged" => true, "summary" => "[dialogue — rendered, not persisted]" })
-        end
+      # A durable "told the player they have not heard of X" record (personal
+      # scope), so a later turn knows this character already denied the topic.
+      def commit_ignorance(resolver, ig, player, actor_id, tcs)
+        return unless ig.is_a?(Hash) && ig["topic"].to_s.strip != ""
+        who = ::Npc.find_by(id: actor_id)&.name || "The NPC"
+        execute_tool(resolver, "propose_event", {
+          "scope"        => "personal",
+          "participants" => [
+            { "character_id" => actor_id,  "role" => "actor" },
+            { "character_id" => player.id, "role" => "participant" }
+          ],
+          "trigger"      => "asserted ignorance",
+          "details"      => "#{who} told the player they have not heard of #{ig['topic']}",
+          "time_minutes" => 1
+        }, into: tcs)
       end
 
-      # Persist the ONE durable event a turn can earn — ONLY when the model flags
-      # the exchange as consequential (a threat meant, a deal struck, a fact
-      # revealed, a bond shifted). The conservative default: commit nothing
-      # unless it mattered. resolve / ignorance / claims have their own paths;
-      # this catches the consequential dialogue that isn't one of those.
-      def commit_memorable(resolver, memorable, player, present, tcs)
+      # The ONE durable event a character's turn can earn — ONLY when the emit
+      # flags the exchange as consequential. The conservative default: commit
+      # nothing unless it mattered.
+      def commit_memorable(resolver, memorable, player, actor_id, tcs)
         return unless memorable.is_a?(Hash)
         gist = memorable["gist"].to_s.strip
         return if gist.empty?
-        participants = [ { "character_id" => player.id, "role" => "participant" } ]
-        actor_id = memorable["actor_id"]
-        if actor_id && present.any? { |c| c["id"] == actor_id }
-          participants.unshift({ "character_id" => actor_id, "role" => "actor" })
-        end
         execute_tool(resolver, "propose_event", {
           "scope"        => "local",
-          "participants" => participants,
+          "participants" => [
+            { "character_id" => actor_id,  "role" => "actor" },
+            { "character_id" => player.id, "role" => "participant" }
+          ],
           "trigger"      => gist[0, 60],
           "details"      => gist,
           "time_minutes" => 5
         }, into: tcs)
       end
 
-      # GROUND v0 — realize any named person the NPC introduced this turn into a
-      # grounded row so it isn't a "Harek ghost" (a name in one line of dialogue
-      # with no row behind it). This is the RESCUE half: it captures a name the
-      # NPC already spoke; it does not encourage inventing more. The speaker is
-      # the present NPC that named the person (claim.actor_id), defaulting to the
-      # sole/first responder. Each realize is recorded as a `realize_claim`
-      # tool_call so the orchestration is traceable in the turn log + play.log.
-      # Failure is non-fatal — a missed claim degrades to the prior behaviour (a
-      # prose-only ghost), never a broken turn.
-      def commit_claims(context, claims, present, tcs)
-        Array(claims).each do |c|
-          next unless c.is_a?(Hash) && c["name"].to_s.strip != ""
-          speaker = claim_speaker(c["actor_id"], present)
-          res = ::Harness::NarrativeShift::Realizer.run(claim: c, speaker: speaker, context: context, logger: @logger)
-          tcs << tool_call("realize_claim", c, res || { "error" => "claim realize returned nil" })
-        end
-      end
-
-      # The present NPC credited with the claim. Falls back to the first present
-      # character when actor_id is missing or not in the scene (common one-on-one
-      # case: there's only one NPC anyway).
-      def claim_speaker(actor_id, present)
-        match = present.find { |c| c["id"] == actor_id } if actor_id
-        row = match || present.first
-        row && ::Npc.find_by(id: row["id"])
-      end
-
-      def commit_ignorance(resolver, entries, player, present, tcs)
-        Array(entries).each do |ig|
-          next unless ig.is_a?(Hash) && ig["actor_id"] && ig["topic"].to_s.strip != ""
-          who = present.find { |c| c["id"] == ig["actor_id"] }&.dig("name") || "The NPC"
-          execute_tool(resolver, "propose_event", {
-            "scope"        => "personal",
-            "participants" => [
-              { "character_id" => ig["actor_id"], "role" => "actor" },
-              { "character_id" => player.id,      "role" => "participant" }
-            ],
-            "trigger"      => "asserted ignorance",
-            "details"      => "#{who} told the player they have not heard of #{ig['topic']}",
-            "time_minutes" => 1
-          }, into: tcs)
-        end
+      # GROUND v0 — realize a named person this character introduced into a
+      # grounded row so it isn't a ghost (a name in one line with no row behind
+      # it). The speaker is this character. Failure is non-fatal.
+      def commit_claim(context, claim, actor_id, tcs)
+        return unless claim.is_a?(Hash) && claim["name"].to_s.strip != ""
+        speaker = ::Npc.find_by(id: actor_id)
+        res = ::Harness::NarrativeShift::Realizer.run(claim: claim, speaker: speaker, context: context, logger: @logger)
+        tcs << tool_call("realize_claim", claim, res || { "error" => "claim realize returned nil" })
       end
 
       def preamble

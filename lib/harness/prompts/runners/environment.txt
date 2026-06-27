@@ -26,10 +26,12 @@ Decide which fields apply — most interactions set only some:
 Hard rules:
 - If a roll is present and it FAILS, the engine automatically withholds yields_item and location_change — a botched attempt produces no loot and no lasting change. Declare them anyway; the engine gates on the result.
 - This is about OBJECTS, FEATURES, and the player's own physical attempts against the terrain. Do NOT invent named characters, factions, or places. A stealth attempt is a roll against the situation, not a new NPC.
+- GROUND the act in what is actually here: INPUT.present_objects lists the concrete things anchored in this scene, INPUT.location.description the fixed features, INPUT.location.alterations any prior changes. Act on THOSE. The player may also act on a feature the description plainly implies (a fire has wood, a shore has stones) — but do not conjure a specific object the scene gives no basis for.
 - Items are RARE. When unsure, leave yields_item null.
 - Output ONLY the JSON object. No prose around it.
 
 INPUT shape:
 { "player_input": "...", "intent": "<planner's read>",
   "player": { "id": N, "name": "...", "abilities": ["..."] },
-  "location": { "name": "...", "description": "..." } }
+  "location": { "name": "...", "description": "...", "alterations": "<prior persistent changes, or absent>" },
+  "present_objects": [ "<name of a thing anchored in this scene>", ... ] }

@@ -129,6 +129,10 @@ module Harness
           location_name:     location.name,
           description:       location.description,
           biome:             location.biome,
+          # Mechanical economic identity (terrain/basis/size/wealth). Without it
+          # genesis grounds history on biome + free-text alone — which is how a
+          # SALT hamlet got a HARBOR-founding event. Same facts query_scene uses.
+          setting:           ::Harness::Settlement::Facts.presentable(location),
           anchor_name:       anchor&.name,
           anchor_biome:      anchor&.biome,
           current_game_time: current_game_time,

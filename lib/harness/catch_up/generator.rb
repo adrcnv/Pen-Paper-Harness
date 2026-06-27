@@ -174,6 +174,9 @@ module Harness
           description:       location.description,
           parent_name:       location.parent&.name,
           biome:             location.biome,
+          # Economic identity (terrain/basis/size/wealth) so background-sim
+          # events fit what the place lives on instead of generic flavor.
+          setting:           ::Harness::Settlement::Facts.presentable(location),
           current_game_time: current_game_time,
           floor_game_time:   floor_game_time,
           recent_actors:     recent_actors,

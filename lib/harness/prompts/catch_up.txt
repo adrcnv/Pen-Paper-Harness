@@ -20,6 +20,7 @@ WHAT NOT TO INVENT
 
 CONSISTENCY RULES
 - Events MUST fit the supplied location/biome context. A frozen pass doesn't get a fishing fleet event.
+- Events MUST fit the SETTING when present (terrain, economic_basis, size, wealth). The economic_basis is what the place lives on — a `salt` settlement's ambient color is brine and salt-hauling, not a fishing fleet; a `mining` one's is the dig, a `farming` one's the fields. Scale to size and wealth: a poor hamlet's "news" is a lost goat or a cracked millstone, not a guild dispute.
 - Events MUST be in the gap window: floor < game_time < current_game_time. Distribute them across the gap; don't cluster them all at one moment.
 - If RECENT ACTORS lists named historical actors with prior history here, prefer reusing those names over inventing fresh ones.
 - Internal coherence is on you. If two events would contradict, fix them before submitting.
@@ -33,6 +34,7 @@ INPUT format
   "description":       "<this place's description>",
   "parent_name":       "<parent city/area name, if any>",
   "biome":             "<lowland|highland|null>",
+  "setting":           { "terrain": "...", "economic_basis": "...", "size": "...", "wealth": "..." },  // may be absent
   "current_game_time": <int>,
   "floor_game_time":   <int — most recent prior event at this location>,
   "gap":               <int — current_game_time - floor_game_time>,

@@ -29,7 +29,12 @@ module Harness
           {
             "name"        => loc.name,
             "description" => loc.description,
-            "kind"        => props["kind"]
+            "kind"        => props["kind"],
+            # Economic identity of the enclosing settlement (Facts resolves up
+            # to the top-level city). Lets the spawn fit the place — a salt
+            # hamlet draws salt workers, a port city draws dockhands — instead
+            # of defaulting every scene to generic tavern patrons.
+            "setting"     => ::Harness::Settlement::Facts.presentable(loc)
           }.compact
         end
 

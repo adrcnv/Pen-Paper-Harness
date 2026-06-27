@@ -20,7 +20,7 @@ module Harness
         player = ::Player.first
         return redispatch("no player row") unless player
 
-        spec = decide(context, input, step, player)
+        spec = decide(context, input, step, player, scene)
         return redispatch("environment emit unparseable") if spec.nil?
 
         resolver = resolver_for(context)
@@ -77,7 +77,7 @@ module Harness
         }, into: tcs)
       end
 
-      def decide(context, input, step, player)
+      def decide(context, input, step, player, scene)
         loc = context.player_location
         user = JSON.pretty_generate(
           "player_input" => input,
@@ -87,7 +87,17 @@ module Harness
             "name"      => player.name,
             "abilities" => Array(player.abilities).map { |a| a.is_a?(Hash) ? a["name"] : a }
           },
-          "location" => { "name" => loc&.name, "description" => loc&.description }
+          "location" => {
+            "name"        => loc&.name,
+            "description" => loc&.description,
+            # Persistent player-made changes (a barred door, a breached wall),
+            # so the runner honors them instead of acting on a pristine place.
+            "alterations" => (loc&.properties.is_a?(Hash) ? loc.properties["alterations"] : nil)
+          }.compact,
+          # The concrete objects actually anchored here — so the act grounds in
+          # a real thing (search THIS crate) instead of one the model invents.
+          # Names only; environment acts on free-text features, not by id.
+          "present_objects" => Array(scene && scene["present_items"]).map { |i| i["name"] }.compact
         )
         raw = ::Harness::CostTracker.in_subsystem(:runner_environment) do
           llm(context).complete(system: preamble, user: "INPUT:\n#{user}")

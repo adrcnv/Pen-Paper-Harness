@@ -108,9 +108,9 @@ RSpec.describe "Harness::Turn::Loop state machine" do
         ] }.to_json
       elsif prompt.include?("route a player's MOVEMENT")
         { "action" => "transition", "target_id" => tavern.id, "place_name" => nil }.to_json
-      elsif prompt.include?("voice the NPC")
-        { "dialogue_events" => [ { "actor_id" => barkeep.id, "summary" => "offers work", "prose" => "Aye, there's work for a steady hand." } ],
-          "resolve_call" => nil, "ignorance" => [] }.to_json
+      elsif prompt.include?("voice ONE character")
+        { "speak" => true,
+          "dialogue" => { "summary" => "offers work", "prose" => "Aye, there's work for a steady hand." } }.to_json
       else
         "{}"
       end

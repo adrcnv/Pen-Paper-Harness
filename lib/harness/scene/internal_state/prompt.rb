@@ -10,6 +10,14 @@ module Harness
         # Keep tight — internal state is flavor, not a recap.
         RECENT_EVENT_LIMIT = 3
 
+        # The only properties keys this prompt actually uses (mood hooks +
+        # agenda grounding + follower exclusion). The full properties blob
+        # carries a dozen unused keys (gender, dormant, home_location_id,
+        # pending_*, manifest_key, substance_seeded…) — dumping it whole on
+        # every present character, every scene entry, is pure token waste at
+        # local-model speeds. Trim to what the prompt reads.
+        MOOD_PROPERTY_KEYS = %w[personality physical appearance mood lens following_player].freeze
+
         def self.render(location:, characters:)
           {
             system: preamble,
@@ -35,9 +43,16 @@ module Harness
           {
             "name"          => c.name,
             "subrole"       => c.subrole,
-            "properties"    => c.properties.is_a?(Hash) ? c.properties : {},
+            "properties"    => mood_properties(c),
             "recent_events" => recent_events(c)
           }
+        end
+
+        # Only the keys the prompt reads (see MOOD_PROPERTY_KEYS) — not the
+        # whole properties blob.
+        def self.mood_properties(c)
+          props = c.properties.is_a?(Hash) ? c.properties : {}
+          props.slice(*MOOD_PROPERTY_KEYS)
         end
 
         def self.recent_events(c)
