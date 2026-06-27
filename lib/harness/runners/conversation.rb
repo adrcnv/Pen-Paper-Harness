@@ -111,6 +111,14 @@ module Harness
         dlg     = emit["dialogue"]
         prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
         engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["ignorance"] || emit["claims"] || emit["memorable"]
+        # Per-NPC emit shape, so a playtest can see WHAT each voiced character
+        # produced (esp. whether a `claims` ever fires — the narrative-shift seam).
+        @logger.debug do
+          who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
+          "[Runner conversation] #{who} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
+          "resolve=#{!emit['resolve_call'].nil?} ignorance=#{!emit['ignorance'].nil?} " \
+          "claim=#{emit['claims'].is_a?(Hash)} memorable=#{emit['memorable'].is_a?(Hash)}"
+        end
         return false unless engaged
 
         actor_id = actor_id_for(v, emit, resolver, context, scene, promo, tcs)
@@ -262,13 +270,32 @@ module Harness
         }, into: tcs)
       end
 
-      # GROUND v0 — realize a named person this character introduced into a
+      # GROUND v0 — realize a specific person this character introduced into a
       # grounded row so it isn't a ghost (a name in one line with no row behind
       # it). The speaker is this character. Failure is non-fatal.
+      #
+      # Gate on name-OR-gist, matching the Realizer's own contract: a ROLE
+      # reference ("my brother", "the surveyor") carries a gist but NO name (the
+      # prompt tells the model to omit it — the Realizer's picker names them).
+      # The old name-only guard silently dropped every role-reference claim
+      # before it could reach the Realizer's role-handling path.
       def commit_claim(context, claim, actor_id, tcs)
-        return unless claim.is_a?(Hash) && claim["name"].to_s.strip != ""
+        return unless claim.is_a?(Hash)
+        return unless claim["name"].to_s.strip != "" || claim["gist"].to_s.strip != ""
         speaker = ::Npc.find_by(id: actor_id)
+        @logger.info do
+          "[Runner conversation] realizing claim name=#{claim['name'].inspect} " \
+          "gist=#{claim['gist'].to_s.slice(0, 60).inspect} at=#{claim['at_location'].inspect} by=#{speaker&.name.inspect}"
+        end
         res = ::Harness::NarrativeShift::Realizer.run(claim: claim, speaker: speaker, context: context, logger: @logger)
+        @logger.info do
+          status = if res.nil? then "nil (realize declined/failed)"
+          elsif res["minted"] then "MINTED id=#{res['character_id']} #{res['name'].inspect}"
+          elsif res["linked"] then "LINKED to existing id=#{res['character_id']} #{res['name'].inspect}"
+          else res.inspect
+          end
+          "[Runner conversation] claim result: #{status}"
+        end
         tcs << tool_call("realize_claim", claim, res || { "error" => "claim realize returned nil" })
       end
 

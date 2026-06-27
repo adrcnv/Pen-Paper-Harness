@@ -99,16 +99,22 @@ module Harness
         props["coastal"]   = c.coastal   unless c.coastal.nil?
         props["riverside"] = c.riverside unless c.riverside.nil?
 
-        # Mechanical economic identity (economic_basis / size / wealth), rolled
-        # from the geography facts. The seed downstream sublocation manifests +
-        # shops read. See Harness::Settlement::Profile.
+        # Mechanical economic identity (economic_basis / size / wealth). Rolled
+        # onto the struct by Worldgen::Profiler BEFORE naming (so the description
+        # pass sees the real size); read it back here. Fallback roll covers any
+        # caller that persists a map without the profiling step (older tests).
+        # See Harness::Settlement::Profile.
         props.merge!(
-          ::Harness::Settlement::Profile.roll(
-            terrain:   c.terrain,
-            coastal:   c.coastal,
-            riverside: c.riverside,
-            rng:       rng
-          )
+          if c.size
+            { "economic_basis" => c.economic_basis, "size" => c.size, "wealth" => c.wealth }
+          else
+            ::Harness::Settlement::Profile.roll(
+              terrain:   c.terrain,
+              coastal:   c.coastal,
+              riverside: c.riverside,
+              rng:       rng
+            )
+          end
         )
         props
       end

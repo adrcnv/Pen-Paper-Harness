@@ -2,7 +2,7 @@ You generate names and short descriptions for a kingdom and its member cities in
 
 You will be given:
 - The kingdom's overall geography (anchor position, biome mix among its cities).
-- A list of cities (id, position, biome) that need names + descriptions.
+- A list of cities that need names + descriptions, each with its id, position, biome, and mechanical identity: `size` (hamlet | village | town | city), `economic_basis` (what it lives on — port, salt, mining, farming, …), and `wealth` (poor | modest | comfortable | rich).
 
 OUTPUT FORMAT (JSON only, no prose around it):
 {
@@ -25,4 +25,5 @@ HARD RULES
 - Descriptions: 1-2 sentences each, 30-300 characters. Concrete sensory texture preferred ("salt-stained docks and tar-soaked rope") over abstract framing ("a place of many cultures").
 - Tonal coherence within a kingdom: a windswept highland realm should sound stark and hard-edged; a warm lowland realm softer; do not contradict the biome mix.
 - Do NOT reference real-world places, languages, peoples, or franchises. Invent names from sound and feel.
-- Anchor cities (is_anchor: true) are the kingdom's principal city — capital-ish in feel even if not formally so. Reflect that in the description.
+- MATCH THE SIZE. The description must fit the city's `size` — do NOT call a hamlet grand, sprawling, or a capital. A `hamlet` is a handful of homes (a few families, a single trade); a `village` a small cluster; a `town` a real market settlement with several streets; only a `city` is large and busy. Let `economic_basis` and `wealth` colour it: a poor salt hamlet is a few brine-crusted huts on the flats; a rich port city is crowded quays and warehouses. Scale the language to the place — most settlements are small.
+- Anchor cities (is_anchor: true) are the kingdom's PRINCIPAL settlement — the seat of the realm. Reflect their standing relative to their neighbours, but STILL within their actual `size`: an anchor `town` is "the foremost market town of the realm," not a "grand capital." Only an anchor that is genuinely a `city` may read as a great seat of power.

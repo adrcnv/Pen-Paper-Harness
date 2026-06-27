@@ -21,6 +21,12 @@ module Harness
         )
         logger&.info { "[Worldgen::Pipeline] generated: #{map.cities.size} cities, #{map.kingdoms.size} kingdoms" }
 
+        # Roll settlement profiles (size/basis/wealth) onto each city BEFORE
+        # naming, so descriptions are grounded in the real size and anchors are
+        # floored to a town. (Was previously rolled in the Persister, after.)
+        Profiler.assign!(map: map)
+        logger&.info { "[Worldgen::Pipeline] profiled: sizes=#{map.cities.map(&:size).tally}" }
+
         Naming.name!(map: map, llm: llm, logger: logger)
         logger&.info { "[Worldgen::Pipeline] named: #{map.kingdoms.map(&:name).inspect}" }
 

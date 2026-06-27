@@ -67,9 +67,12 @@ module Harness
 
       # Roll a profile from geography facts. Returns a string-keyed hash ready to
       # merge straight into Location#properties.
-      def roll(terrain:, coastal: false, riverside: false, rng: Random.new)
+      # `size_floor` clamps the rolled size UP to at least that tier (used for a
+      # kingdom's anchor city — the principal seat shouldn't be a hamlet). The
+      # floor is applied BEFORE wealth, so wealth reflects the larger size.
+      def roll(terrain:, coastal: false, riverside: false, rng: Random.new, size_floor: nil)
         basis = roll_basis(terrain, coastal, riverside, rng)
-        size  = roll_size(terrain, rng)
+        size  = roll_size(terrain, rng, size_floor)
         {
           "economic_basis" => basis,
           "size"           => size,
@@ -84,13 +87,17 @@ module Harness
         weighted_pick(weights, rng)
       end
 
-      def roll_size(terrain, rng)
+      def roll_size(terrain, rng, size_floor = nil)
         weights = SIZE_WEIGHTS.dup
         if PROSPEROUS_TERRAINS.include?(terrain.to_s)
           weights["town"] *= 2   # fertile/trade ground can support more than a frontier hamlet
           weights["city"] *= 2
         end
-        weighted_pick(weights, rng)
+        size = weighted_pick(weights, rng)
+        if size_floor && SIZE_SCORE.fetch(size, 0) < SIZE_SCORE.fetch(size_floor, 0)
+          size = size_floor
+        end
+        size
       end
 
       def roll_wealth(basis, size, rng)

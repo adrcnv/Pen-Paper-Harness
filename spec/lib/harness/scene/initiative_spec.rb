@@ -56,15 +56,21 @@ RSpec.describe Harness::Scene::Initiative do
     expect(a.initiative_cooldown).to eq(0) # armed; fires from next turn
   end
 
-  it "fires the beat the consumer picks, commits it, and records the initiator" do
+  it "fires the beat the consumer picks, STAGES it (no Event row), and records the initiator" do
     maren = npc(name: "Maren", subrole: "barkeep")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player about the docks" })
     context.llm_nuance = stub_llm(emit(actor: "Maren", beat: "Maren sets down a mug and says the docks aren't safe after dark."))
     t = transcript
-    result = run(a, t)
+    result = nil
+    # The beat renders (return value) and is recorded for the turn log, but it
+    # must NOT persist as an Event — initiative improv self-canonizing into the
+    # log is the pollution this fixes.
+    expect { result = run(a, t) }.not_to change(Event, :count)
     expect(result[:npc]).to eq(maren)
     expect(result[:beat]).to match(/docks/)
-    expect(names(t)).to include("propose_event")
+    rec = t.tool_calls.find { |tc| tc["name"] == "propose_event" }
+    expect(rec).to be_present
+    expect(rec.dig("result", "staged")).to be(true)
     expect(a.last_initiator).to eq(maren.id)
   end
 

@@ -24,11 +24,17 @@ module Harness
             "biome_mix"         => biome_mix(members),
             "cities"            => members.map { |c|
               {
-                "id"         => c.id,
-                "position"   => position(c),
-                "biome"      => c.biome,
-                "is_anchor"  => c.id == kingdom.anchor_city_id
-              }
+                "id"             => c.id,
+                "position"       => position(c),
+                "biome"          => c.biome,
+                # Mechanical settlement identity (set by Worldgen::Profiler before
+                # this pass) so the description matches reality — a hamlet reads
+                # humble, a port city busy. Nil only on an unprofiled map.
+                "size"           => c.size,
+                "economic_basis" => c.economic_basis,
+                "wealth"         => c.wealth,
+                "is_anchor"      => c.id == kingdom.anchor_city_id
+              }.compact
             }
           }
           "INPUT:\n#{JSON.pretty_generate(payload)}"

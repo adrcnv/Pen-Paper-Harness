@@ -80,7 +80,7 @@ module Harness
         return skip("empty beat for #{actor_name}") if beat.empty?
 
         kind = spec["kind"].to_s.strip
-        commit_beat(npc, player, beat, kind)
+        stage_beat(npc, player, beat, kind)
         @active.last_initiator = npc.id
         @logger.info { "[Scene::Initiative] #{npc.name} acts (#{kind.empty? ? 'beat' : kind})" }
         { npc: npc, beat: beat, kind: kind }
@@ -151,14 +151,21 @@ module Harness
         nil
       end
 
-      # Commit the NPC's unprompted move as a forward event so it enters the
-      # log and surfaces via query_events(for_holder_id:) later. Narration has
-      # ALREADY run this turn — the beat prose is appended by the turn loop, so
-      # there is no double-render. Hostile/engaging kinds target the player;
-      # a passive 'watch' tags them as a witness.
-      def commit_beat(npc, player, beat, kind)
+      # Record the NPC's unprompted move as a STAGED propose_event — it enters
+      # the turn log (traceability) and its prose is appended to the narration
+      # by the turn loop (via run's return value), but it writes NO Event row.
+      #
+      # Initiative beats are ephemeral atmosphere, exactly like raw dialogue:
+      # persisting them as events let an NPC's improv ("the trees scream in the
+      # Blackwood") self-canonize into the log and feed back next turn as that
+      # NPC's "knowledge" — the same pollution conservative dialogue-committing
+      # already fixed. So beats stage, never persist. (No double-render: the
+      # turn loop appends the beat from the return value, not from this record.)
+      # Hostile/engaging kinds still mark the player a target in the record; a
+      # passive 'watch' marks them a witness.
+      def stage_beat(npc, player, beat, kind)
         role = kind == "watch" ? "witness" : "target"
-        commit("propose_event", {
+        args = {
           "scope"        => "personal",
           "participants" => [
             { "character_id" => npc.id,    "role" => "actor" },
@@ -166,17 +173,11 @@ module Harness
           ],
           "trigger" => "unprompted initiative beat",
           "details" => "#{npc.name} acts toward the player, unprompted — #{beat}"
-        })
-      end
-
-      def commit(name, args)
-        resolver = ::Harness::Resolver.new(
-          context: @context, tools: ::Harness::Resolver::DEFAULT_TOOLS, logger: @logger
-        )
-        call   = ::Harness::LLM::ToolCall.new(name: name, args: args)
-        result = resolver.execute(call)
-        @transcript.record_tool_calls([ { "name" => name, "args" => args, "result" => result } ])
-        result
+        }
+        @transcript.record_tool_calls([
+          { "name" => "propose_event", "args" => args,
+            "result" => { "staged" => true, "summary" => "[initiative beat — rendered, not persisted]" } }
+        ])
       end
 
       def follower?(c)

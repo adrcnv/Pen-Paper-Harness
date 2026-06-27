@@ -91,6 +91,30 @@ RSpec.describe Harness::Runners::Conversation do
     expect(Npc.find_by(name: "Harek")).to be_present
   end
 
+  it "realizes a ROLE-reference claim with no name (the picker names them)" do
+    # The NPC referred to someone by role, not name ("my brother"), so claims
+    # carries a gist but no `name`. This MUST still realize — the old name-only
+    # guard silently dropped these even though the Realizer handles them.
+    allow(Harness::Character::Hatchery).to receive(:spawn) do |**kw|
+      Npc.create!(name: kw[:name], subrole: kw[:subrole], location: kw[:location], properties: kw[:properties] || {})
+    end
+    ctx = context_with do
+      { "speak" => true,
+        "dialogue" => { "summary" => "points to kin", "prose" => "My brother runs the relay — ask for him." },
+        "claims" => { "subrole" => "courier", "gist" => "the speaker's brother who runs the relay" } }.to_json
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    expect {
+      @outcome = described_class.new.run(context: ctx, scene: scene, input: "who runs the relay?", step: step)
+    }.to change(Npc, :count).by(1)
+
+    claim_call = @outcome.tool_calls.find { |t| t["name"] == "realize_claim" }
+    expect(claim_call).to be_present
+    expect(claim_call["result"]).to include("minted" => true)
+    expect(claim_call.dig("result", "character_id")).to be_present
+  end
+
   it "does not duplicate a claimed person who already exists" do
     allow(Harness::Character::Hatchery).to receive(:spawn).and_call_original
     Npc.create!(name: "Harek", subrole: "contact", location: tavern)
