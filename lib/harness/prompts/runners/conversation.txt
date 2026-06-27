@@ -9,6 +9,10 @@ Output:
     { "actor_id": <player id from INPUT.player>, "stat": "charisma", "action": "<2-6 words>", "target_id": <npc id>, "difficulty": "easy|moderate|hard" },
   "ignorance": [
     { "actor_id": <npc id>, "topic": "<concrete topic the NPC denies knowing>" }
+  ],
+  "memorable": null OR { "actor_id": <npc id, or omit>, "gist": "<one clause: the consequence worth remembering past this scene>" },
+  "claims": [
+    { "actor_id": <npc id>, "name": "<the name IF you spoke one, else omit — the engine names them>", "subrole": "<one-word archetype: contact, courier, kin, smith, ...>", "gist": "<one substantive clause: their role + why they matter + any stake/state — the ONLY context that travels with them>", "at_location": "<a place you named them at, echoed from your reply, or omit>" }
   ]
 }
 
@@ -19,15 +23,24 @@ Only do this when the player is genuinely engaging that figure. An extra nobody 
 
 HARD RULES:
 - Use ONLY ids present in INPUT (npcs[].id, player.id). Never invent an id.
-- One dialogue_event per NPC who actually responds. A silent/absent NPC gets none. Usually 1.
+- THE EXCHANGE IS LIVE. INPUT.exchange_so_far is the conversation up to now (prior player lines + what was narrated). You are CONTINUING it, not starting fresh. Read it before you write.
+- HOLD THE ADDRESSEE. The player is still speaking to whoever they were speaking to in exchange_so_far, unless THIS line clearly turns to someone else (names them, looks at them). That NPC answers. The planner's `intent` is a routing hint, NOT a ruling on who is addressed — trust the exchange. If it is genuinely unclear who the player means, an NPC may ask "You talking to me?" rather than guess wrong.
+- OTHERS MAY CHIME IN, briefly — a present NPC can throw a side remark (one short dialogue_event), but the addressed NPC is the one who actually answers. A bystander does not seize the conversation or answer a question put to someone else.
+- VOICE EACH NPC AS THEMSELVES. Speak from their `personality`, current `mood`, and `agenda` — not their bare subrole. Stay consistent with how they already spoke in exchange_so_far. A drunk patron talks like a drunk patron; do not inflate them into something grander than their station and events support.
+- DON'T REPEAT YOURSELF. If an NPC already made their point in exchange_so_far, they ADVANCE (give something new) or BREAK OFF — turn back to their drink, dismiss the player, fall silent. An NPC with nothing left to give ENDS the exchange; they do not restate the same menace/line a third time. Silence and dismissal are valid, preferred over filler.
+- One dialogue_event per NPC who actually responds. A silent/absent NPC gets none. Usually 1 (the addressee), occasionally 2 (addressee + a brief chime-in).
 - GROUND speech in the NPC's known events (INPUT.npcs[].events). If the player's topic IS in those events, the NPC may speak to it. If it is NOT, the NPC has no source — either deflect in their prose ("Couldn't say.") OR record it under "ignorance" (they explicitly say they've never heard of it). Do NOT invent facts the NPC has no source for.
+- OPEN-ENDED asks ("anything interesting?", "what's going on", "any news?"): the player names no topic, so look across the NPC's events for something worth offering. PUBLIC history — the founding of the town, a disaster everyone lived through, open rumor — an NPC will share freely if it fits their mood (lens colours the telling: a cynic makes the flood bleak, a romantic makes it grand). SENSITIVE or guarded events are NOT free: if the player is fishing for something the NPC would protect, that's a resolve_call, not a hand-out. An NPC whose events are genuinely dull or empty deflects honestly — do NOT manufacture a hook they don't have.
 - LENS colors interpretation, not facts. Each NPC's INPUT.npcs[].lens (cynical, bitter, paranoid, optimistic, credulous, romantic, balanced) shapes HOW they read ambiguous things — never overrides a witnessed fact.
 - resolve_call ONLY when the player is trying to extract something the NPC would hesitate to share (a secret, sensitive history, guarded opinion). Plain questions, greetings, public knowledge → no roll (resolve_call null). When set, actor is the PLAYER (charisma), target is the NPC.
 - ignorance entries become a durable "told the player they have not heard of X" record. Use a concrete, matchable topic.
+- DIALOGUE IS NOT SAVED — banter, posturing, atmosphere, mood beats all evaporate when the scene ends, by design. Set `memorable` ONLY when THIS exchange produced something the world should still know later: a threat genuinely meant, a deal or promise struck, a real fact disclosed, a bond made or broken, a refusal that shuts a door. One clause, rare. If the turn was just talk, leave it null — do NOT save "she slammed her mug" or "he sized you up". (resolve_call / ignorance / claims already persist on their own — never duplicate them into memorable.)
+- CLAIMS capture, they do not license. This does NOT relax "don't invent facts the NPC has no source for" — keep that restraint. But WHEN your reply refers to a SPECIFIC individual the player could later seek out — a contact you send them to, a relative, the courier who vanished — record that one person under "claims" so the world makes them real instead of leaving them a name nobody can find. Give `name` ONLY if you actually spoke it; if you referred to them by ROLE ("the surveyor", "my brother"), OMIT name and the engine names them. One specific PERSON each: not gods, not crowds ("the dockhands"), not a generic role with nobody behind it, not the player, not anyone in INPUT.npcs, and NOT someone already in your known events (you'd RECALL them in prose, not re-claim them). If your reply refers to no such person, omit "claims". Echo `at_location` only if you named where they are.
 - Keep prose tight and in-character. No engine words. No JSON outside the object.
 
 INPUT shape:
-{ "player_input": "...", "intent": "<planner's read>",
+{ "exchange_so_far": [ { "player": "<prior player line>", "scene": "<what was narrated>" }, ... ],   // the conversation up to now; [] on the first line
+  "player_input": "...", "intent": "<planner's routing hint>",
   "player": { "id": N, "name": "..." },
-  "npcs": [ { "id": N, "name": "...", "subrole": "...", "lens": "...", "events": ["<short summaries>"] }, ... ],
+  "npcs": [ { "id": N, "name": "...", "subrole": "...", "lens": "...", "personality": "<who they are>", "mood": "<current state>", "agenda": "<what they want this scene>", "events": ["<short summaries>"] }, ... ],
   "present_extras": [ { "index": N, "desc": "<ambient figure, no id>" }, ... ] }

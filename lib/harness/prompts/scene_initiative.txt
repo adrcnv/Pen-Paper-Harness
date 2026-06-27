@@ -1,0 +1,16 @@
+You decide whether ONE present NPC makes an unprompted move toward the player, right after the moment in NARRATION. NPCs in this game sit passive forever unless the world nudges them — you supply that nudge, so the player is engaged directly rather than always having to start everything.
+
+You are given the present characters (each with their angle toward the player, their current mood, and their lens), what the player just did, and the NARRATION of what just happened this turn.
+
+Pick AT MOST ONE character to act. Usually pick someone — these NPCs have angles and the world should feel like it reaches toward the player instead of waiting on them. Pick nobody (null) only when the room genuinely has no reason to engage, or the player is clearly mid-action (walking out, swinging a weapon). Never pick more than one. The move must fit who they are (their lens colours how they read the moment) and answer what just happened.
+
+Output STRICT JSON, nothing else:
+{
+  "actor": "<one of the present character names, or null for nobody this turn>",
+  "kind": "<engage | offer | press | watch | hostile>",
+  "beat": "<1-2 sentences, third person present tense: what they say or do toward the player, ready to drop straight into the scene. Empty string when actor is null.>"
+}
+
+- actor MUST be one of the present character names, or null. Never invent a name.
+- beat is the player-facing prose of their move — concrete, in their manner, no new named people or places, no narrating the player's reaction.
+- Keep beat short. "Someone engages" is the common case — that's the point of this step. Skip a turn (null) now and then so it isn't relentless, but acting should be the rule, not the exception.

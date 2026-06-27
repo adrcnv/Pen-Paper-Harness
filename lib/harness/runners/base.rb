@@ -79,8 +79,8 @@ module Harness
 
       # Promote an ambient `extra` (a `present_extras` description string) into a
       # real Npc so a runner can target it. The weak model cannot act on a
-      # nameless figure — `present_characters` is the only thing the conversation
-      # and dice runners can address — so when the player interacts with an
+      # nameless figure — `present_characters` is the only thing a structured-
+      # emit runner can address — so when the player interacts with an
       # extra consequentially (heals it, hits it, speaks to it), the runner
       # names the extra by its INDEX and we materialize it here: mechanical
       # name, runner-supplied subrole, the original description carried as

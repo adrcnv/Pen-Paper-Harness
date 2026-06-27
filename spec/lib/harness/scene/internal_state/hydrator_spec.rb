@@ -186,86 +186,71 @@ RSpec.describe Harness::Scene::InternalState::Hydrator do
     end
   end
 
-  describe "agenda" do
-    def with_agenda(agenda)
+  describe "agendas" do
+    def with_agendas(agendas)
       hydrate({
         "internal_states" => {
           "Maren" => "Maren is in a plausible mood here today.",
           "Korr"    => "Korr is in a plausible mood here today."
         },
-        "agenda" => agenda
+        "agendas" => agendas
       })
     end
 
-    it "parses a well-formed agenda into an Agenda struct" do
-      out = with_agenda(
-        "character_name" => "Maren",
-        "text"           => "wants to ask the player about the docks; her brother went missing last week and the player just walked in"
+    it "parses a per-character agendas map" do
+      out = with_agendas(
+        "Maren" => "wants to ask the player about the docks",
+        "Korr"  => "sizes the stranger up, distrustful"
       )
-      expect(out.agenda).to be_a(described_class::Agenda)
-      expect(out.agenda.character_name).to eq("Maren")
-      expect(out.agenda.text).to match(/docks/)
+      expect(out.agendas).to eq(
+        "Maren" => "wants to ask the player about the docks",
+        "Korr"  => "sizes the stranger up, distrustful"
+      )
     end
 
-    it "treats omitted agenda as nil (most scenes have no agenda)" do
+    it "treats omitted agendas as an empty map" do
       out = hydrate({
         "internal_states" => {
           "Maren" => "Maren is in a plausible mood here today.",
           "Korr"    => "Korr is in a plausible mood here today."
         }
       })
-      expect(out.agenda).to be_nil
+      expect(out.agendas).to eq({})
     end
 
-    it "treats explicit nil agenda as nil" do
-      out = hydrate({
-        "internal_states" => {
-          "Maren" => "Maren is in a plausible mood here today.",
-          "Korr"    => "Korr is in a plausible mood here today."
-        },
-        "agenda" => nil
-      })
-      expect(out.agenda).to be_nil
+    it "treats explicit nil agendas as an empty map" do
+      out = with_agendas(nil)
+      expect(out.agendas).to eq({})
     end
 
-    it "rejects when agenda is not a hash" do
+    it "drops a character whose agenda is empty/whitespace" do
+      out = with_agendas("Maren" => "wants the docks news", "Korr" => "   ")
+      expect(out.agendas).to eq("Maren" => "wants the docks news")
+    end
+
+    it "rejects when agendas is not a hash" do
       expect {
-        with_agenda("just a string")
+        with_agendas("just a string")
       }.to raise_error(described_class::InvalidOutput, /must be an object/)
     end
 
-    it "rejects when agenda character_name is not in INPUT.characters" do
+    it "rejects an agenda key not in INPUT.characters" do
       expect {
-        with_agenda(
-          "character_name" => "Stranger",
-          "text"           => "this person isn't expected to be here in INPUT but the model invented them anyway"
-        )
+        with_agendas("Stranger" => "this person was invented and isn't in INPUT")
       }.to raise_error(described_class::InvalidOutput, /not in INPUT\.characters/)
     end
 
-    it "rejects when character_name is missing or non-string" do
+    it "rejects a non-string agenda value" do
       expect {
-        with_agenda("text" => "wants to ask the player about the docks; her brother went missing last week")
-      }.to raise_error(described_class::InvalidOutput, /character_name must be a string/)
+        with_agendas("Maren" => 42)
+      }.to raise_error(described_class::InvalidOutput, /must be a string/)
     end
 
-    it "rejects when text is missing or non-string" do
-      expect {
-        with_agenda("character_name" => "Maren")
-      }.to raise_error(described_class::InvalidOutput, /text must be a string/)
-    end
-
-    it "rejects too-short text" do
-      expect {
-        with_agenda("character_name" => "Maren", "text" => "too short")
-      }.to raise_error(described_class::InvalidOutput, /text is too short/)
-    end
-
-    it "rejects too-long text" do
+    it "rejects too-long agenda text" do
       too_long = "x" * (described_class::AGENDA_MAX_LEN + 1)
       expect {
-        with_agenda("character_name" => "Maren", "text" => too_long)
-      }.to raise_error(described_class::InvalidOutput, /text is too long/)
+        with_agendas("Maren" => too_long)
+      }.to raise_error(described_class::InvalidOutput, /is too long/)
     end
   end
 end

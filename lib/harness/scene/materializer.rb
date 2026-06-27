@@ -2,28 +2,31 @@ module Harness
   module Scene
     # Fills a sublocation with characters, via two mechanisms (post-Phase-2):
     #
-    # 1. Reuse — existing Character rows from this location's parent ancestry
-    #    (the city itself + its sublocations) get relocated into this scene
-    #    with their subrole/properties optionally updated. This pool INCLUDES
-    #    dormant historicals from Genesis: named figures with rich event
-    #    history who haven't surfaced in play yet. When the LLM picks a
-    #    dormant candidate, the Materializer wakes them by clearing
-    #    properties.dormant and relocating — same shape as relocating an
-    #    already-active NPC. Marta-of-the-Moss living at Coldpeak naturally
-    #    comes down to work the inn at Misty Hearth (active reuse). The
+    # 1. Wake — a DORMANT historical from Genesis (a named figure with rich
+    #    event history who hasn't surfaced in play yet) gets woken into this
+    #    scene: properties.dormant cleared, relocated, subrole assigned. The
     #    founder Korr, named in a backstory event but never seen, walks out
-    #    of the tavern's back room (dormant wake).
+    #    of the tavern's back room.
     # 2. Spawn — fresh Character rows invented from the sublocation's
     #    description and subrole hint, to fill any remaining slots.
     #
-    # Class-2 promotion was the third channel; retired with Phase 2. There
-    # are no class-2 strings anymore — Genesis eager-spawns dormant rows
-    # for every named historical, so anyone who could plausibly be reused
-    # already has a row.
+    # The reuse pool is dormant-ONLY by design. ACTIVE residents are never
+    # relocated by the Materializer — that permanently teleports a character
+    # the player may have just met AND rewrites their subrole (the dock
+    # worker who "followed me to the tavern and became a barkeep" bug).
+    # Bringing an active resident into a scene is the job of the TRANSIENT
+    # draws (Scene::LocalDraw intra-city, Scene::TravelerPull cross-city):
+    # they borrow a row (current ← here, home untouched, subrole preserved)
+    # and Scene::Evictor sends them home on exit. The Materializer only
+    # introduces characters who are NEW to play — woken dormants and fresh
+    # spawns — both of which legitimately settle here.
     #
-    # Preference order: reuse-active > reuse-dormant > spawn. The LLM
-    # judges all three in a single call. The prompt surfaces `dormant: true`
-    # on dormant candidates so the LLM can weight accordingly.
+    # Class-2 promotion was a third channel; retired with Phase 2. Genesis
+    # eager-spawns dormant rows for every named historical, so anyone who
+    # could plausibly be woken already has a row.
+    #
+    # Preference order: wake-dormant > spawn. The LLM judges both in a
+    # single call.
     class Materializer
       attr_reader :logger
 
@@ -70,11 +73,10 @@ module Harness
         ::Npc.where(location_id: location.id).to_a
       end
 
-      # Reuse/wake candidate pool: characters living at this sublocation's
-      # parent city OR any sibling sublocation. Includes dormant historicals
-      # (Genesis-spawned rows for named participants in backstory events) —
-      # those are exactly the figures the materializer can wake into the
-      # current scene.
+      # Wake candidate pool: characters living at this sublocation's parent
+      # city OR any sibling sublocation. The `candidates` filter narrows this
+      # to dormant historicals only (active residents are handled by the
+      # transient draws, not the Materializer).
       def candidate_pool_location_ids(location)
         if location.parent_id
           [ location.parent_id ] + ::Location.where(parent_id: location.parent_id).pluck(:id)
@@ -83,22 +85,25 @@ module Harness
         end
       end
 
-      # Existing Character rows in the candidate pool, excluding those
-      # already at THIS sublocation. Each candidate carries character_id,
-      # name, current subrole, dormant flag, and a thin event-history slice
-      # for LLM judgment. The dormant flag lets the LLM bias toward
-      # reusing already-active local NPCs over waking dormant historicals
-      # (preference order: active > dormant > spawn).
+      # DORMANT historicals in the candidate pool, excluding those already at
+      # THIS sublocation. Active residents are deliberately excluded — the
+      # Materializer only ever introduces characters new to play (woken
+      # dormants + fresh spawns); active residents reach a scene via the
+      # transient draws (LocalDraw / TravelerPull), which preserve identity
+      # and send them home on exit. Each candidate carries character_id,
+      # name, current subrole, and a thin event-history slice for LLM
+      # judgment (is this founder plausibly still alive and around?).
       def candidates(candidate_location_ids, already_present)
         already_ids = already_present.map(&:id)
         ::Npc.where(location_id: candidate_location_ids)
              .where.not(id: already_ids)
+             .select { |c| dormant?(c) }
              .map { |c|
                {
                  character_id: c.id,
                  name:         c.name,
                  subrole:      c.subrole,
-                 dormant:      dormant?(c),
+                 dormant:      true,
                  history:      history_for(c)
                }
              }

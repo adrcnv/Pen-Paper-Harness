@@ -119,16 +119,81 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "You step in and speak.")
     loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context, mode: :state_machine)
 
-    transcript = nil
-    expect { transcript = loop_obj.run_turn(input: "go to the tavern and ask the barkeep about work") }
-      .to change(Event, :count).by_at_least(1)
+    transcript = loop_obj.run_turn(input: "go to the tavern and ask the barkeep about work")
 
     expect(player.reload.location_id).to eq(tavern.id)           # the move happened
     names = transcript.tool_calls.map { |t| t["name"] }
-    expect(names).to include("transition", "propose_event")      # both runners committed
+    expect(names).to include("transition", "propose_event")      # move committed; conversation staged a line
     expect(adapter.reasoning_calls).to be_empty                  # never touched the agentic loop
-    dialogue = Event.where(scope: "local").last
-    expect(dialogue.event_participants.pluck(:character_id)).to include(barkeep.id, player.id)
+    # The handoff proof: the staged dialogue names the barkeep, who only became
+    # visible to conversation AFTER the move materialized the tavern scene.
+    # (Dialogue is staged, not persisted — so we read it off the tool_call.)
+    say = transcript.tool_calls.find { |t| t["name"] == "propose_event" && t.dig("result", "staged") }
+    pids = Array(say&.dig("args", "participants")).map { |p| p["character_id"] }
+    expect(pids).to include(barkeep.id, player.id)
+  end
+
+  # Post-rework smoke test: a contested action must ROLL inside its runner (the
+  # standalone dice runner is gone). Drives dispatcher → environment runner →
+  # resolve → real d20 engine → authoritative bracket, all in state_machine mode.
+  it "rolls a contested action through the environment runner and renders the bracket" do
+    context.llm_nuance = StubLLM.new do |prompt|
+      if prompt.include?("PLANNER")
+        { "plan" => [ { "runner" => "environment", "reason" => "force the door" } ] }.to_json
+      elsif prompt.include?("PHYSICAL INTERACTION")
+        { "action" => "force the stuck door",
+          "roll" => { "stat" => "strength", "difficulty" => "moderate" },
+          "time_minutes" => 2, "yields_item" => nil, "location_change" => nil }.to_json
+      else
+        "{}"
+      end
+    end
+
+    adapter  = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "You heave at the door.")
+    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context, mode: :state_machine)
+
+    transcript = loop_obj.run_turn(input: "force the door open")
+
+    resolve = transcript.tool_calls.find { |t| t["name"] == "resolve" }
+    expect(resolve).not_to be_nil, "environment runner did not fire resolve — dice never rolled"
+    expect(resolve["result"]["outcome"]).to be_present              # the engine actually resolved
+    expect(resolve["result"]).to include("roll", "against")          # real d20 numbers exist
+    expect(adapter.reasoning_calls).to be_empty                      # state machine, not agentic
+    expect(transcript.narration).to match(/\[force the stuck door .* Strength \d+ vs \d+/) # bracket rendered
+  end
+
+  # Post-rework smoke test: the STATE-MACHINE combat seam — dispatcher → combat
+  # runner → start_combat → :combat terminator → Turn::Loop hands off to
+  # Combat::Loop. (Combat::Loop's internals are covered elsewhere; this proves
+  # the state_machine ENTRY into it, which the rework touched and never tested.)
+  # Termination is forced to settle pre-flight so the driver returns without
+  # needing NPC-turn stubs.
+  it "enters combat through the combat runner and hands off to the round driver" do
+    vek = Npc.create!(name: "Vek", subrole: "marauder", location: tavern, current_hp: 18, max_hp: 18)
+    allow(Harness::Combat::Termination).to receive(:evaluate).and_return(:victory)
+
+    context.llm_nuance = StubLLM.new do |prompt|
+      if prompt.include?("PLANNER")
+        { "plan" => [ { "runner" => "combat", "reason" => "attack Vek" } ] }.to_json
+      elsif prompt.include?("set up the START of a fight")
+        { "player_side" => [ player.id ], "enemy_side" => [ vek.id ],
+          "inciting_beat" => "the player draws steel on Vek" }.to_json
+      else
+        "{}"
+      end
+    end
+
+    adapter  = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(combat owns narration)")
+    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context, mode: :state_machine)
+
+    transcript = loop_obj.run_turn(input: "attack Vek")
+
+    start_combat = transcript.tool_calls.find { |t| t["name"] == "start_combat" }
+    expect(start_combat).not_to be_nil, "combat runner did not fire start_combat"
+    expect(start_combat["result"]["error"]).to be_nil, "start_combat errored: #{start_combat['result']['error']}"
+    expect(transcript.combat).to be_a(Harness::Combat::Loop::Result)   # the driver actually ran
+    expect(transcript.combat.end_reason).to eq(:victory)
+    expect(adapter.reasoning_calls).to be_empty                        # state machine, not agentic
   end
 
   it "skips the dispatcher entirely in :agentic mode" do

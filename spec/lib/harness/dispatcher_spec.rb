@@ -28,6 +28,16 @@ RSpec.describe Harness::Dispatcher do
       expect(plan.steps.first.args).to eq("dest" => "docks")
     end
 
+    # Regression: the standalone "dice" runner was retired (a roll belongs
+    # inside an interaction, not its own step). A weak local model may still
+    # emit "dice" from habit; it must remap to "environment" so the turn does
+    # NOT fall back to agentic on an unbuilt label.
+    it "remaps a retired 'dice' step to 'environment'" do
+      stub_planner(plan: [ { "runner" => "dice", "reason" => "climb the wall", "args" => {} } ])
+      plan = dispatcher.plan("climb the wall")
+      expect(plan.steps.map(&:runner)).to eq(%w[environment])
+    end
+
     it "flags a parse failure without raising" do
       stub_planner(plan: nil, parse_error: "missing 'plan' array", raw: "garbage")
       plan = dispatcher.plan("???")

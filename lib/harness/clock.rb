@@ -37,41 +37,7 @@ module Harness
       context.game_time = before + minutes
       logger.info { "[Clock] +#{minutes}min reason=#{reason} #{before} -> #{context.game_time}" }
 
-      maybe_fire_pending_appearances!(context, logger)
       context.game_time
     end
-
-    # Mid-scene PA fire. Called after every clock advance: if any
-    # unresolved PA targeting the player came due during this tick AND
-    # is in scope of the player's current location, realize it now.
-    # The new character is materialized at the player's location; subsequent
-    # query_scene calls in the same turn will surface them via a fresh
-    # Scene::Assembler query (active scene snapshot is set stale via
-    # scene_dirty so the next turn rebuilds full flavor — internal_state,
-    # agendas, catch-up, etc).
-    #
-    # Failure non-fatal — same posture as the maybe_run_* hooks in the Manager.
-    def self.maybe_fire_pending_appearances!(context, logger)
-      scene = context.active_scene
-      return unless scene
-      player = ::Player.first
-      return unless player
-
-      resolved = ::Harness::Scene::PendingAppearanceResolver
-        .new(llm_grunt: context.llm_grunt, logger: logger)
-        .resolve(
-          target_character:  player,
-          current_location:  scene.location,
-          current_game_time: context.game_time
-        )
-
-      return if resolved.empty?
-
-      context.scene_dirty = true
-      logger.info { "[Clock] mid-scene PA fired: #{resolved.size} resolution(s); scene_dirty=true" }
-    rescue StandardError => e
-      logger.warn { "[Clock] mid-scene PA resolution failed: #{e.class}: #{e.message}" }
-    end
-
   end
 end

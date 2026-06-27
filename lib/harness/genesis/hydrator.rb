@@ -11,10 +11,9 @@ module Harness
     # The engine assigns a mechanical name per id when Hatcherying the row.
     #
     # Validates:
-    # - top-level shape (characters, events, pending_appearances)
+    # - top-level shape (characters, events)
     # - characters: array of {id, subrole}; ids unique snake_case slugs
     # - events: each participant's actor_id resolves to a characters[] entry
-    # - pending_appearances: actor_id resolves to a characters[] entry
     class Hydrator
       class InvalidOutput < StandardError
         attr_reader :errors
@@ -26,16 +25,13 @@ module Harness
 
       ALLOWED_SCOPES                = %w[local regional].freeze
       MAX_EVENTS                    = 8
-      MAX_PENDING_APPEARANCES       = 1
       MAX_CHARACTERS                = 5
-      PA_INTENT_MIN_LEN             = 20
-      PA_INTENT_MAX_LEN             = 250
       ACTOR_ID_PATTERN              = /\A[a-z][a-z0-9_]*\z/
 
-      # Hydrated output: characters array + events array + pending_appearances array.
+      # Hydrated output: characters array + events array.
       # The committer/generator translates `characters` into Hatchery spawns,
       # then resolves each event participant's actor_id to the spawned row.
-      Result = Struct.new(:characters, :events, :pending_appearances, keyword_init: true)
+      Result = Struct.new(:characters, :events, keyword_init: true)
 
       def self.hydrate(llm_output:, current_game_time:)
         new(llm_output, current_game_time).hydrate
@@ -67,10 +63,7 @@ module Harness
         events = validate_events(actor_id_set)
         raise_if_errors
 
-        pending = validate_pending_appearances(actor_id_set)
-        raise_if_errors
-
-        Result.new(characters: characters, events: events, pending_appearances: pending)
+        Result.new(characters: characters, events: events)
       end
 
       private
@@ -205,58 +198,6 @@ module Harness
             return nil
           end
           out << { "actor_id" => stripped, "role" => role.strip }
-        end
-        out
-      end
-
-      def validate_pending_appearances(actor_id_set)
-        raw = @llm["pending_appearances"]
-        return [] if raw.nil?
-        unless raw.is_a?(Array)
-          @errors << "\"pending_appearances\" must be an array (or omitted)"
-          return []
-        end
-        if raw.size > MAX_PENDING_APPEARANCES
-          @errors << "pending_appearances.size=#{raw.size} exceeds MAX_PENDING_APPEARANCES=#{MAX_PENDING_APPEARANCES}"
-          return []
-        end
-
-        out = []
-        raw.each_with_index do |entry, i|
-          prefix = "pending_appearances[#{i}]"
-          unless entry.is_a?(Hash)
-            @errors << "#{prefix} is not an object"
-            next
-          end
-
-          if entry["actor_name"]
-            @errors << "#{prefix}: \"actor_name\" is retired; use \"actor_id\" matching a characters[].id"
-            next
-          end
-
-          aid = entry["actor_id"]
-          unless aid.is_a?(String) && !aid.strip.empty?
-            @errors << "#{prefix}: actor_id must be a non-empty string"
-            next
-          end
-          aid = aid.strip
-          unless actor_id_set.include?(aid)
-            @errors << "#{prefix}: actor_id=#{aid.inspect} not declared in characters[]"
-            next
-          end
-
-          intent = entry["intent_text"]
-          unless intent.is_a?(String)
-            @errors << "#{prefix}: intent_text must be a string"
-            next
-          end
-          intent = intent.strip
-          if intent.length < PA_INTENT_MIN_LEN || intent.length > PA_INTENT_MAX_LEN
-            @errors << "#{prefix}: intent_text length=#{intent.length} must be between #{PA_INTENT_MIN_LEN} and #{PA_INTENT_MAX_LEN}"
-            next
-          end
-
-          out << { "actor_id" => aid, "intent_text" => intent }
         end
         out
       end

@@ -7,8 +7,8 @@ module Harness
 
       # `prose_context` is freeform text about who this character is — event
       # narratives they participated in, the materializer's reason for spawning
-      # them, the appearance_intent the resolver wrote. Routed to user (NOT
-      # system) so the cache prefix stays stable across calls.
+      # them. Routed to user (NOT system) so the cache prefix stays stable
+      # across calls.
       #
       # `scenario_seed` is the optional outlier-injection from the
       # character_creation scenarios YAML. When present, gets appended after

@@ -83,7 +83,12 @@ module Harness
           "movement"     => ::Harness::Runners::Movement.new(logger: logger),
           "conversation" => ::Harness::Runners::Conversation.new(logger: logger),
           "worldbuilding" => ::Harness::Runners::Worldbuilding.new(logger: logger),
-          "dice"         => ::Harness::Runners::Dice.new(logger: logger),
+          # No "dice" runner — a roll is a mechanism INSIDE an interaction, not
+          # its own step. The planner must never emit a standalone dice step;
+          # each runner rolls when its own action is contested (conversation →
+          # persuasion, environment → climb/force/lockpick, inventory → loot a
+          # container). Movement NEVER rolls. A stray "dice" label from the
+          # planner is remapped to environment by the Dispatcher.
           "environment"  => ::Harness::Runners::Environment.new(logger: logger),
           "inventory"    => ::Harness::Runners::Inventory.new(logger: logger),
           "time-skip"    => ::Harness::Runners::TimeSkip.new(logger: logger),
@@ -149,16 +154,6 @@ module Harness
             run_state_machine(input, transcript)
           end
 
-          # Character initiative: after the player's chain resolved, a present
-          # NPC with a standing agenda may push it (cadence-gated). Placed
-          # BEFORE the combat hand-off so an escalation (start_combat) is driven
-          # this same turn. Skipped if the player's own action already entered
-          # combat, or if they're leaving the scene (scene_dirty) — the agenda
-          # belongs to the scene being left.
-          unless @scene_manager.active&.in_combat? || @context.scene_dirty
-            maybe_run_initiative(transcript)
-          end
-
           # Combat hand-off. While scene.in_combat?, Combat::Loop processes
           # NPC slots around the player's slot. The loop YIELDS at fresh
           # player slots (end_reason: :yielded) so the next turn's reasoning
@@ -208,6 +203,20 @@ module Harness
             combat_narration
           else
             run_narration(input, transcript)
+          end
+
+          # Character initiative — runs AFTER narration on purpose, so the
+          # consumer reads what just happened and appends ONE present NPC's
+          # unprompted move as its own foregrounded trailing beat (the system
+          # supplying the engagement the LLM never volunteers). Skipped during
+          # combat (it owns its own beats) and when the player is leaving the
+          # scene (the agenda belongs to the scene being left).
+          unless combat_result || @context.scene_dirty || @scene_manager.active&.in_combat?
+            beat = maybe_run_initiative(transcript, narration)
+            if beat && !beat.empty?
+              narration = "#{narration}\n\n#{beat}"
+              transcript.narration = narration
+            end
           end
 
           # Record only the diegetic narration to scene history (keeps the
@@ -471,19 +480,21 @@ module Harness
         end
       end
 
-      # Character-initiative pass. Lets a present NPC with a standing agenda
-      # push it on a cadence (the system supplying the initiative the LLM never
-      # does on its own). Records any committed beat into the transcript so
-      # narration renders it; may escalate a fight-capable NPC to combat, which
-      # the hand-off below then drives. Failure-isolated.
-      def maybe_run_initiative(transcript)
+      # Character-initiative consumer (post-narration). Asks whether ONE present
+      # NPC makes an unprompted move toward the player given what just happened
+      # (the narration), commits it as an event, and returns its beat prose so
+      # the caller can append it as a foregrounded trailing paragraph. Returns
+      # nil when nobody acts. Failure-isolated.
+      def maybe_run_initiative(transcript, narration)
         active = @scene_manager.active
-        return unless active
-        ::Harness::Scene::Initiative.run(
-          context: @context, active: active, transcript: transcript, logger: logger
+        return nil unless active
+        result = ::Harness::Scene::Initiative.run(
+          context: @context, active: active, transcript: transcript, narration: narration, logger: logger
         )
+        result && result[:beat]
       rescue StandardError => e
         logger.warn { "[Turn::Loop] initiative pass failed: #{e.class}: #{e.message}" }
+        nil
       end
 
       def run_combat(transcript)
@@ -694,6 +705,15 @@ module Harness
         end
       end
 
+      # The player character's identity for the narration step (name + gender).
+      # nil-safe: returns name-only if gender unset, {} if no player row.
+      def player_identity
+        pl = ::Player.first
+        return {} unless pl
+        g = pl.properties.is_a?(::Hash) ? pl.properties["gender"] : nil
+        { "name" => pl.name, "gender" => g }.compact
+      end
+
       def narration_user_message(input, transcript)
         here_id = @context.player_location.id
         kept_calls, discoveries = partition_offscene_creations(transcript.tool_calls, here_id)
@@ -712,6 +732,12 @@ module Harness
         location_payload["description"] = loc.description if establishing
         payload = {
           "player_input"   => input,
+          # Who the player IS — the "you" of the narration. Without this the
+          # narrator has no name for the player, so when an NPC addresses them
+          # aloud it grabs a present character's name ("Maud, if you're hunting
+          # ghosts," Maud says — to the player). Surfaced so dialogue can name
+          # the player correctly (or use an epithet) instead of borrowing an NPC.
+          "player"         => player_identity,
           "location"       => location_payload,
           "tool_calls"     => sanitize_tool_calls_for_narration(kept_calls),
           # current_scene is what's TRUE NOW. tool_calls captures what the
@@ -780,7 +806,16 @@ module Harness
         active = @scene_manager.active
         return { "present_characters" => [], "present_items" => [], "present_corpses" => [], "present_extras" => [] } unless active
         {
-          "present_characters" => active.present_characters.map { |c| { "id" => c.id, "name" => c.name, "subrole" => c.subrole } },
+          "present_characters" => active.present_characters.map { |c|
+            entry = { "id" => c.id, "name" => c.name, "subrole" => c.subrole }
+            # Carry gender so narration uses the right pronouns. It's stored once
+            # at spawn (Hatchery#ensure_gender!) and is otherwise invisible to the
+            # narration step — which then guesses from the name and flips a
+            # feminine-stored "Dushka" to "he". Not a reasoning failure; the model
+            # was never told. Now it is.
+            entry["gender"] = c.properties["gender"] if c.properties.is_a?(Hash) && c.properties["gender"]
+            entry
+          },
           "present_items"      => active.present_items.map { |i| { "id" => i.id, "name" => i.name } },
           "present_corpses"    => active.present_corpses.map { |c| { "id" => c.id, "name" => c.name } },
           "present_extras"     => include_extras ? active.present_extras : []

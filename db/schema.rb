@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_21_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_23_120000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -118,29 +118,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_21_120000) do
     t.index ["parent_id"], name: "index_locations_on_parent_id"
   end
 
-  create_table "pending_appearances", force: :cascade do |t|
-    t.integer "actor_character_id"
-    t.integer "anchor_location_id"
-    t.datetime "created_at", null: false
-    t.integer "earliest_at", null: false
-    t.text "intent_text", null: false
-    t.integer "origin_character_id"
-    t.integer "origin_faction_id"
-    t.integer "resolved_at"
-    t.string "scope", null: false
-    t.integer "target_character_id", null: false
-    t.integer "triggered_by_event_id"
-    t.datetime "updated_at", null: false
-    t.index ["actor_character_id"], name: "index_pending_appearances_on_actor_character_id"
-    t.index ["anchor_location_id", "resolved_at"], name: "idx_pending_appearances_anchor_unresolved"
-    t.index ["anchor_location_id"], name: "index_pending_appearances_on_anchor_location_id"
-    t.index ["origin_character_id"], name: "index_pending_appearances_on_origin_character_id"
-    t.index ["origin_faction_id"], name: "index_pending_appearances_on_origin_faction_id"
-    t.index ["target_character_id", "resolved_at"], name: "idx_pending_appearances_target_unresolved"
-    t.index ["target_character_id"], name: "index_pending_appearances_on_target_character_id"
-    t.index ["triggered_by_event_id"], name: "index_pending_appearances_on_triggered_by_event_id"
-  end
-
   create_table "quest_steps", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.text "description", null: false
@@ -214,12 +191,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_21_120000) do
   add_foreign_key "journeys", "locations", column: "destination_id"
   add_foreign_key "locations", "factions"
   add_foreign_key "locations", "locations", column: "parent_id"
-  add_foreign_key "pending_appearances", "characters", column: "actor_character_id"
-  add_foreign_key "pending_appearances", "characters", column: "origin_character_id"
-  add_foreign_key "pending_appearances", "characters", column: "target_character_id"
-  add_foreign_key "pending_appearances", "events", column: "triggered_by_event_id"
-  add_foreign_key "pending_appearances", "factions", column: "origin_faction_id"
-  add_foreign_key "pending_appearances", "locations", column: "anchor_location_id"
   add_foreign_key "quest_steps", "characters", column: "target_character_id"
   add_foreign_key "quest_steps", "items", column: "target_item_id"
   add_foreign_key "quest_steps", "locations", column: "target_location_id"

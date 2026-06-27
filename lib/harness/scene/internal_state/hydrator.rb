@@ -21,18 +21,17 @@ module Harness
         # (e.g., a city's market with no character rows yet — the LLM emits
         # 2-4 ambient figures so narration has scene flavor to render).
         MAX_EXTRAS       = 4
-        AGENDA_MIN_LEN   = 20
         AGENDA_MAX_LEN   = 250
 
-        Agenda = Struct.new(:character_name, :text, keyword_init: true)
+        Result = Struct.new(:internal_states, :agendas, :extras, keyword_init: true)
 
-        Result = Struct.new(:internal_states, :agenda, :extras, keyword_init: true)
-
-        # Returns Result(internal_states: {name => prose}, agenda: Agenda|nil, extras: [str, ...]).
+        # Returns Result(internal_states: {name => prose}, agendas: {name => text}, extras: [str, ...]).
         # The orchestrator maps names back to character_ids when committing
         # to the Active scene. Extras are scene-bound, RAM-only ambient
         # nameless figures (the "an old fisherman nursing a beer" line).
-        # Agenda is rare — at most one per scene, often nil.
+        # agendas is per-present-character (their angle toward the player this
+        # scene); some characters have none (omitted). The initiative consumer
+        # reads these to decide who, if anyone, acts on a given turn.
         def self.hydrate(llm_output:, expected_names:)
           new(llm_output, expected_names).hydrate
         end
@@ -55,12 +54,12 @@ module Harness
           validate_top_level
           raise_if_errors
 
-          states = validate_states
-          agenda = validate_agenda
-          extras = validate_extras
+          states  = validate_states
+          agendas = validate_agendas
+          extras  = validate_extras
           raise_if_errors
 
-          Result.new(internal_states: states, agenda: agenda, extras: extras)
+          Result.new(internal_states: states, agendas: agendas, extras: extras)
         end
 
         private
@@ -79,11 +78,10 @@ module Harness
           if @llm.key?("extras") && !@llm["extras"].is_a?(Array)
             @errors << "\"extras\" must be an array of strings"
           end
-          # agenda is OPTIONAL (and most scenes should omit it). When present
-          # it must be an object with character_name + text. Arrays / strings /
-          # other shapes are flagged so the LLM can repair.
-          if @llm.key?("agenda") && !@llm["agenda"].nil? && !@llm["agenda"].is_a?(Hash)
-            @errors << "\"agenda\" must be an object {character_name:, text:} when present"
+          # agendas is OPTIONAL — a map {character_name => angle}. Per-character;
+          # some/all may be omitted. Must be an object when present.
+          if @llm.key?("agendas") && !@llm["agendas"].nil? && !@llm["agendas"].is_a?(Hash)
+            @errors << "\"agendas\" must be an object keyed by character name when present"
           end
         end
 
@@ -126,41 +124,34 @@ module Harness
           out
         end
 
-        # Returns nil when the field is absent (the common case) or fully
-        # validated Agenda. Per the prompt, at most one agenda total, scoped
-        # to a single named character. Unknown character_name → reject so
-        # the LLM repairs rather than silently dropping.
-        def validate_agenda
-          raw = @llm["agenda"]
-          return nil if raw.nil?
-          return nil unless raw.is_a?(Hash)  # top-level shape error already flagged
+        # Returns {name => angle} for present characters that have a seeded
+        # agenda this scene. Per-character and optional — an empty/omitted entry
+        # just means that character has no particular angle (drop silently).
+        # Unknown names are flagged so the LLM repairs rather than mis-keying.
+        def validate_agendas
+          raw = @llm["agendas"]
+          return {} if raw.nil?
+          return {} unless raw.is_a?(Hash)  # top-level shape error already flagged
 
-          name = raw["character_name"]
-          text = raw["text"]
-
-          unless name.is_a?(String)
-            @errors << "agenda.character_name must be a string"
-            return nil
+          out = {}
+          raw.each do |name, text|
+            unless @expected.include?(name)
+              @errors << "agendas key #{name.inspect} is not in INPUT.characters (expected one of: #{@expected.to_a.join(', ')})"
+              next
+            end
+            unless text.is_a?(String)
+              @errors << "agendas[#{name.inspect}] must be a string"
+              next
+            end
+            stripped = text.strip
+            next if stripped.empty?  # no angle for this character — fine
+            if stripped.length > AGENDA_MAX_LEN
+              @errors << "agendas[#{name.inspect}] is too long (>#{AGENDA_MAX_LEN} chars)"
+              next
+            end
+            out[name] = stripped
           end
-          unless @expected.include?(name)
-            @errors << "agenda.character_name #{name.inspect} is not in INPUT.characters (expected one of: #{@expected.to_a.join(', ')})"
-            return nil
-          end
-          unless text.is_a?(String)
-            @errors << "agenda.text must be a string"
-            return nil
-          end
-          stripped = text.strip
-          if stripped.length < AGENDA_MIN_LEN
-            @errors << "agenda.text is too short (<#{AGENDA_MIN_LEN} chars)"
-            return nil
-          end
-          if stripped.length > AGENDA_MAX_LEN
-            @errors << "agenda.text is too long (>#{AGENDA_MAX_LEN} chars)"
-            return nil
-          end
-
-          Agenda.new(character_name: name, text: stripped)
+          out
         end
 
         def validate_extras

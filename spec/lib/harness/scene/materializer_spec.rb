@@ -66,11 +66,15 @@ RSpec.describe Harness::Scene::Materializer do
     end
   end
 
-  describe "reuse" do
-    it "relocates an existing character from the parent city into this sublocation" do
-      # Marta-of-the-Moss style: a character lives at the parent city; reusing
-      # her at the child sublocation moves her here and updates her subrole.
-      marta = Npc.create!(name: "Marta of the Moss", subrole: nil, location: city)
+  describe "reuse (dormant wake only)" do
+    # Reuse is dormant-ONLY now. The candidate pool is dormant historicals at
+    # the parent city / sibling sublocations; active residents are never
+    # offered (they reach a scene via the transient draws instead). These
+    # tests use dormant rows because nothing else can be a candidate.
+    it "relocates a dormant historical from the parent city into this sublocation" do
+      # A dormant founder lives at the parent city; waking her at the child
+      # sublocation moves her here and gives her a subrole.
+      marta = Npc.create!(name: "Marta of the Moss", subrole: nil, location: city, properties: { "dormant" => true })
 
       llm = fake_llm({
         "reuse" => [ { "character_id" => marta.id, "subrole" => "innkeeper", "properties" => { "mood" => "calm" } } ],
@@ -86,11 +90,11 @@ RSpec.describe Harness::Scene::Materializer do
       expect(char.properties).to include("mood" => "calm")
     end
 
-    it "candidate pool includes characters at the parent city itself (Genesis-tier)" do
-      # Critical regression: Genesis materializes Characters at the city tier.
-      # Without including the parent, those characters would be invisible to
-      # the materializer at any child sublocation.
-      city_dweller = Npc.create!(name: "Aldric the Scout", location: city)
+    it "candidate pool includes dormant historicals at the parent city itself (Genesis-tier)" do
+      # Critical regression: Genesis materializes dormant Characters at the city
+      # tier. Without including the parent, those historicals would be invisible
+      # to the materializer at any child sublocation.
+      city_dweller = Npc.create!(name: "Aldric the Scout", location: city, properties: { "dormant" => true })
       llm = fake_llm({ "reuse" => [], "spawn" => [] })
       described_class.new(llm_client: llm).materialize(location: tavern, target_count: 1)
 
@@ -99,8 +103,8 @@ RSpec.describe Harness::Scene::Materializer do
       expect(prompt).to match(/"name"\s*:\s*"Aldric the Scout"/)
     end
 
-    it "candidate pool includes characters at sibling sublocations" do
-      sibling_dweller = Npc.create!(name: "Korr", location: warehouse)
+    it "candidate pool includes dormant historicals at sibling sublocations" do
+      sibling_dweller = Npc.create!(name: "Korr", location: warehouse, properties: { "dormant" => true })
       llm = fake_llm({ "reuse" => [], "spawn" => [] })
       described_class.new(llm_client: llm).materialize(location: tavern, target_count: 1)
 
@@ -109,11 +113,11 @@ RSpec.describe Harness::Scene::Materializer do
     end
 
     it "candidate pool excludes characters already at THIS sublocation" do
-      already = Npc.create!(name: "Maren", subrole: "barkeep", location: tavern)
-      # Sibling-located NPC gives the candidates list non-empty content so we're
-      # asserting against a real candidate list, not against an empty array
-      # that would trivially pass.
-      sibling = Npc.create!(name: "Korr", location: warehouse)
+      already = Npc.create!(name: "Maren", subrole: "barkeep", location: tavern, properties: { "dormant" => true })
+      # Sibling-located dormant gives the candidates list non-empty content so
+      # we're asserting against a real candidate list, not against an empty
+      # array that would trivially pass.
+      sibling = Npc.create!(name: "Korr", location: warehouse, properties: { "dormant" => true })
 
       llm = fake_llm({ "reuse" => [], "spawn" => [] })
       described_class.new(llm_client: llm).materialize(location: tavern, target_count: 3)
@@ -124,8 +128,23 @@ RSpec.describe Harness::Scene::Materializer do
       expect(candidate_ids_in_prompt).not_to include(already.id)
     end
 
+    it "candidate pool excludes ACTIVE residents (no teleport-and-reskin)" do
+      # The dock-worker-became-a-barkeep bug: an active resident of a sibling
+      # sublocation must never appear in the reuse menu. Only dormant rows do.
+      active_sibling  = Npc.create!(name: "Dushka", subrole: "dock_worker", location: warehouse, properties: { "personality" => "gruff" })
+      dormant_sibling = Npc.create!(name: "Old Bram", location: warehouse, properties: { "dormant" => true })
+
+      llm = fake_llm({ "reuse" => [], "spawn" => [] })
+      described_class.new(llm_client: llm).materialize(location: tavern, target_count: 2)
+
+      prompt = llm.prompts.first
+      candidate_ids_in_prompt = prompt.scan(/"character_id"\s*:\s*(\d+)/).flatten.map(&:to_i)
+      expect(candidate_ids_in_prompt).to include(dormant_sibling.id)
+      expect(candidate_ids_in_prompt).not_to include(active_sibling.id)
+    end
+
     it "merges new properties into existing properties without blowing away existing" do
-      char = Npc.create!(name: "Marta", location: city, properties: { "personality" => "weathered", "physical" => "grey-haired" })
+      char = Npc.create!(name: "Marta", location: city, properties: { "dormant" => true, "personality" => "weathered", "physical" => "grey-haired" })
       llm = fake_llm({
         "reuse" => [ { "character_id" => char.id, "subrole" => "innkeeper", "properties" => { "mood" => "calm" } } ],
         "spawn" => []
@@ -137,9 +156,9 @@ RSpec.describe Harness::Scene::Materializer do
     end
   end
 
-  describe "mixed reuse + spawn" do
+  describe "mixed wake + spawn" do
     it "creates both and places them at the requesting location" do
-      existing = Npc.create!(name: "Korr", location: city)
+      existing = Npc.create!(name: "Korr", location: city, properties: { "dormant" => true })
       llm = fake_llm({
         "reuse" => [ { "character_id" => existing.id, "subrole" => "patron" } ],
         "spawn" => [ { "subrole" => "barkeep" } ]
@@ -172,8 +191,8 @@ RSpec.describe Harness::Scene::Materializer do
     # in a backstory cluster. When the player intersects a location where
     # one of those historicals lives, the materializer can pick them as
     # `reuse` — the apply step clears properties.dormant and relocates them
-    # into the current sublocation. The flag in the candidate hash signals
-    # the LLM that this is a wake (preference order: active > dormant > spawn).
+    # into the current sublocation. Dormant rows are the ONLY reuse
+    # candidates (preference order: wake-dormant > spawn).
     it "wakes a dormant historical by clearing properties.dormant on reuse" do
       historical = Npc.create!(
         name: "Corren Ashvale",
@@ -197,7 +216,7 @@ RSpec.describe Harness::Scene::Materializer do
       expect(corren.properties).not_to have_key("dormant")
     end
 
-    it "surfaces dormant candidates with dormant: true in the prompt" do
+    it "surfaces only dormant candidates in the prompt; active ones are omitted" do
       dormant = Npc.create!(name: "Aelin", location: city, properties: { "dormant" => true })
       active  = Npc.create!(name: "Korr",  location: city, properties: { "personality" => "stoic" })
 
@@ -205,11 +224,9 @@ RSpec.describe Harness::Scene::Materializer do
       described_class.new(llm_client: llm).materialize(location: tavern, target_count: 2)
 
       prompt = llm.prompts.first
-      # Find each candidate's dormant flag in the rendered JSON.
-      aelin_block = prompt[/"name": "Aelin"[^{}]*"dormant": (true|false)/m]
-      korr_block  = prompt[/"name": "Korr"[^{}]*"dormant": (true|false)/m]
-      expect(aelin_block).to match(/"dormant": true/)
-      expect(korr_block).to  match(/"dormant": false/)
+      expect(prompt).to match(/"name": "Aelin"/)
+      expect(prompt).not_to match(/"name": "Korr"/)
+      expect(prompt).to match(/"dormant": true/)
     end
   end
 

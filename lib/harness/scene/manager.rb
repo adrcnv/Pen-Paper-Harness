@@ -31,13 +31,6 @@ module Harness
         [ 3 ] * 50 + [ 4 ] * 30 + [ 5 ] * 15 + [ 6 ] * 5
       ).freeze
 
-      # Wilderness leaves (player-proposed wayshrines, encounter-spawned
-      # bandit camps later, etc.) get a tighter cast — these are not "regular
-      # cast" places like a tavern or a customs office.
-      WILDERNESS_TARGET_DISTRIBUTION = (
-        [ 2 ] * 3 + [ 3 ] * 2 + [ 4 ]
-      ).freeze
-
       attr_reader :logger, :active
 
       def initialize(context:, logger: Rails.logger, rng: Random.new)
@@ -63,8 +56,8 @@ module Harness
 
         maybe_run_genesis(loc)
         maybe_lay_out_settlement(loc)
+        maybe_place_claims(loc)
         maybe_run_catch_up(loc)
-        maybe_resolve_pending_appearances(loc)
         maybe_run_quest_generation(loc)
         maybe_run_materialize(loc, materialize_target)
         maybe_pull_traveler(loc)
@@ -75,6 +68,7 @@ module Harness
 
         snapshot = ::Harness::Scene::Assembler.for(location: loc)
         maybe_run_character_catch_up(snapshot.present_characters)
+        maybe_weave_claim_web(snapshot.present_characters)
         flavor = generate_internal_state(loc, snapshot.present_characters)
 
         @active = Active.new(
@@ -121,6 +115,26 @@ module Harness
       end
 
       private
+
+      # Increment-2 placement: stage any claimed person parked for THIS place
+      # (an NPC named them at a destination that wasn't a row yet; now the player
+      # has walked into it). Runs before the snapshot so they're present this
+      # entry. Pure SQL + an UPDATE; non-fatal.
+      def maybe_place_claims(loc)
+        ::Harness::NarrativeShift::ClaimPlacer.place!(loc, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] claim placement failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # Increment-2 social web: a claimed person present here (just placed, or
+      # active since claim time) gets a few local NPCs who KNOW them, so asking
+      # around at the destination points to them. Mechanical — reads the carried
+      # gist, invents no identity. After the snapshot so present NPCs are known.
+      def maybe_weave_claim_web(present_characters)
+        ::Harness::NarrativeShift::SocialWeb.weave!(present_characters, @context, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] claim social-web failed: #{e.class}: #{e.message}" }
+      end
 
       # Genesis-on-entry: when the player first enters a worldgen-rooted city
       # that has no events yet, generate a small cluster of past events to
@@ -359,10 +373,16 @@ module Harness
         }
         return nil if any_active
 
-        if loc.parent_id
+        if loc.properties.is_a?(Hash) && loc.properties["kind"] == "wilderness_leaf"
+          # Wilderness leaves get NO materialized resident cast — they're
+          # transient encounter spots, not settlements. Staffing them spawned
+          # homeless rows in the middle of nowhere (a "lost_traveler" with no
+          # home that the Evictor then culls). Wilderness population comes from
+          # the LLM's ambient `extras` (materialized on engagement via
+          # propose_character(from_extra:)) and the travel encounter-spawner.
+          nil
+        elsif loc.parent_id
           TARGET_COUNT_DISTRIBUTION.sample(random: @rng)
-        elsif loc.properties.is_a?(Hash) && loc.properties["kind"] == "wilderness_leaf"
-          WILDERNESS_TARGET_DISTRIBUTION.sample(random: @rng)
         else
           # Worldgen top-level city. Genesis spawned dormant rows for every
           # named historical in the backstory cluster; the Materializer
@@ -371,26 +391,6 @@ module Harness
           # public-facing locals (a town crier, a guardsman, an old merchant).
           TARGET_COUNT_DISTRIBUTION.sample(random: @rng)
         end
-      end
-
-      # Pending-appearance resolution at scene entry. Strangers, debt
-      # collectors, faction emissaries, and known characters who decided to
-      # find the player all materialize into the scene here. Pure structural
-      # — no LLM. Failure non-fatal: scene entry continues even if resolution
-      # raises. Skipped when there's no Player row (test/worldgen contexts).
-      def maybe_resolve_pending_appearances(loc)
-        target = ::Player.first
-        return unless target
-
-        ::Harness::Scene::PendingAppearanceResolver
-          .new(llm_grunt: @context.llm_grunt, logger: logger)
-          .resolve(
-            target_character:  target,
-            current_location:  loc,
-            current_game_time: @context.game_time || 0
-          )
-      rescue StandardError => e
-        logger.warn { "[Scene::Manager] pending-appearance resolution failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
 
       # Returns a hash {internal_state: {char_id => prose}, agendas: {char_id => text}, extras: [...]}.

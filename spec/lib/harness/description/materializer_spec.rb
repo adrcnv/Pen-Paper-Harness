@@ -28,13 +28,13 @@ RSpec.describe Harness::Description::Materializer do
   end
 
   it "preserves unrelated property keys" do
-    npc.update!(properties: { "faction_id" => 7, "appearance_intent" => "looking for the player" })
+    npc.update!(properties: { "faction_id" => 7, "background" => "raised on the docks" })
     llm = StubLLM.new { |_prompt| good_output }
     described_class.new(llm_client: llm, logger: logger).materialize!(npc)
 
     npc.reload
     expect(npc.properties["faction_id"]).to eq(7)
-    expect(npc.properties["appearance_intent"]).to eq("looking for the player")
+    expect(npc.properties["background"]).to eq("raised on the docks")
     expect(npc.properties["personality"]).to be_present
     expect(npc.properties["appearance"]).to be_present
   end
@@ -120,7 +120,7 @@ RSpec.describe Harness::Description::Materializer do
           name: "Sigrid", subrole: "scholar", location: city, level: 8,
           strength: 9, dexterity: 11, constitution: 10,
           intelligence: 17, wisdom: 14, charisma: 12,
-          properties: { "appearance_intent" => "wants to test the player's literacy" }
+          properties: { "background" => "spent years copying ledgers" }
         )
       }
 

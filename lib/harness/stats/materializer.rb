@@ -2,7 +2,7 @@ module Harness
   module Stats
     # Generates a level + six ability scores for an NPC, conditioned on
     # subrole, properties, optional prose context (event narratives, the
-    # materializer prompt that spawned them, an appearance_intent string),
+    # materializer prompt that spawned them),
     # and an optional scenario seed (the outlier-injection mechanism for
     # character creation; see lib/harness/scenarios/tables/character_creation.yml).
     #

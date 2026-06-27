@@ -87,7 +87,6 @@ module Harness
 
           characters_payload = hydrated.characters
           events_payload     = hydrated.events
-          pa_payload         = hydrated.pending_appearances
 
           if events_payload.empty?
             logger.info { "[Genesis::Generator] generator returned 0 events for #{location.name}; nothing to commit" }
@@ -108,7 +107,6 @@ module Harness
                 llm_client: @llm,
                 logger:     logger
               )
-              commit_pending_appearances(pa_payload, character_by_actor_id, location, current_game_time, result.events)
             end
             return result.events
           rescue ::Harness::Event::BackwardAppender::Rejected => e
@@ -153,7 +151,7 @@ module Harness
             return Hydrator.hydrate(llm_output: raw, current_game_time: current_game_time)
           rescue Hydrator::InvalidOutput => e
             logger.warn { "[Genesis::Generator] generator output invalid (attempt #{attempts}): #{e.errors.join('; ')}" }
-            return Hydrator::Result.new(characters: [], events: [], pending_appearances: []) if attempts > 1
+            return Hydrator::Result.new(characters: [], events: []) if attempts > 1
             current_user = "#{current_user}\n\nYOUR PREVIOUS OUTPUT WAS REJECTED:\n#{e.errors.map { |x| "- #{x}" }.join("\n")}\n\nFix and resubmit."
           end
         end
@@ -185,8 +183,8 @@ module Harness
       # present_characters / recent_actors until Scene::Materializer wakes it.
       #
       # Returns a `character_by_actor_id` map: the LLM's cluster-local id →
-      # the Character row. Event participants and pending_appearances resolve
-      # through this map at commit time.
+      # the Character row. Event participants resolve through this map at
+      # commit time.
       #
       # Per-character prose context (the cluster's narratives referencing
       # them via actor_id) flows into the stat materializer so a "founder
@@ -222,56 +220,6 @@ module Harness
         }.reject(&:empty?)
         return nil if narratives.empty?
         narratives.join("\n")
-      end
-
-      # Commits the optional pending_appearance(s) the generator emitted.
-      # Each PA grounds in:
-      #   - actor_character_id from the cluster's just-materialized characters
-      #     (hydrator already enforced actor_name is in the events array)
-      #   - target_character_id = Player.first (gracefully no-ops when no
-      #     player exists yet — worldgen-only / test contexts)
-      #   - triggered_by_event_id = the first committed event in the cluster,
-      #     a reasonable approximation that links the PA to the historical
-      #     thread it represents
-      #   - anchor at the genesis location with scope=city
-      #   - earliest_at = current_game_time (live the moment the player walks in)
-      # Failure to save (validation error) is logged and skipped — events
-      # already committed stay; we don't roll the whole cluster back over a
-      # PA bookkeeping issue. Save-failures here are bugs, not LLM-side
-      # concerns the retry loop should handle.
-      def commit_pending_appearances(pa_payload, character_by_actor_id, location, current_game_time, committed_events)
-        return if pa_payload.empty?
-
-        player = ::Player.first
-        unless player
-          logger.info { "[Genesis::Generator] skipping #{pa_payload.size} pending_appearance(s) — no Player exists yet" }
-          return
-        end
-
-        first_event_id = committed_events.first&.id
-
-        pa_payload.each do |pa|
-          actor = character_by_actor_id[pa["actor_id"]]
-          unless actor
-            logger.warn { "[Genesis::Generator] PA actor_id=#{pa['actor_id'].inspect} not in character_by_actor_id; skipping" }
-            next
-          end
-
-          row = ::PendingAppearance.new(
-            triggered_by_event_id: first_event_id,
-            target_character_id:   player.id,
-            actor_character_id:    actor.id,
-            intent_text:           pa["intent_text"],
-            anchor_location_id:    location.id,
-            scope:                 "city",
-            earliest_at:           current_game_time
-          )
-          if row.save
-            logger.info { "[Genesis::Generator] PA##{row.id} created at #{location.name}: #{actor.name} -> player (\"#{pa['intent_text'][0..60]}...\")" }
-          else
-            logger.warn { "[Genesis::Generator] PA save failed for actor=#{actor.name}: #{row.errors.full_messages.join('; ')}" }
-          end
-        end
       end
 
       # Hydrator output (string-keyed) → BackwardAppender keyword args

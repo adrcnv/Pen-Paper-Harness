@@ -10,21 +10,18 @@ module Harness
     # that scene gets skipped on next launch). Acceptable MVP weakness;
     # future `conversations` table can rebuild from TurnLog by scene_id.
     #
-    # `agendas` (hash: character_id => text) holds at most one per scene — the
-    # player-targeted GOAL/FRICTION seed from Scene::InternalState. It's inert
-    # CONTENT: surfaced as scene context, consumed by nothing here. The
-    # decision of WHEN an NPC acts on an agenda belongs to the (forthcoming)
-    # initiative pass, not to a silent-turn counter on this struct. The old
-    # push-pressure machinery (silent-turn ticking / overdue / push_now) was
-    # removed precisely to avoid two places deciding initiative timing.
-    # `initiative_cooldown` (int) + `initiative_pushes` (char_id => count) are
-    # the Scene::Initiative pass's OWN scene-scoped bookkeeping — cadence gate
-    # and per-agenda push count (for escalation). Not surfaced to query_scene,
-    # not the old per-character pressure that was torn out; this is the single
-    # place the pass tracks timing, and it dies with the scene.
+    # `agendas` (hash: character_id => text) holds ONE PER PRESENT CHARACTER
+    # that has a live angle toward the player — the GOAL/FRICTION seed from
+    # Scene::InternalState. It's inert CONTENT: surfaced as scene context,
+    # consumed by the post-narration Scene::Initiative consumer, which reads
+    # the agendas + the turn's narration and decides whether ONE character acts
+    # this turn. `initiative_cooldown` (int) is the pass's own scene-scoped
+    # arrival-settle gate (skip the turn the scene is entered); `last_initiator`
+    # (char_id) is the previous turn's actor, lightly avoided so the room
+    # rotates. Both die with the scene.
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
-      :combat, :initiative_cooldown, :initiative_pushes,
+      :combat, :initiative_cooldown, :last_initiator,
       keyword_init: true
     ) do
       # Combat sub-mode helpers. `combat` is nil when no fight is running; set
@@ -54,11 +51,10 @@ module Harness
         (internal_state || {})[character_id]
       end
 
-      # Returns this character's scene agenda text, or nil if they have none.
-      # At most ONE NPC in any scene has an agenda — the LLM picks the most
-      # plausible candidate at scene-entry, often picking nobody. Agenda
-      # persists for the whole scene (no per-turn consumption — the
-      # reasoning loop reads it each turn and decides whether to push).
+      # Returns this character's scene agenda text (their standing angle toward
+      # the player), or nil if they have none. Seeded per present character at
+      # scene-entry; persists for the whole scene. The post-narration
+      # Scene::Initiative consumer reads these to decide who, if anyone, acts.
       def agenda_for(character_id)
         (agendas || {})[character_id]
       end

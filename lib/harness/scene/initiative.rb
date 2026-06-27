@@ -1,191 +1,171 @@
+require "json"
+
 module Harness
   module Scene
-    # Character-initiative pass (v2). The world's answer to the initiative gap:
-    # NPCs sit in a local maximum and never act unprompted, so the SYSTEM gives
-    # a present NPC a proactive beat on a cadence. Runs AFTER the player's runner
-    # chain and BEFORE the combat hand-off — a post-chain system pass, NOT a
-    # planner-emitted runner (initiative isn't player intent). It owns ALL the
-    # timing; the old per-character silent-turn pressure was torn out so nothing
-    # competes here.
+    # Character-initiative consumer (v3). The world's answer to the initiative
+    # gap: NPCs never volunteer engagement, so the SYSTEM decides — each turn,
+    # AFTER narration — whether ONE present NPC makes an unprompted move toward
+    # the player, and renders it as its own beat.
     #
-    # WHAT IT VOICES (the v1→v2 fix — v1 fired ~zero because it only ever voiced
-    # the single rare PLAYER-TARGETED agenda, which the player usually engaged,
-    # so it was always excluded):
-    #   - if the chosen NPC has an AGENDA (rare, player-targeted goal/friction) →
-    #     voice that. This is the strong hook, and the ONLY thing that can
-    #     escalate.
-    #   - else → voice their INTERNAL_STATE (every present NPC has one): ambient
-    #     inner life surfaced as a small unprompted beat (a glance, a mutter, an
-    #     aside). NOT player-targeted, so it never reads as "everyone is scheming
-    #     at me" — it just makes the room feel inhabited. The player may bite or
-    #     walk past; the world moved either way.
+    # This is a DEDICATED consumer with a narrow reasoning surface (the thing
+    # the old diffuse "voice a buried agenda string" pass lacked, which is why
+    # it was never felt). It runs post-narration ON PURPOSE: it reads the turn's
+    # actual narration prose, so the beat answers what just happened instead of
+    # firing a stale scene-entry string. Its output is appended to the turn as
+    # its own trailing paragraph — foregrounded, not woven into the main
+    # narration where it used to get lost.
     #
-    # ROTATION: prefer an un-voiced NPC each firing, so the scene's characters
-    # each get a moment rather than one NPC repeating. Ambient beats fire once
-    # per NPC per scene; agenda NPCs may be re-pushed (that's the escalation
-    # ramp). When everyone eligible has been voiced, the pass goes quiet.
+    # Inputs: present characters (each with their seeded agenda toward the
+    # player + internal_state + lens), the player's input, and the full turn
+    # narration. Output: at most one actor's beat, or none. One LLM call.
     #
-    # ESCALATION (the "drunk finally swings") is gated on having a real AGENDA
-    # (player-targeted) + a FIGHT-CAPABLE archetype + the 2nd ignored push. An
-    # internal_state voicing can NEVER escalate — a barkeep grumbling about his
-    # back will not draw steel on you, regardless of cadence. That, plus
-    # fight-capability, is the structural tavern-keep guarantee.
-    #
-    # The beat is committed as a forward propose_event (NPC actor, player
-    # participant); narration — which runs right after — renders it into prose.
-    # No extra LLM call in the common path. Transport-agnostic: the same
-    # committed beat is what a future web/push server pushes between turns.
+    # Pacing: fires every turn after a one-turn arrival-settle; the model's own
+    # "nobody acts" option plus a light don't-repeat-last-actor rotation give
+    # the "often but not always" feel. No combat escalation in this version —
+    # a hostile-kind beat creates pressure as prose; it does not auto-start a
+    # fight (deferred).
     class Initiative
-      # Quiet turns between beats — a beat lands roughly every CADENCE+1 turns.
-      # Armed on the scene's first eligible turn so nobody pipes up the instant
-      # the player walks in. Tunable.
-      CADENCE = 2
+      PROMPT_PATH = Rails.root.join("lib/harness/prompts/scene_initiative.txt")
+      MAX_PRESENT = 8
 
-      # Ignored agenda pushes before a fight-capable NPC escalates to combat.
-      ESCALATE_AFTER = 2
-
-      # Subroles whose archetype plausibly starts violence. Conservative — the
-      # point is to EXCLUDE peaceful townsfolk, not enumerate every fighter.
-      # role_intent (set on encounter hostiles) is the other fight-capable signal.
-      MARTIAL_SUBROLES = %w[
-        bandit brigand raider outlaw thug tough enforcer mercenary sellsword
-        guard soldier watchman knight warrior hunter assassin cutthroat reaver
-      ].freeze
-
-      def self.run(context:, active:, transcript:, logger: Rails.logger)
-        new(context: context, active: active, transcript: transcript, logger: logger).run
+      # Returns the actor Npc who took a beat, plus the beat prose, or nil.
+      #   { npc:, beat:, kind: }  |  nil
+      def self.run(context:, active:, transcript:, narration:, logger: Rails.logger)
+        new(context: context, active: active, transcript: transcript, narration: narration, logger: logger).run
       end
 
-      def initialize(context:, active:, transcript:, logger: Rails.logger)
+      def initialize(context:, active:, transcript:, narration:, logger: Rails.logger)
         @context    = context
         @active     = active
         @transcript = transcript
+        @narration  = narration.to_s
         @logger     = logger
       end
 
-      # Returns the NPC who took a beat, or nil if nothing fired.
       def run
-        return nil unless @active
+        return skip("no active scene") unless @active
+        return skip("in combat") if @active.in_combat?
         player = ::Player.first
-        return nil unless player
+        return skip("no player row") unless player
 
-        pushes = (@active.initiative_pushes ||= Hash.new(0))
-
-        # The player engaging an NPC this turn resets their pressure — the scene
-        # moved on its own; no need to shove a beat in for them.
-        engaged = engaged_ids(player)
-        engaged.each { |id| pushes[id] = 0 }
-
-        return nil unless cadence_ready?
-
-        npc = pick_target(exclude: engaged, player: player, pushes: pushes)
-        return nil unless npc
-
-        agenda = @active.agenda_for(npc.id).to_s.strip
-        count  = pushes[npc.id].to_i
-
-        if !agenda.empty? && (count + 1) >= ESCALATE_AFTER && fight_capable?(npc)
-          fire_escalation(npc, agenda, player)
-          @logger.info { "[Scene::Initiative] #{npc.name} escalates a standing agenda to combat" }
-        elsif !agenda.empty?
-          fire_beat(npc, player, agenda, kind: :agenda)
-          @logger.info { "[Scene::Initiative] #{npc.name} pushes their agenda (push ##{count + 1})" }
-        else
-          state = @active.state_for(npc.id).to_s.strip
-          return nil if state.empty?
-          fire_beat(npc, player, state, kind: :ambient)
-          @logger.info { "[Scene::Initiative] #{npc.name} voices their preoccupation, unprompted" }
+        # Arrival-settle: skip the turn the scene was entered, so nobody pipes
+        # up the instant the player walks in. Armed here, fires every turn after.
+        if @active.initiative_cooldown.nil?
+          @active.initiative_cooldown = 0
+          return skip("arrival-settle (armed; fires next turn)")
         end
 
-        pushes[npc.id] = count + 1
-        @active.initiative_cooldown = CADENCE
-        npc
+        candidates = eligible(player)
+        if candidates.empty?
+          return skip("no eligible candidates (present=#{@active.present_characters.size}, last_initiator=#{@active.last_initiator.inspect})")
+        end
+
+        # Evidence: who's eligible and whether each carries an agenda. An
+        # eligible set with no agendas is the "nothing to act on" condition.
+        with_agenda = candidates.count { |c| !@active.agenda_for(c.id).to_s.strip.empty? }
+        @logger.info { "[Scene::Initiative] deciding over #{candidates.size} candidate(s), #{with_agenda} with agenda: #{candidates.map(&:name).join(', ')}" }
+
+        spec = decide(candidates, player)
+        return skip("decide returned nothing (parse fail or empty)") unless spec
+
+        actor_name = spec["actor"].to_s.strip
+        if actor_name.empty? || actor_name.casecmp?("null")
+          return skip("model chose nobody")
+        end
+
+        npc = candidates.find { |c| c.name == actor_name }
+        return skip("model named a non-candidate: #{actor_name.inspect}") unless npc
+
+        beat = spec["beat"].to_s.strip
+        return skip("empty beat for #{actor_name}") if beat.empty?
+
+        kind = spec["kind"].to_s.strip
+        commit_beat(npc, player, beat, kind)
+        @active.last_initiator = npc.id
+        @logger.info { "[Scene::Initiative] #{npc.name} acts (#{kind.empty? ? 'beat' : kind})" }
+        { npc: npc, beat: beat, kind: kind }
       rescue StandardError => e
         @logger.warn { "[Scene::Initiative] failed: #{e.class}: #{e.message}" }
         nil
       end
 
+      # Log why the pass produced no beat this turn, then return nil. Every
+      # silent exit becomes one greppable INFO line — so a zero-fire session
+      # shows WHERE it stopped (settle / no candidates / model-nobody / invalid)
+      # rather than logging nothing at all.
+      def skip(reason)
+        @logger.info { "[Scene::Initiative] no beat — #{reason}" }
+        nil
+      end
+
       private
 
-      # Cadence gate. nil cooldown = scene's first eligible turn: arm it so the
-      # first beat lands a few turns in, never on arrival. Decrements while
-      # quiet; ready only at zero.
-      def cadence_ready?
-        cd = @active.initiative_cooldown
-        cd = CADENCE if cd.nil?
-        if cd > 0
-          @active.initiative_cooldown = cd - 1
-          return false
+      # Present non-player NPCs eligible to take initiative, excluding the
+      # player, followers, and the previous turn's initiator (light rotation).
+      #
+      # Engaged NPCs (the people the player interacted with THIS turn) are
+      # only DE-PRIORITISED, not excluded: in a crowd we'd rather a different
+      # NPC pipe up than pile a second beat on the one just spoken to, but in
+      # a ONE-ON-ONE the engaged NPC is the only one present — excluding them
+      # made initiative structurally impossible in a two-hander conversation
+      # (playtest evidence: a 4-turn session fired zero beats, two turns of it
+      # a 1-on-1 where the sole NPC was excluded right here). So: prefer the
+      # not-engaged set, but fall back to the engaged one when it's all we have.
+      def eligible(player)
+        present = @active.present_characters.reject do |c|
+          c.id == player.id || follower?(c) || c.id == @active.last_initiator
         end
-        true
+        engaged = engaged_ids(player)
+        not_engaged = present.reject { |c| engaged.include?(c.id) }
+        not_engaged.any? ? not_engaged : present
       end
 
-      # Choose who pipes up. Priority, all over present non-follower NPCs the
-      # player didn't engage this turn:
-      #   1. a fresh (un-voiced) AGENDA holder — the strongest hook;
-      #   2. a fresh ambient NPC — voice their inner life once;
-      #   3. a previously-pushed AGENDA holder — re-push toward escalation.
-      # Ambient NPCs are never re-voiced (no repeating the same mood); when
-      # everyone's had a beat, the pass returns nil and the scene settles.
-      def pick_target(exclude:, player:, pushes:)
-        eligible = @active.present_characters.reject do |c|
-          c.id == player.id || exclude.include?(c.id) || follower?(c)
+      # One structured-emit call: given who's present (+ angle/mood/lens), what
+      # the player did, and the turn narration, pick ≤1 actor and their beat.
+      def decide(candidates, player)
+        present = candidates.first(MAX_PRESENT).map do |c|
+          props = c.properties.is_a?(::Hash) ? c.properties : {}
+          {
+            "name"           => c.name,
+            "subrole"        => c.subrole,
+            "lens"           => props["lens"],
+            "internal_state" => @active.state_for(c.id),
+            "agenda"         => @active.agenda_for(c.id)
+          }.compact
         end
-        return nil if eligible.empty?
 
-        with_agenda, ambient = eligible.partition { |c| @active.agenda_for(c.id).to_s.strip != "" }
+        user = JSON.pretty_generate(
+          "player_input" => @transcript.input,
+          "player_name"  => player.name,
+          "present"      => present,
+          "narration"    => @narration
+        )
 
-        with_agenda.find { |c| pushes[c.id].to_i.zero? } ||
-          ambient.find { |c| pushes[c.id].to_i.zero? } ||
-          with_agenda.find { |c| pushes[c.id].to_i.positive? }
+        raw = ::Harness::CostTracker.in_subsystem(:scene_initiative_consumer) do
+          llm.complete(system: preamble, user: "INPUT:\n#{user}")
+        end
+        @logger.debug { "[Scene::Initiative] raw decide output (#{raw.to_s.size} bytes): #{raw}" }
+        parse_emit(raw)
+      rescue StandardError => e
+        @logger.warn { "[Scene::Initiative] decide failed: #{e.class}: #{e.message}" }
+        nil
       end
 
-      # The structural escalation gate — the tavern-keep guarantee. True only for
-      # NPCs whose archetype or seeded intent plausibly turns violent.
-      def fight_capable?(c)
-        props = c.properties
-        return true if props.is_a?(Hash) && props["role_intent"].to_s.strip != ""
-        sub = c.subrole.to_s.downcase
-        MARTIAL_SUBROLES.any? { |m| sub.include?(m) }
-      end
-
-      def follower?(c)
-        c.properties.is_a?(Hash) && c.properties["following_player"] == true
-      end
-
-      # Commit the NPC's unprompted move as a forward event. Narration renders
-      # it; no LLM call here. Agenda beats are player-targeted; ambient beats are
-      # a small surfaced preoccupation the narrator should render lightly (a
-      # glance, an aside, a mutter) — the player witnesses, isn't cornered.
-      def fire_beat(npc, player, text, kind:)
-        detail, role =
-          if kind == :agenda
-            [ "#{npc.name} takes the initiative toward the player, unprompted — #{text}", "target" ]
-          else
-            [ "#{npc.name} lets a preoccupation surface, unprompted and in passing (a glance, an aside, a mutter) — #{text}", "witness" ]
-          end
-
+      # Commit the NPC's unprompted move as a forward event so it enters the
+      # log and surfaces via query_events(for_holder_id:) later. Narration has
+      # ALREADY run this turn — the beat prose is appended by the turn loop, so
+      # there is no double-render. Hostile/engaging kinds target the player;
+      # a passive 'watch' tags them as a witness.
+      def commit_beat(npc, player, beat, kind)
+        role = kind == "watch" ? "witness" : "target"
         commit("propose_event", {
           "scope"        => "personal",
           "participants" => [
             { "character_id" => npc.id,    "role" => "actor" },
             { "character_id" => player.id, "role" => role }
           ],
-          "trigger" => "unprompted #{kind} beat",
-          "details" => detail
-        })
-      end
-
-      # Escalation: skip the separate beat (start_combat logs its own entry with
-      # the inciting_beat) and enter combat. The turn loop's combat hand-off,
-      # which runs right after this pass, drives it.
-      def fire_escalation(npc, agenda, player)
-        commit("start_combat", {
-          "sides" => [
-            { "name" => "player_party", "members" => [ player.id ] },
-            { "name" => "hostiles",     "members" => [ npc.id ] }
-          ],
-          "inciting_beat" => "#{npc.name} forces a standing grievance to violence against the player — #{agenda}"
+          "trigger" => "unprompted initiative beat",
+          "details" => "#{npc.name} acts toward the player, unprompted — #{beat}"
         })
       end
 
@@ -199,20 +179,45 @@ module Harness
         result
       end
 
+      def follower?(c)
+        c.properties.is_a?(::Hash) && c.properties["following_player"] == true
+      end
+
       # Character ids the player interacted with this turn (participants of any
-      # committed event, or resolve targets/actors). Used to reset pushed
-      # pressure when the scene engaged the NPC on its own.
+      # committed event, or resolve targets/actors) — don't shove a beat in for
+      # an NPC the scene already engaged.
       def engaged_ids(player)
         ids = []
         @transcript.tool_calls.each do |tc|
           parts = tc.dig("result", "participants")
-          ids.concat(parts.map { |p| p["character_id"] }) if parts.is_a?(Array)
+          ids.concat(parts.map { |p| p["character_id"] }) if parts.is_a?(::Array)
           %w[target_id actor_id character_id].each do |k|
             v = tc.dig("result", k) || tc.dig("args", k)
             ids << v if v
           end
         end
         ids.compact.map(&:to_i).uniq.reject { |id| id == player.id }
+      end
+
+      def llm
+        @context.llm_nuance || @context.llm_grunt
+      end
+
+      def preamble
+        @preamble ||= File.read(PROMPT_PATH)
+      end
+
+      def parse_emit(raw)
+        ::Harness::LLM::JsonResponse.parse(raw).then { |o| o.is_a?(::Hash) ? o : nil }
+      rescue StandardError
+        text = raw.to_s
+        s = text.index("{"); e = text.rindex("}")
+        return nil unless s && e && e > s
+        begin
+          JSON.parse(text[s..e])
+        rescue StandardError
+          nil
+        end
       end
     end
   end

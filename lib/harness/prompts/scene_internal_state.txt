@@ -34,48 +34,9 @@ CONSTRAINTS
 - Do NOT introduce new named entities (people, factions, places). Stay flavor.
 - ENGLISH only. Lowercase snake_case is fine for JSON keys; the prose itself uses normal capitalization.
 
-AGENDA — at most ONE NPC has a goal OR a friction this scene
-Agenda is the rare structural hook: an NPC who, this scene, is pushing something involving the player. It comes in two flavors — a GOAL (they want something from the player) or a FRICTION (a confrontational impulse aimed at the player). Most scenes have NEITHER (omit the field entirely). The power of agenda comes from its scarcity — if every NPC has one, "agenda" loses meaning and the scene turns into multiplayer scheming. Default to none; only set one when there's a real reason this NPC is pushing this scene.
-
-WHEN to set an agenda (use STRONG judgment, default to omission):
-- The NPC has a recent_events line that OBVIOUSLY creates a personal stake in the player's presence (a witnessed wrong, an owed debt, a relative or contact known to be in the direction the player came from, a known prior interaction with the player). The stake must be SPECIFICALLY traceable to a recent_events entry — not invented.
-- The NPC's properties / appearance_intent describe something they're actively pursuing AND that pursuit references the player or their direction.
-- A pending consequence has put them on the player's path with intent baked in.
-
-DO NOT invent agendas from generic biographical details. A character with personality "weary matriarch" does not get an agenda — there's no STAKE in the player. A character whose recent_events show only solo activity (mended boots, scouted ahead, sharpened blade) does not get an agenda — none of those involve the player.
-
-DO NOT manufacture relatives, missing persons, debts, or traumas to justify an agenda. If the recent_events don't already establish them, they don't exist.
-
-FRICTION — the second flavor of agenda (situational, no past hook required)
-A FRICTION agenda is a confrontational impulse arising from the NPC's CURRENT state and the SETTING — not from a traceable past event. This is what lets a scene contain a hostile presence (a soused dockhand looking to take it out on someone, a swaggering tough sizing up a stranger, a sore loser spoiling to test the newcomer) rather than a room of helpful question-answerers. Rules:
-- Grounded in the NPC's CURRENT mood / personality / disposition / properties.role_intent PLUS what the setting permits — NOT in recent_events. (This is the ONE agenda type allowed to skip the recent_events hook.)
-- Still RARE, still counts against the one-per-scene cap. A tavern does NOT have a belligerent drunk every visit; most scenes still have NO agenda at all.
-- Only a FITTING NPC: someone whose subrole, drink, mood, or disposition plausibly supports it. A steady barkeep at his own bar is not spoiling for a fight; a drunk, a thug, or someone whose state has curdled might be.
-
-SETTING MODULATES A CARRIED TENDENCY (read the location description)
-Some NPCs carry a tendency in properties.role_intent (e.g. a predatory "ambush; demand coin; attack if refused"). That tendency is NOT a fixed behavior — the SCENE dials it up or down:
-- On the NPC's OWN ground, or a lawless / isolated / private place, a predatory tendency is LIVE: a friction agenda can be the open threat.
-- In a CROWDED, PUBLIC, or ORDERLY place (a busy tavern, a guarded market, a town square), the SAME tendency is SUPPRESSED — acting on it there is suicidal or absurd. It collapses into wariness, a held grudge, a hard sizing-up look, a low word — NOT open aggression. The agenda (if any) reflects only that suppressed form.
-The same person reads completely differently by setting: live and dangerous on their own turf, a quiet watchful presence among armed townsfolk.
-
-WHEN NOT to set one (almost always):
-- The NPC is just at their post (a barkeep on a quiet night, a guard on routine watch). Internal_state covers their flavor.
-- Nothing in recent_events or properties points at the player specifically.
-- You're tempted to "give them something to do." Don't. Most people don't have an agenda when a stranger walks in.
-- The NPC is currently traveling with the player (`properties.following_player == true`). Followers don't have player-targeted agendas — they ARE with the player. Their internal_state should reflect being-with-the-player; their agenda should be omitted.
-
-WHAT an agenda looks like (player-targeted, concrete, achievable in one scene):
-- GOAL shape: <verb the NPC wants to do this scene> + <player-relevant subject> + <traceable hook in recent_events>. The hook must reference a concrete recent_events entry, not generic backstory.
-- FRICTION shape: <confrontational verb> + <the player as target> + <grounded in current mood / disposition / role_intent + setting>. No recent_events hook required for this flavor.
-- Vary the verbs (ask, demand, offer, warn, recruit, refuse, test, watch, provoke, threaten, corner, size up). Vary the subjects.
-- The agenda text MUST NOT regurgitate any phrasing from this prompt's example output. Generate it fresh from the specific NPC's actual data.
-
-CONSTRAINTS on agenda:
-- AT MOST ONE agenda per scene total — across ALL NPCs. Pick the most plausible candidate, or omit entirely.
-- character_name MUST be one of the NPCs in INPUT.characters.
-- TEXT is 20–250 characters, a single sentence describing what the NPC wants from THIS SCENE, with the player as the target / obstacle / subject.
-- Agendas are PLAYER-TARGETED. Don't author "wants to polish the glassware" — that's internal_state in a fancy hat.
-- Don't introduce new named entities (factions, places, people not already in state). Anchor in what the character has experienced.
+AGENDAS — what each character is actually after
+Give EVERY present character a one-line AGENDA: their own active want or friction — something THEY are trying to get, not a service they offer the player. The world is indifferent; these are people with their own business, and the player is a means, an obstacle, a mark, or a curiosity in it — never a guest to be looked after. Self-interested shapes: wants something FROM the player (a job done, coin, news, a debt settled, to be left alone), sizes them up (mark? threat? informant? competition?), or is mid-pursuit of their own end the player has wandered into. A warm greeter is warm because they want the traveler's coin or gossip — not out of hospitality. Ground it in personality, lens, role, recent_events.
+BANNED — the concierge register: "wants to help the newcomer settle in", "wants to make sure they find their way", "wants to share a friendly drink". If the line would fit a hotel front desk, rewrite it as what the character is getting out of the exchange. One short line. Omit ONLY followers (properties.following_player == true). Don't invent debts, relatives, or history not in recent_events. The agenda is the standing want; a SEPARATE step decides if and when they act on it.
 
 EXTRAS — ambient nameless figures
 You ALSO produce 0–4 short descriptions of ambient nameless presences in the scene — background figures the narrator may mention but who are NOT named characters. Examples: "an old fisherman nursing a beer at the corner table", "a young woman knitting by the fire", "two men playing dice in the back". These are pure scene flavor.
@@ -102,7 +63,7 @@ INPUT format
   ]
 }
 
-OUTPUT format (no agenda — the typical case)
+OUTPUT format (agendas keyed by character name, one per present character minus followers)
 {
   "internal_states": {
     "Person A": "Person A is short with customers today — his back aches and the morning delivery hasn't shown.",
@@ -111,16 +72,10 @@ OUTPUT format (no agenda — the typical case)
   "extras": [
     "an old fisherman at the corner table, nursing the same beer for an hour",
     "a young courier woman finishing a meal, satchel still slung across her chest"
-  ]
-}
-
-OUTPUT format (rare — when ONE NPC has an agenda)
-{
-  "internal_states": { ... },
-  "extras": [ ... ],
-  "agenda": {
-    "character_name": "Person A",
-    "text": "<single sentence describing what Person A wants from THIS scene, with the player as target / obstacle / subject. Must be grounded in Person A's actual recent_events — do NOT use this example's wording.>"
+  ],
+  "agendas": {
+    "Person A": "<one short line: what Person A is after right now and how the player figures into it, grounded in their data — do NOT copy this wording>",
+    "Person B": "<what Person B is after; self-interested, not a service to the player>"
   }
 }
 
@@ -130,6 +85,5 @@ HARD RULES
 - EVERY character in INPUT.characters MUST appear as a key in internal_states.
 - Each internal_states value is a non-empty string between 10 and 400 characters.
 - "extras" is a top-level array of 0–4 strings, each 10–200 characters. Empty array is fine for genuinely-empty places. For populated-place-with-no-named-characters, lean toward 2–4.
-- "agenda" is OPTIONAL. If present, it is an object {"character_name": <one of INPUT.characters by name>, "text": <string 20-250 chars>}. At most ONE agenda per scene; do not output an array.
-- Most scenes should OMIT the agenda field entirely. Only include when a specific NPC has a real, player-targeted goal grounded in their recent_events or properties.
-- No extra fields in the output beyond internal_states, extras, and (optional) agenda.
+- "agendas" is an object keyed by character name, one player-targeted line (up to 250 chars) per present character. Followers and anyone with a clear reason to ignore the player may be omitted; otherwise cover everyone.
+- No extra fields in the output beyond internal_states, extras, and (optional) agendas.

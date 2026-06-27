@@ -2,8 +2,7 @@ module Harness
   module Character
     # Single seam for character creation. Replaces scattered Npc.create! /
     # Npc.find_or_create_by! calls across Genesis, Scene::Materializer,
-    # Tools::ProposeCharacter, Scene::PendingAppearanceResolver, and
-    # CatchUp::Generator. Every fresh character gets a level + six stats
+    # Tools::ProposeCharacter, and CatchUp::Generator. Every fresh character gets a level + six stats
     # materialized at creation time, conditioned on the prose context the
     # caller hands over.
     #
@@ -31,8 +30,7 @@ module Harness
         # can opt into materialization explicitly.
         #
         # prose_context: optional freeform string (event narratives, the
-        # spawning prompt's reasoning, an appearance_intent). Routed to
-        # the materializer's user message.
+        # spawning prompt's reasoning). Routed to the materializer's user message.
         #
         # dormant: when true, sets properties.dormant = true so the row is
         # excluded from present_characters / recent_actors until something

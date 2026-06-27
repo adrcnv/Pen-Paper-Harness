@@ -7,16 +7,14 @@ RSpec.describe Harness::Scene::InternalState do
   let(:maren) { Npc.create!(name: "Maren", subrole: "barkeep", location: tavern) }
   let(:korr)    { Npc.create!(name: "Korr",    subrole: "stranger", location: tavern) }
 
-  def good_output(names, extras: [], agenda: nil)
+  def good_output(names, extras: [], agendas: nil)
     body = {
       "internal_states" => names.each_with_object({}) { |n, h|
         h[n] = "#{n} is in some plausible internal mood right now today."
       },
       "extras" => extras
     }
-    if agenda
-      body["agenda"] = agenda
-    end
+    body["agendas"] = agendas if agendas
     body.to_json
   end
 
@@ -71,32 +69,32 @@ RSpec.describe Harness::Scene::InternalState do
     expect(out.extras).to eq([ "an old fisherman nursing a beer at the corner table", "a courier woman finishing a meal" ])
   end
 
-  it "maps an agenda from character_name to character_id" do
+  it "maps per-character agendas from name to character_id" do
     maren; korr
     llm = StubLLM.new { |_p|
-      good_output([ "Maren", "Korr" ], agenda: {
-        "character_name" => "Maren",
-        "text"           => "wants to ask the player about the docks; her brother went missing last week and the player just walked in"
+      good_output([ "Maren", "Korr" ], agendas: {
+        "Maren" => "wants to ask the player about the docks",
+        "Korr"  => "sizes the stranger up, distrustful"
       })
     }
     out = described_class.new(llm_client: llm, logger: logger)
                          .generate(location: tavern, characters: [ maren, korr ])
-    expect(out.agendas).to eq({ maren.id => "wants to ask the player about the docks; her brother went missing last week and the player just walked in" })
+    expect(out.agendas).to eq(
+      maren.id => "wants to ask the player about the docks",
+      korr.id  => "sizes the stranger up, distrustful"
+    )
   end
 
-  it "carries a FRICTION agenda (hostile, no recent_events hook) through unchanged" do
-    # move 2: a confrontational agenda is a first-class agenda. The plumbing
-    # must not special-case or reject hostile text — it's just an agenda string.
+  it "carries a hostile/friction agenda through unchanged (just a string)" do
     maren
     llm = StubLLM.new { |_p|
-      good_output([ "Maren" ], agenda: {
-        "character_name" => "Maren",
-        "text"           => "drunk and spoiling for a fight, sizing up the newcomer for an excuse"
+      good_output([ "Maren" ], agendas: {
+        "Maren" => "drunk and spoiling for a fight, sizing up the newcomer"
       })
     }
     out = described_class.new(llm_client: llm, logger: logger)
                          .generate(location: tavern, characters: [ maren ])
-    expect(out.agendas).to eq({ maren.id => "drunk and spoiling for a fight, sizing up the newcomer for an excuse" })
+    expect(out.agendas).to eq({ maren.id => "drunk and spoiling for a fight, sizing up the newcomer" })
   end
 
   it "agendas default to {} when LLM omits the field" do

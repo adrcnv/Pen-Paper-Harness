@@ -38,6 +38,22 @@ RSpec.describe Harness::Description::Hydrator do
       .to raise_error(described_class::InvalidOutput, /personality length=5 must be between/)
   end
 
+  it "accepts a compact trait-list personality below the old 30-char prose floor" do
+    out = hydrate("personality" => "wary, terse, dry", "appearance" => good["appearance"])
+    expect(out[:personality]).to eq("wary, terse, dry")
+  end
+
+  it "still holds appearance to the prose floor (30)" do
+    expect { hydrate("personality" => "wary, terse, dry", "appearance" => "tall, lean") }
+      .to raise_error(described_class::InvalidOutput, /appearance length=10 must be between 30 and 400/)
+  end
+
+  it "rejects a personality over its 120 ceiling even when under the prose 400" do
+    long_traits = "wary, " * 30 # ~180 chars
+    expect { hydrate("personality" => long_traits, "appearance" => good["appearance"]) }
+      .to raise_error(described_class::InvalidOutput, /personality length=\d+ must be between 10 and 120/)
+  end
+
   it "rejects too-long fields" do
     long = "a" * 500
     expect { hydrate("personality" => long, "appearance" => good["appearance"]) }

@@ -35,21 +35,6 @@ INPUT format
   "regional_context": [<optional summaries of regional+ events near this place>]
 }
 
-PENDING APPEARANCES (optional, rare, structurally grounded)
-A "pending appearance" is a live thread one of the genesis characters now has, pointing at the player who's about to walk in. It's how the place feels populated by people with reasons to act: a Captain who's spent three months hoping someone's brought news of his missing son will look up sharply when the player enters; a debt collector with an old grievance will take note of any traveler matching a description.
-
-When the historical events you just generated would plausibly leave a character with an unresolved goal that any new traveler in town might bear on, you may emit ONE pending_appearance referencing one of your `characters` ids. Most genesis clusters should NOT — small founding moments and weather-the-storm events usually don't carry forward a character pointed at strangers. The asymmetry is the point: most places are passive backdrops, occasional places have a hook.
-
-WHEN to emit a pending_appearance:
-- A character in the cluster has an unfinished thing the events left them with (a missing kin, an unpaid debt, an unfulfilled prophecy, an incomplete contract, a vendetta with a faceless target).
-- That unfinished thing is the kind of thread a stranger could plausibly bear on — they might have news, they might match a description, they might be the courier the character has been waiting for.
-- The thread is concrete and scene-sized: the character can probe the player in conversation. Not "must be true love returned from the dead."
-
-WHEN NOT to emit one:
-- The cluster is purely about a place's geography or weather (a hill named after a cattle path, a flood that reshaped the river bend).
-- Every character in the cluster died in the events. Pending appearances need a live actor.
-- You're tempted to make every place have a hook so the world feels active. Don't. Most places are quiet.
-
 OUTPUT format
 {
   "characters": [
@@ -69,12 +54,6 @@ OUTPUT format
       ]
     },
     ...
-  ],
-  "pending_appearances": [
-    {
-      "actor_id": "<must match an id in characters>",
-      "intent_text": "<20-250 char description of what this character wants from any new traveler — concrete, scene-sized, in present tense>"
-    }
   ]
 }
 
@@ -87,5 +66,3 @@ HARD RULES
 - Do NOT use "actor_name" — that field is retired. The engine substitutes the real name during commit; the LLM only ever sees ids.
 - In `details.summary` and `details.narrative`, refer to characters by ROLE ("the founder", "the scribe"), NOT by ids OR by invented names. The player reads narrative prose; ids are engine-internal, names are mechanical, only roles read naturally.
 - game_time MUST be strictly less than CURRENT_GAME_TIME.
-- "pending_appearances" is OPTIONAL and at most ONE entry. Omit the field entirely when no character carries forward a thread.
-- A pending_appearance's actor_id MUST exactly match a `characters[].id`.

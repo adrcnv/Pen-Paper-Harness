@@ -14,8 +14,9 @@ module Harness
     #
     # Player rows are excluded — internal state is for NPCs.
     class InternalState
-      # agendas is {character_id => agenda_text}. At most one entry per scene
-      # (hydrator enforces). Most scenes will have an empty agendas hash.
+      # agendas is {character_id => agenda_text}, seeded per present character
+      # (their angle toward the player this scene). Some characters have none.
+      # The post-narration initiative consumer reads these to decide who acts.
       Result = Struct.new(:internal_state, :agendas, :extras, keyword_init: true)
 
       attr_reader :logger
@@ -67,11 +68,17 @@ module Harness
           out[npc.id] = prose
         end
 
-        agendas_by_id = {}
-        if hydrated.agenda
-          npc = by_name[hydrated.agenda.character_name]
-          agendas_by_id[npc.id] = hydrated.agenda.text if npc
+        agendas_by_id = hydrated.agendas.each_with_object({}) do |(name, text), out|
+          npc = by_name[name]
+          out[npc.id] = text if npc
         end
+
+        # Evidence for the initiative pass: how many of the present NPCs got an
+        # agenda (empty agendas = nothing for Scene::Initiative to act on, the
+        # "no agenda felt" failure). INFO so it shows without --log-level=debug;
+        # the full text at DEBUG.
+        logger.info { "[Scene::InternalState] agendas #{agendas_by_id.size}/#{npcs.size} present at #{location.name}: #{agendas_by_id.empty? ? '(none)' : hydrated.agendas.keys.join(', ')}" }
+        logger.debug { "[Scene::InternalState] agenda text: #{hydrated.agendas.inspect}" }
 
         Result.new(internal_state: state_by_id, agendas: agendas_by_id, extras: hydrated.extras)
       end

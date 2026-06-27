@@ -14,6 +14,14 @@ module Harness
       MIN_LEN = 30
       MAX_LEN = 400
 
+      # Per-field length bounds. personality is a compact trait list now
+      # (not prose), so it gets a shorter floor + ceiling; appearance stays
+      # prose. Falls back to MIN_LEN/MAX_LEN for any unlisted field.
+      FIELD_BOUNDS = {
+        "personality" => [ 10, 120 ],
+        "appearance"  => [ 30, 400 ]
+      }.freeze
+
       def self.hydrate(llm_output:)
         new(llm_output).hydrate
       end
@@ -59,8 +67,9 @@ module Harness
           @errors << "#{name} must be a string"
         else
           stripped = v.strip
-          if stripped.length < MIN_LEN || stripped.length > MAX_LEN
-            @errors << "#{name} length=#{stripped.length} must be between #{MIN_LEN} and #{MAX_LEN}"
+          min, max = FIELD_BOUNDS.fetch(name, [ MIN_LEN, MAX_LEN ])
+          if stripped.length < min || stripped.length > max
+            @errors << "#{name} length=#{stripped.length} must be between #{min} and #{max}"
           end
         end
       end

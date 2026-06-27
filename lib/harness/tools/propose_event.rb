@@ -22,7 +22,6 @@ module Harness
     # `resolve` instead — backward-append does not exist for stat checks.
     class ProposeEvent < Base
       VALID_SCOPES = ::Event::ALLOWED_SCOPES
-      PENDING_APPEARANCE_SCOPES = ::PendingAppearance::ALLOWED_SCOPES
 
       def self.tool_name
         "propose_event"
@@ -31,7 +30,7 @@ module Harness
       def self.schema
         {
           "name"        => tool_name,
-          "description" => "Append a narrative event that should persist past the current scene — promises, threats, arrivals, departures, secrets revealed, witnessed crimes, decisions with consequence. Do NOT use for flavor (walking, looking, ordering a drink); narration carries those. FORWARD mode: omit game_time, event happens now. BACKWARD mode (NARRATIVE SHIFT): pass game_time < current scene time to invent a past fact. Backward mode validates against later events. Scope: personal/local/regional/kingdom/world. Every participant MUST be a character_id pointing at an existing Character row — class-2 (actor_name) participants are retired; call propose_character first if a named figure needs to be introduced. Defaults location to current scene. Attach `creates_pending_appearance` to schedule a future consequence.",
+          "description" => "Append a narrative event that should persist past the current scene — promises, threats, arrivals, departures, secrets revealed, witnessed crimes, decisions with consequence. Do NOT use for flavor (walking, looking, ordering a drink); narration carries those. FORWARD mode: omit game_time, event happens now. BACKWARD mode (NARRATIVE SHIFT): pass game_time < current scene time to invent a past fact. Backward mode validates against later events. Scope: personal/local/regional/kingdom/world. Every participant MUST be a character_id pointing at an existing Character row — class-2 (actor_name) participants are retired; call propose_character first if a named figure needs to be introduced. Defaults location to current scene.",
           "input_schema" => {
             "type"       => "object",
             "properties" => {
@@ -53,22 +52,7 @@ module Harness
               "location_id" => { "type" => "integer", "description" => "optional location override; defaults to current scene" },
               "game_time"   => { "type" => "integer", "description" => "OPTIONAL. Omit for forward-append (event happens now). Set to a value LESS than current game_time to backward-append (narrative shift inventing a past event). Backward mode triggers contradiction validation against later events." },
               "time_minutes" => { "type" => "integer", "description" => "FORWARD MODE ONLY: in-fiction minutes this event occupies. Defaults to 1 if omitted. Set higher for events that span time (a long story = 30, a heated argument = 15, a quiet shared meal = 45). Ignored in backward mode (past events don't advance the current clock)." },
-              "references_event_id" => { "type" => "integer", "description" => "OPTIONAL. Mark this event as a SUPPLEMENT elaborating on an existing event without modifying it (events are append-only). Both events live and are returned together by query_events(references_event_id=<original>). Use when an NPC reveals new detail about a prior event, when a witness/participant needs to be added to a committed event, or when a consequence becomes visible later. Don't use to invent contradictions to a prior event — that's a backward propose_event with full validation." },
-              "creates_pending_appearance" => {
-                "type" => "object",
-                "description" => "OPTIONAL. Schedule a future arrival because of THIS event — a wronged party, a debt collector, a faction emissary. Fires the next time the target is at a matching scope/location at-or-after earliest_at.",
-                "properties" => {
-                  "target_character_id" => { "type" => "integer", "description" => "Whose scene the arrival fires into. Usually the player (INPUT.player.id)." },
-                  "intent_text"         => { "type" => "string",  "description" => "One-sentence prose describing what they want ('demands repayment of the dead merchant\\'s debt'). Surfaces in their internal-state on arrival." },
-                  "scope"               => { "type" => "string", "enum" => PENDING_APPEARANCE_SCOPES, "description" => "local=anchor only; city=anchor + sublocations of same city; anywhere=any location. Default: city." },
-                  "earliest_at_offset_minutes" => { "type" => "integer", "description" => "Minutes until firable. Default 60. Use 1440 (day) for slow-burn, 5-30 for immediate followups." },
-                  "anchor_location_id"  => { "type" => "integer", "description" => "Where the consequence lives. Defaults to this event's location." },
-                  "actor_character_id"  => { "type" => "integer", "description" => "Specific existing character who shows up. Mutually exclusive with faction-only mode (origin_faction_id)." },
-                  "origin_character_id" => { "type" => "integer", "description" => "OPTIONAL. The character behind the arrival if known. Mutually exclusive with origin_faction_id." },
-                  "origin_faction_id"   => { "type" => "integer", "description" => "REQUIRED for faceless mode (no actor specifier). Spawns a fresh faction member at fire time. Mutually exclusive with origin_character_id." }
-                },
-                "required" => [ "target_character_id", "intent_text" ]
-              }
+              "references_event_id" => { "type" => "integer", "description" => "OPTIONAL. Mark this event as a SUPPLEMENT elaborating on an existing event without modifying it (events are append-only). Both events live and are returned together by query_events(references_event_id=<original>). Use when an NPC reveals new detail about a prior event, when a witness/participant needs to be added to a committed event, or when a consequence becomes visible later. Don't use to invent contradictions to a prior event — that's a backward propose_event with full validation." }
             },
             "required" => [ "scope", "trigger" ]
           }
@@ -177,83 +161,10 @@ module Harness
           )
         end
 
-        if (pa_args = args["creates_pending_appearance"]).is_a?(Hash) && result["event_id"]
-          pa_outcome = create_pending_appearance(pa_args, result["event_id"], location, context)
-          result["pending_appearance"] = pa_outcome
-        end
-
         result
       end
 
       private
-
-      def create_pending_appearance(pa_args, event_id, event_location, context)
-        target_id = pa_args["target_character_id"]
-        intent    = pa_args["intent_text"]
-        return { "error" => "target_character_id required" } unless target_id.is_a?(Integer)
-        return { "error" => "intent_text required (non-empty string)" } unless intent.is_a?(String) && !intent.strip.empty?
-
-        target = ::Character.find_by(id: target_id)
-        return { "error" => "no character with id=#{target_id}" } unless target
-
-        scope = pa_args["scope"] || "city"
-        unless PENDING_APPEARANCE_SCOPES.include?(scope)
-          return { "error" => "scope must be one of: #{PENDING_APPEARANCE_SCOPES.join(', ')}" }
-        end
-
-        anchor = if pa_args["anchor_location_id"]
-          loc = ::Location.find_by(id: pa_args["anchor_location_id"])
-          return { "error" => "anchor_location_id #{pa_args['anchor_location_id']} not found" } unless loc
-          loc
-        else
-          event_location
-        end
-
-        offset = pa_args["earliest_at_offset_minutes"]
-        offset = 60 unless offset.is_a?(Integer) && offset >= 0
-        earliest_at = (context.game_time || 0) + offset
-
-        actor_char_id = pa_args["actor_character_id"]
-        origin_char   = pa_args["origin_character_id"]
-        origin_fac    = pa_args["origin_faction_id"]
-
-        if pa_args["actor_name"]
-          return { "error" => "pending_appearance.actor_name is no longer supported — class-2 strings retired post-Phase-2. Pass actor_character_id (call propose_character first if needed)." }
-        end
-
-        if actor_char_id && !::Character.exists?(id: actor_char_id)
-          return { "error" => "actor_character_id #{actor_char_id} not found" }
-        end
-        if origin_char && !::Character.exists?(id: origin_char)
-          return { "error" => "origin_character_id #{origin_char} not found" }
-        end
-        if origin_fac && !::Faction.exists?(id: origin_fac)
-          return { "error" => "origin_faction_id #{origin_fac} not found" }
-        end
-
-        pa = ::PendingAppearance.new(
-          triggered_by_event_id: event_id,
-          target_character_id:   target.id,
-          origin_character_id:   origin_char,
-          origin_faction_id:     origin_fac,
-          actor_character_id:    actor_char_id,
-          intent_text:           intent.strip,
-          anchor_location_id:    (scope == "anywhere" ? nil : anchor&.id),
-          scope:                 scope,
-          earliest_at:           earliest_at
-        )
-
-        if pa.save
-          {
-            "id"          => pa.id,
-            "target_id"   => pa.target_character_id,
-            "scope"       => pa.scope,
-            "earliest_at" => pa.earliest_at
-          }
-        else
-          { "error" => pa.errors.full_messages.join("; ") }
-        end
-      end
 
       def forward_append(context:, scope:, location:, details:, participants:, time_minutes:, references_event_id: nil)
         ::Harness::Clock.advance(context, minutes: time_minutes, reason: "propose_event(forward)")

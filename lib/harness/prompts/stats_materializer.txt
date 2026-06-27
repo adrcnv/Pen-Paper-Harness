@@ -21,8 +21,8 @@ INPUT format
 {
   "name":       "<character name>",
   "subrole":    "<archetype, e.g. barkeep, guard, smith, scholar, bandit>",
-  "properties": <object: free-text attributes — personality, physique, background, faction_id, appearance_intent, etc>,
-  "context":    "<optional: prose that established this character — event narratives they participated in, the materializer's reason for spawning them, the appearance_intent text>"
+  "properties": <object: free-text attributes — personality, physique, background, faction_id, etc>,
+  "context":    "<optional: prose that established this character — event narratives they participated in, the materializer's reason for spawning them>"
 }
 
 The INPUT block may be followed by a "SCENARIO:" line that injects an outlier — "this dock hand is a retired archmage who can throw fireballs," "this barkeep is exiled nobility from a fallen kingdom." When a scenario fires, take it seriously: it overrides the apparent subrole's level baseline. When no scenario is present, generate ordinary stats appropriate to the subrole and context.

@@ -1,12 +1,12 @@
-You are populating a sublocation with characters who belong there. There are two sources of characters: existing rows you can REUSE here, or fresh strangers you can SPAWN.
+You are populating a sublocation with characters who belong there. There are two sources of characters: dormant historicals you can WAKE here, or fresh strangers you can SPAWN.
 
 Input:
 - LOCATION: where you're populating. Name, description, and any kind/subrole hint.
 - PARENT: the containing location (usually a city). Name and description, for flavor context. May be null for top-level locations.
 - ALREADY_PRESENT: characters already at this location. You may NOT duplicate their names.
-- CANDIDATES: existing characters living at this sublocation's parent city or its other sublocations. For each: their character_id, name, current subrole, `dormant` flag, and most recent events. You may REUSE them — relocating them into this scene with an updated subrole — if they plausibly fit the new role. `dormant: true` candidates are named historicals from past events (genesis backstory) who haven't surfaced in play yet; reusing one wakes them. `dormant: false` candidates are already-active local NPCs.
+- CANDIDATES: dormant historicals living in this city — named figures from past events (genesis backstory) who haven't surfaced in play yet. For each: their character_id, name, current subrole, and most recent events. You may WAKE one (the "reuse" array) — relocating them into this scene with a subrole — if their events suggest they could plausibly still be here. (Active, already-seen NPCs are NOT in this list and must never be relocated; the world moves them on its own.)
 - TARGET_COUNT: total characters we'd like present at this location after materialization (already counts ALREADY_PRESENT).
-- SLOTS_TO_FILL: TARGET_COUNT - ALREADY_PRESENT.count. The upper bound for new characters (reuse + spawn combined).
+- SLOTS_TO_FILL: TARGET_COUNT - ALREADY_PRESENT.count. The upper bound for new characters (wake + spawn combined).
 
 Output MUST be a JSON object of this exact shape:
 {
@@ -34,11 +34,11 @@ HARD RULES:
 - "reuse" and "spawn" are arrays. Both MAY be empty.
 - Every "character_id" in "reuse" MUST appear in CANDIDATES. No inventing reuses.
 - Do NOT supply a "name" field for spawn entries. The engine assigns culturally-coherent names mechanically from the kingdom's name pool. Any name you write is ignored. Describe the character's role via "subrole" + "properties" only. This is the load-bearing rule that keeps the world out of generic-fantasy-name purgatory (no more Elara, no more Silas).
-- "subrole" is a non-empty free-text archetype string ("barkeep", "guard", "drunk_patron", "smith"). For reuse, this OVERWRITES the candidate's current subrole — only set if the new role differs meaningfully.
-- "properties" is an object. May contain free-text fields like "personality", "disposition", "mood". May be an empty object. For reuse, properties MERGE into the existing character's properties; for spawn, they're the initial values. The system also clears `dormant` on reuse automatically — you do not need to manage it.
+- "subrole" is a non-empty free-text archetype string ("barkeep", "guard", "drunk_patron", "smith"). For a woken historical, this sets the role they take up now.
+- "properties" is an object. May contain free-text fields like "personality", "disposition", "mood". May be an empty object. For a woken historical, properties MERGE into the existing character's properties; for spawn, they're the initial values. The system clears `dormant` on wake automatically — you do not need to manage it.
 - Combined count of reuse + spawn MUST NOT exceed SLOTS_TO_FILL.
-- Preference order: REUSE-ACTIVE > REUSE-DORMANT > SPAWN. An already-active local NPC with rich history at this city is the best fit; a dormant historical who plausibly could still be here is the next-best; spawning fresh is the last resort. The point: every named historical from genesis has a real row, so the player can find them by walking into the right place — that only works if you actually pick them when they fit.
-- Consider each candidate's history when deciding. If their events suggest they died, were exiled, or moved on, do NOT reuse them. Leave them as-is. Dormant historicals especially — only wake one if their events are recent enough that they could plausibly still be around (the founder is still alive, the missing courier never returned, the journeyman who left for the capital is back in town).
+- Preference order: WAKE-DORMANT > SPAWN. A dormant historical who plausibly could still be here is the better fit; spawning fresh is the fallback. The point: every named historical from genesis has a real row, so the player can find them by walking into the right place — that only works if you actually wake them when they fit.
+- Consider each candidate's history when deciding. Only wake one if their events are recent enough that they could plausibly still be around (the founder is still alive, the missing courier never returned, the journeyman who left for the capital is back in town). If their events suggest they died, were exiled, or moved on, do NOT wake them — leave them dormant.
 - Characters should fit LOCATION's description and kind. A tavern gets a barkeep and patrons, not a guild treasurer. Guildhouses get guild members. Warehouses get laborers or guards.
 
 Not every slot must be filled. A quiet, remote, or depopulated sublocation may legitimately have only one or two characters even if SLOTS_TO_FILL is higher. Choose what fits the scene. Return ONLY the JSON object. No markdown, no explanation.

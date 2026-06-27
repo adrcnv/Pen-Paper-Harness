@@ -181,6 +181,29 @@ RSpec.describe Harness::Turn::Loop do
     end
   end
 
+  describe "player identity in narration" do
+    # Regression: the narration payload had no player identity, so when an NPC
+    # addressed the player aloud the model borrowed a present character's name
+    # ("Maud, if you're hunting ghosts," Maud says — to the player). The player
+    # is now surfaced so dialogue can name them correctly.
+    let(:loop_obj) {
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
+      described_class.new(adapter: adapter, context: context)
+    }
+
+    it "surfaces the player's name (and gender) to the narration step" do
+      player.update!(properties: (player.properties || {}).merge("gender" => "female"))
+      loop_obj.instance_variable_get(:@scene_manager).ensure_entered
+      transcript = Harness::Turn::Transcript.new(input: "ask about Harek", location_id: tavern.id)
+
+      msg = loop_obj.send(:narration_user_message, "ask about Harek", transcript)
+
+      expect(msg).to include("\"player\"")
+      expect(msg).to include("\"name\": \"Hero\"")
+      expect(msg).to include("\"gender\": \"female\"")
+    end
+  end
+
   describe "off-scene creation partitioning for narration" do
     # Regression: "look for a tavern" makes a runner create a sublocation +
     # its proprietor + a kickoff event at the NEW location while the player

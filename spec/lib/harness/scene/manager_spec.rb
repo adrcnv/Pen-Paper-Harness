@@ -162,12 +162,15 @@ RSpec.describe Harness::Scene::Manager do
       expect(materializer_double).to have_received(:materialize).with(location: wilderness, target_count: be_between(3, 6))
     end
 
-    it "fires Materializer for wilderness_leaf-tagged top-level locations (player-proposed leaves + encounter spawns)" do
+    it "does NOT staff wilderness_leaf locations with a materialized cast (they're transient encounter spots)" do
+      # Wilderness leaves are not settlements — staffing them spawned homeless
+      # rows in the middle of nowhere. Population there comes from the LLM's
+      # ambient extras (materialized on engagement) + the travel encounter-spawner.
       leaf = Location.create!(name: "Old Mill Pond Hermitage", description: "a quiet hermitage", x: 12.0, y: 5.0, biome: "lowland", properties: { "kind" => "wilderness_leaf" })
       context.player_location = leaf
       mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
       mgr.ensure_entered
-      expect(materializer_double).to have_received(:materialize).with(location: leaf, target_count: be_between(2, 4))
+      expect(materializer_double).not_to have_received(:materialize)
     end
 
     it "skips Materializer when llm_grunt is missing" do

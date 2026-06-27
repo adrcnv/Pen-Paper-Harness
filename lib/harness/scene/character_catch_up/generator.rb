@@ -78,7 +78,6 @@ module Harness
           parts = []
           parts << props["personality"] if props["personality"].is_a?(String)
           parts << props["mood"]        if props["mood"].is_a?(String)
-          parts << props["appearance_intent"] if props["appearance_intent"].is_a?(String)
           parts.compact.join("; ")
         end
 

@@ -29,15 +29,44 @@ module Harness
       RIVER_GLYPH = "+".freeze
       LAKE_GLYPH  = "o".freeze
 
-      def self.render(map, width: DEFAULT_WIDTH)
-        grid = map.geography ? build_grid_with_terrain(map, width) : build_grid_blank(map, width)
-        draw_rivers!(grid, map, width) if map.geography
-        place_cities!(grid, map, width)
+      # Terrain → ANSI foreground code (only applied when color: true). Chosen to
+      # read at a glance: water blue, lowland greens, wetlands cyan, uplands
+      # brown/grey, mountains bright white. Rivers/lakes/cities painted separately.
+      TERRAIN_COLOR = {
+        sea:            34,  # blue
+        coastal:        33,  # sand/yellow
+        river_valley:   32,  # green
+        marsh:          36,  # cyan (wetland)
+        floodplain:     32,  # green
+        grassland:      92,  # bright green
+        moor:           33,  # brown/yellow
+        forest_lowland: 32,  # green
+        forest_upland:  32,  # green (the t/T glyph carries the elevation)
+        crags:          90,  # grey
+        mountain:       97   # bright white
+      }.freeze
+      RIVER_COLOR = 96  # bright cyan
+      LAKE_COLOR  = 94  # bright blue
+      CITY_COLOR  = 93  # bold bright yellow — markers pop against terrain
+
+      def self.render(map, width: DEFAULT_WIDTH, color: false)
+        grid = map.geography ? build_grid_with_terrain(map, width, color) : build_grid_blank(map, width)
+        draw_rivers!(grid, map, width, color) if map.geography
+        place_cities!(grid, map, width, color)
         legend = build_legend(map)
         ([ horizontal_rule(width) ] + grid.map(&:join) + [ horizontal_rule(width) ] + legend).join("\n")
       end
 
-      def self.build_grid_with_terrain(map, width)
+      # Wrap a glyph in an ANSI SGR sequence when color is on; otherwise return
+      # it bare. `bold` adds intensity (used for city markers). Zero display
+      # width, so the fixed-width horizontal rule still lines up.
+      def self.paint(glyph, code, color, bold: false)
+        return glyph unless color
+        prefix = bold ? "\e[1;#{code}m" : "\e[#{code}m"
+        "#{prefix}#{glyph}\e[0m"
+      end
+
+      def self.build_grid_with_terrain(map, width, color = false)
         geo    = map.geography
         scale  = map.size.to_f / width
         height = (map.size.to_f / scale / 2).round
@@ -46,13 +75,13 @@ module Harness
             x = col * scale
             y = row * scale * 2
             t = Terrain.at(geo: geo, x: x, y: y)
-            TERRAIN_GLYPH.fetch(t, ".")
+            paint(TERRAIN_GLYPH.fetch(t, "."), TERRAIN_COLOR.fetch(t, 37), color)
           end
         end
       end
 
       # Rasterize each river polyline + lake endpoint onto the grid.
-      def self.draw_rivers!(grid, map, width)
+      def self.draw_rivers!(grid, map, width, color = false)
         height = grid.size
         scale  = map.size.to_f / width
         map.geography.rivers.each do |river|
@@ -60,13 +89,13 @@ module Harness
             col = (x / scale).round
             row = (y / (scale * 2)).round
             next unless row.between?(0, height - 1) && col.between?(0, width - 1)
-            grid[row][col] = RIVER_GLYPH
+            grid[row][col] = paint(RIVER_GLYPH, RIVER_COLOR, color)
           end
           if river.ends_in == :lake
             lx, ly = river.mouth
             col = (lx / scale).round
             row = (ly / (scale * 2)).round
-            grid[row][col] = LAKE_GLYPH if row.between?(0, height - 1) && col.between?(0, width - 1)
+            grid[row][col] = paint(LAKE_GLYPH, LAKE_COLOR, color) if row.between?(0, height - 1) && col.between?(0, width - 1)
           end
         end
       end
@@ -77,13 +106,13 @@ module Harness
         Array.new(height) { Array.new(width, ".") }
       end
 
-      def self.place_cities!(grid, map, width)
+      def self.place_cities!(grid, map, width, color = false)
         height = grid.size
         scale  = map.size.to_f / width
         map.cities.each do |c|
           col = (c.x / scale).round.clamp(0, width - 1)
           row = (c.y / (scale * 2)).round.clamp(0, height - 1)
-          grid[row][col] = kingdom_marker(c.kingdom_id)
+          grid[row][col] = paint(kingdom_marker(c.kingdom_id), CITY_COLOR, color, bold: true)
         end
       end
 

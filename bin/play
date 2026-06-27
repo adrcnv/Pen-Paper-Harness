@@ -14,6 +14,7 @@
 #   /map               → render the world map (worldgen-rooted saves only)
 
 require "optparse"
+require "reline" # line editing + arrow-key history at the input prompt
 
 # Load .env at the project root if present. Tiny shell-style parser:
 # KEY=value per line, # comments ignored, blank lines ignored, optional quoted
@@ -385,6 +386,12 @@ if debug_log_path
 end
 puts "  /quit                       exit"
 puts
+if $stdout.tty?
+  k = "#{Harness::Render::KNOWN_COLOR}known name#{Harness::Render::RESET}"
+  q = "#{Harness::Render::QUOTE_COLOR}spoken text#{Harness::Render::RESET}"
+  puts "In narration: #{k} = a person/place the world has a row for; #{q} = dialogue."
+  puts
+end
 
 loop do
   # Drain any pending ability picks (level-ups from the previous turn).
@@ -396,17 +403,18 @@ loop do
     Harness::Abilities::Picker.drain_pending!(current_player)
   end
 
-  print "> "
-  $stdout.flush
+  # Reline gives arrow-up history + full in-line editing (move/insert/delete
+  # mid-line) at the prompt — the plain $stdin.gets had neither. `true` adds the
+  # entered line to history. Returns nil on EOF (Ctrl-D), raises on Ctrl-C.
   begin
-    input = $stdin.gets
+    input = Reline.readline("> ", true)
   rescue Interrupt
     puts
     puts "Bye."
     break
   end
   break if input.nil?  # EOF
-  input = input.chomp.strip
+  input = input.strip
   next if input.empty?
 
   case input
@@ -538,7 +546,7 @@ loop do
       puts "no map — this save wasn't created via worldgen."
       puts "run `bin/play --reset` for a fresh worldgen-rooted save."
     else
-      puts Harness::Worldgen::Ascii.render(map)
+      puts Harness::Worldgen::Ascii.render(map, color: $stdout.tty?)
     end
     puts
     next
@@ -880,8 +888,11 @@ loop do
     next
   end
 
+  color = $stdout.tty?
   puts
-  puts transcript.narration
+  puts Harness::Render.rule(color: color)
+  puts
+  puts Harness::Render.narration(transcript.narration, known_names: Harness::Render.entity_names, color: color)
   if transcript.notice
     puts
     puts transcript.notice

@@ -37,7 +37,7 @@ module Harness
       end
 
       steps = Array(res["plan"]).map { |s|
-        Step.new(runner: s["runner"], intent: s["reason"], args: s["args"] || {})
+        Step.new(runner: normalize_runner(s["runner"]), intent: s["reason"], args: s["args"] || {})
       }
       plan = Plan.new(
         steps:       steps,
@@ -60,6 +60,20 @@ module Harness
         @logger.debug { "[Dispatcher] unbuilt runners in plan: #{unbuilt.inspect}" } if unbuilt.any?
       end
       plan
+    end
+
+    # The standalone "dice" runner was retired — a roll belongs INSIDE an
+    # interaction, not as its own step (movement-as-a-dice-step was the bug that
+    # started this). The planner prompt no longer offers "dice", but a weak local
+    # model may still emit it from habit; remap it to environment (the home for
+    # bare physical/athletic attempts: climb, swim, force) so the turn doesn't
+    # needlessly fall back to agentic on an unbuilt label.
+    RETIRED_RUNNER_REMAP = { "dice" => "environment" }.freeze
+    def normalize_runner(label)
+      mapped = RETIRED_RUNNER_REMAP[label.to_s]
+      return label unless mapped
+      @logger.info { "[Dispatcher] remapped retired runner 'dice' → '#{mapped}'" }
+      mapped
     end
 
     # A runner is "built" if the registry has a real implementation for it.
