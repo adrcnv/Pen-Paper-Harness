@@ -1,7 +1,13 @@
 # Harness
 
-A solo tabletop-RPG engine. The simulation owns ground truth; the LLM
-translates between your input and validated tool calls.
+A solo tabletop-RPG engine that inverts the usual "AI dungeon master."
+Most prototypes are chat wrappers: the model narrates the world, you correct
+it, it overwrites itself, and the fiction drifts into mush. Harness puts a
+real simulation in charge of ground truth — characters, places, items,
+events, dice — and lets the LLM do only what it's good at: turn your
+plain-English input into validated tool calls, and turn committed outcomes
+into prose. The model never invents a number, forces an outcome, or edits the
+world behind your back.
 
 > **Status:** personal exploratory project — a sandbox with rough edges and
 > half-built subsystems.
@@ -36,16 +42,10 @@ Pass `--reset` to `bin/setup` or `bin/play` to wipe and rebuild the database.
 fresh world; later runs continue the save.
 
 ```bash
-bin/play                                    # continue, or start a new game
-bin/play --reset                            # wipe DB and start fresh
+bin/play                        # continue, or start a new game
+bin/play --reset                # wipe DB and start fresh
 bin/play --model claude-opus-4-8
-bin/play --grunt-model claude-haiku-4-5-20251001 \
-         --nuance-model claude-sonnet-5
 ```
-
-Two model tiers: a cheap grunt-tier for materialization (NPC stats, scene
-flavor, catch-up) and a stronger nuance-tier for the reasoning loop and
-narration.
 
 ## Local inference
 
