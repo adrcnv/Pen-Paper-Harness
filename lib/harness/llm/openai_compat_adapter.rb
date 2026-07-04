@@ -38,6 +38,10 @@ module Harness
       DEFAULT_BASE_URL   = "http://127.0.0.1:8080/v1".freeze
       DEFAULT_MODEL      = "local".freeze
       DEFAULT_MAX_TOKENS = 8192
+      # Max texts per /v1/embeddings request. llama.cpp caps a batch at its
+      # --ubatch / -np window; chunk under it so a big backfill can't overflow
+      # the server in one shot. Recall sends one text; capture a handful.
+      EMBED_BATCH        = 64
 
       class APIError < StandardError
         attr_reader :status, :body
@@ -98,6 +102,20 @@ module Harness
 
       def call(prompt)
         complete(system: "", user: prompt)
+      end
+
+      # Embed text via /v1/embeddings. A String returns one vector (Array of
+      # Float); an Array of Strings returns vectors in input order (mget-style).
+      # An array is chunked to EMBED_BATCH per request so a large backfill can't
+      # overflow the server's batch window. Raises APIError on a hard failure —
+      # callers that must not fail (recall ranking) rescue and fall back.
+      def embed(input)
+        array = input.is_a?(Array)
+        texts = (array ? input : [ input ]).map(&:to_s)
+        return array ? [] : nil if texts.empty?
+
+        vectors = texts.each_slice(EMBED_BATCH).flat_map { |slice| embed_batch(slice) }
+        array ? vectors : vectors.first
       end
 
       # Asks the server what model is actually loaded. llama.cpp returns
@@ -209,6 +227,36 @@ module Harness
           logger.error { "[OpenAICompatAdapter] non-retryable error #{status}: #{raw.to_s.slice(0, 500)}" }
           raise APIError.new(status, raw)
         end
+      end
+
+      # One /v1/embeddings request for up to EMBED_BATCH texts. Returns the
+      # vectors sorted by the response's `index` (input order), each a Float
+      # array. Reuses the @http POST seam + retry policy.
+      def embed_batch(texts)
+        body = JSON.generate({ "model" => @model, "input" => texts })
+        headers = {
+          "authorization" => "Bearer #{@api_key}",
+          "content-type"  => "application/json"
+        }
+        logger.debug { "[OpenAICompatAdapter] ▸ EMBED n=#{texts.size} bytes=#{body.bytesize}" }
+
+        parsed = with_retries do
+          response = ::Harness::Timing.measure(adapter: @name, logger: logger) do
+            @http.call(url: "#{@base_url}/embeddings", headers: headers, body: body)
+          end
+          status = response.fetch(:status)
+          raw    = response.fetch(:body)
+          if status == 200
+            JSON.parse(raw)
+          else
+            logger.error { "[OpenAICompatAdapter] embeddings error #{status}: #{raw.to_s.slice(0, 300)}" } unless retryable?(status)
+            raise APIError.new(status, raw)
+          end
+        end
+
+        Array(parsed["data"])
+          .sort_by { |d| d["index"].to_i }
+          .map { |d| Array(d["embedding"]).map(&:to_f) }
       end
 
       def log_request(payload, bytes)

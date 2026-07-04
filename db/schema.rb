@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_23_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_01_130000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -20,6 +20,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_23_120000) do
     t.datetime "created_at", null: false
     t.integer "current_hp", default: 0, null: false
     t.integer "dexterity"
+    t.string "faction", default: "factionless", null: false
     t.integer "home_location_id"
     t.integer "intelligence"
     t.integer "level", default: 1, null: false
@@ -27,6 +28,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_23_120000) do
     t.integer "max_hp", default: 0, null: false
     t.string "name", null: false
     t.json "properties", default: {}
+    t.string "social_class", default: "commoner", null: false
     t.integer "strength"
     t.string "subrole"
     t.string "type"
@@ -35,7 +37,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_23_120000) do
     t.integer "xp", default: 0, null: false
     t.index ["home_location_id"], name: "index_characters_on_home_location_id"
     t.index ["location_id"], name: "index_characters_on_location_id"
-    t.index ["subrole"], name: "index_characters_on_subrole"
     t.index ["type"], name: "index_characters_on_type"
   end
 
@@ -100,6 +101,25 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_23_120000) do
     t.integer "started_at_game_time", default: 0, null: false
     t.datetime "updated_at", null: false
     t.index ["destination_id"], name: "index_journeys_on_destination_id"
+  end
+
+  create_table "knowledge", force: :cascade do |t|
+    t.text "content", null: false
+    t.datetime "created_at", null: false
+    t.boolean "current", default: true, null: false
+    t.text "embedding"
+    t.string "faction"
+    t.integer "game_time", default: 0, null: false
+    t.integer "location_id"
+    t.integer "min_int"
+    t.string "social_class"
+    t.integer "source_id"
+    t.string "source_kind"
+    t.string "subrole"
+    t.datetime "updated_at", null: false
+    t.index ["current"], name: "index_knowledge_on_current"
+    t.index ["location_id"], name: "index_knowledge_on_location_id"
+    t.index ["subrole"], name: "index_knowledge_on_subrole"
   end
 
   create_table "locations", force: :cascade do |t|

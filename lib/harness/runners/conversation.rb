@@ -14,15 +14,29 @@ module Harness
     # two at once, as in life.
     #
     # Per-character emit: speech (dialogue → staged propose_event), persuasion
-    # (resolve_call → resolve), asserted ignorance (→ personal event), a durable
-    # beat (memorable → propose_event), and a named person (claims → Realizer).
+    # (resolve_call → resolve), asserted ignorance (→ personal event), and a
+    # durable beat (memorable → propose_event). NAMED PEOPLE are no longer a
+    # per-emit field — the post-turn Knowledge::Capture pass is the single entity
+    # pipe (facts + people → Realizer), so the voicing model doesn't have to
+    # remember a `claims` side-field it kept dropping.
     class Conversation < Base
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/conversation.txt")
       EVENT_SUMMARY_CAP = 10
+      # Banter (non-substantive) speakers only react in-character — they don't
+      # carry the turn's info load, so they get a thin slice of their own recent
+      # events instead of the full dump. Keeps their (cheap, throwaway) voicing
+      # prompt small; the substantive speaker still gets the full history.
+      BANTER_EVENT_CAP = 3
+      # The substantive speaker's own recent memories kept UNGATED for character
+      # continuity — so gating its events by topic can never leave the info-carrier
+      # thinner on self-knowledge than a banter NPC.
+      RECALL_EVENT_FLOOR = 2
       EVENT_TEXT_CAP = 220
       THREAD_CAP  = 6
       THREAD_CHARS = 700
       MAX_SPEAKERS = 2
+      PLACES_CAP  = 12
+      RECALL_CAP  = 8
 
       def run(context:, scene:, input:, step:)
         present = Array(scene["present_characters"])
@@ -38,18 +52,33 @@ module Harness
         promo    = {}
         thread   = conversation_thread(context)
         roster   = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
+        nearby   = nearby_places(context)
+        # ONE substantive speaker per turn carries the info load — it alone
+        # recalls the KNOWLEDGE store (facet-relevant stored facts) and gates
+        # them into its voicing. Everyone else banters on their own events only.
+        substantive_id = pick_substantive(present, input)
+        # GATE ARMS CAPTURE: if recall grounds the substantive speaker (the gate
+        # finds something relevant), the turn ran on EXISTING knowledge → nothing
+        # new to store, skip capture. A semantic MISS (gate "none", or no
+        # substantive speaker at all — empty store, bootstrap) leaves this false
+        # → capture fires. `recall` sets it true when it grounds.
+        @recall_grounded = false
 
-        spoken     = 0
-        parsed_any = false
+        spoken       = 0
+        parsed_any   = false
+        spoken_lines = []
         poll_order(present, extras, input, step).each do |v|
           break if spoken >= MAX_SPEAKERS
-          emit = voice_one(context, input, step, player, v, roster, thread, resolver, tcs, active)
+          substantive = v[:kind] == :npc && v[:char]["id"] == substantive_id
+          emit = voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, substantive)
           next unless emit
           parsed_any = true
           spoken += 1 if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
+          collect_line(spoken_lines, v, emit)
         end
 
         return redispatch("conversation emit unparseable", tcs) unless parsed_any
+        capture_knowledge(context, spoken_lines)
         Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
       end
 
@@ -66,7 +95,16 @@ module Harness
         hay = "#{input} #{step&.intent}".downcase
         npcs = present.map { |c| { kind: :npc, char: c } }
         named, rest = npcs.partition { |v| addressed_by_name?(v[:char], hay) }
-        named + rest + Array(extras).each_with_index.map { |desc, i| { kind: :extra, index: i, desc: desc } }
+        # Extras are ambient narration FLAVOR, not filler speakers. Poll one ONLY
+        # when the player's input actually ENGAGES it ("talk to the recruit") —
+        # engagement is what promotes an unnamed figure into a character. NEVER
+        # poll an extra to top up the two-speaker cap: that let a whinnying horse
+        # voice a present NPC and get minted into a phantom innkeeper. Unaddressed
+        # ambience is narration's job; it never speaks here.
+        engaged = Array(extras).each_with_index
+          .select { |desc, _| addressed_extra?(desc, hay) }
+          .map { |desc, i| { kind: :extra, index: i, desc: desc } }
+        named + engaged + rest
       end
 
       def addressed_by_name?(char, hay)
@@ -75,24 +113,103 @@ module Harness
         (first.length >= 2 && hay.include?(first)) || (sub.length >= 2 && hay.include?(sub))
       end
 
+      # An ambient extra is ENGAGED when the input names something distinctive
+      # from its description — a content word of 4+ letters (mechanical + fuzzy,
+      # the extras' analogue of addressed_by_name?). "talk to the recruit"
+      # engages "a young recruit by the hearth"; "hello barkeep" engages no
+      # extra, so a horse in the corner is never voiced.
+      EXTRA_STOPWORDS = %w[from that with your look over back into their here some just].freeze
+      def addressed_extra?(desc, hay)
+        desc.to_s.downcase.scan(/[a-z]{4,}/)
+            .reject { |w| EXTRA_STOPWORDS.include?(w) }
+            .any? { |w| hay.include?(w) }
+      end
+
+      # THE SUBSTANTIVE SPEAKER (mechanical, no LLM): the present NPC with the
+      # most facet-relevant stored knowledge for this topic carries the info
+      # load this turn. Returns their id, or nil when NOBODY has any matching
+      # knowledge (then no recall/gate fires — everyone banters, zero LLM cost).
+      # A proxy for "best topic×facet match"; once cosine ranks (behind the
+      # Query seam) the count already reflects topic, not just facet.
+      def pick_substantive(present, topic)
+        scored = Array(present).filter_map do |c|
+          char = ::Npc.find_by(id: c["id"]) or next
+          n = ::Harness::Knowledge::Query.for(character: char, topic: topic, limit: RECALL_CAP).size
+          n.positive? ? [ c["id"], n ] : nil
+        end
+        return nil if scored.empty?
+        winner = scored.max_by { |_, n| n }
+        @logger.info { "[Runner conversation] substantive speaker id=#{winner[0]} (#{winner[1]} recall candidate(s)); scored=#{scored.inspect}" }
+        winner[0]
+      end
+
+      # A gate candidate carrying a synthetic id (so knowledge-row ids and
+      # event-row ids can't collide inside one gate call) + its source, so the
+      # approved set splits back into facts vs memories.
+      RecallItem = Struct.new(:id, :content, :src)
+
+      # UNIFIED recall for the substantive speaker: knowledge facts (facet-gated,
+      # cosine-ranked) AND this NPC's own participation memories (already fetched
+      # as `own_events`) go through ONE relevance gate. Returns the gate-approved
+      # set split by source — so the raw last-10 event dump is replaced by the
+      # memories that actually bear on the question, alongside the relevant facts.
+      # `own_events` are the recency-ordered event texts npc_knowledge already
+      # pulled (no second query); knowledge is cosine-ranked to bound what the
+      # gate sees. Empty candidate set → empty result (no gate call).
+      def recall(context, char, topic, own_events)
+        ranker = ::Harness::Knowledge::CosineRanker.new(embedder: llm(context), logger: @logger)
+        facts  = ::Harness::Knowledge::Query.for(character: char, topic: topic, limit: RECALL_CAP, ranker: ranker)
+
+        cands = []
+        facts.each        { |k|   cands << RecallItem.new(cands.size + 1, k.content, :knowledge) }
+        Array(own_events).each { |t| cands << RecallItem.new(cands.size + 1, t, :event) }
+        return { "knowledge" => [], "events" => [] } if cands.empty?
+
+        approved = ::Harness::Knowledge::Gate.run(llm: llm(context), topic: topic, facts: cands, logger: @logger)
+        # The gate grounded this turn iff it approved anything → disarm capture.
+        @recall_grounded = true if approved.any?
+        out = { "knowledge" => approved.select { |c| c.src == :knowledge }.map(&:content),
+                "events"    => approved.select { |c| c.src == :event }.map(&:content) }
+        @logger.info { "[Runner conversation] recall #{char.name}: #{facts.size} fact + #{Array(own_events).size} memory cand → #{out['knowledge'].size} fact / #{out['events'].size} memory gated-in" }
+        out
+      end
+
       # Voice ONE character. The call sees this character's own events (or, for
       # an extra, just its description), the public roster of who else is here,
       # and the shared thread — never anyone else's events.
-      def voice_one(context, input, step, player, v, roster, thread, resolver, tcs, active)
+      def voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, substantive = false)
         you =
           if v[:kind] == :extra
             { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }
           else
-            npc_knowledge(resolver, v[:char], tcs, active)
+            # Substantive speaker carries the info load → full event history;
+            # banter NPCs get a thin slice (cheaper prefill for a throwaway line).
+            npc_knowledge(resolver, v[:char], tcs, active, event_cap: substantive ? EVENT_SUMMARY_CAP : BANTER_EVENT_CAP)
           end
+        # Substantive speaker only: recall facts AND the NPC's own memories
+        # through one relevance gate. The gated-relevant memories (plus a small
+        # recency floor for continuity) REPLACE the raw event dump; relevant
+        # facts land in `knowledge`.
+        if substantive && v[:kind] == :npc && (npc_row = ::Npc.find_by(id: v[:char]["id"]))
+          r = recall(context, npc_row, input, you["events"])
+          floor = Array(you["events"]).first(RECALL_EVENT_FLOOR)
+          you = you.merge("events" => (floor + r["events"]).uniq)
+          you = you.merge("knowledge" => r["knowledge"]) if r["knowledge"].any?
+        end
         others = v[:kind] == :npc ? roster.reject { |r| r["name"] == v[:char]["name"] } : roster
+        # Key ORDER matters for KV-cache reuse across the turn's per-NPC calls:
+        # the invariant block (same player/input/intent/nearby/thread for every
+        # speaker this turn) leads, so llama.cpp reuses that prefix; the per-NPC
+        # varying blocks (others_present, you) come LAST. JSON is order-agnostic
+        # to the model, so this is a pure prefill win, no behaviour change.
         user = JSON.pretty_generate(
-          "you"             => you,
-          "others_present"  => others,
-          "exchange_so_far" => thread,
           "player"          => { "id" => player.id, "name" => player.name },
           "player_input"    => input,
-          "intent"          => step&.intent
+          "intent"          => step&.intent,
+          "nearby_places"   => nearby,
+          "exchange_so_far" => thread,
+          "others_present"  => others,
+          "you"             => you
         )
         raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
           llm(context).complete(system: preamble, user: "INPUT:\n#{user}")
@@ -110,14 +227,11 @@ module Harness
       def apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
         dlg     = emit["dialogue"]
         prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
-        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["ignorance"] || emit["claims"] || emit["memorable"]
-        # Per-NPC emit shape, so a playtest can see WHAT each voiced character
-        # produced (esp. whether a `claims` ever fires — the narrative-shift seam).
+        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["ignorance"] || emit["memorable"]
         @logger.debug do
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           "[Runner conversation] #{who} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
-          "resolve=#{!emit['resolve_call'].nil?} ignorance=#{!emit['ignorance'].nil?} " \
-          "claim=#{emit['claims'].is_a?(Hash)} memorable=#{emit['memorable'].is_a?(Hash)}"
+          "resolve=#{!emit['resolve_call'].nil?} ignorance=#{!emit['ignorance'].nil?} memorable=#{emit['memorable'].is_a?(Hash)}"
         end
         return false unless engaged
 
@@ -132,7 +246,6 @@ module Harness
         commit_resolve(resolver, emit["resolve_call"], player, actor_id, tcs)
         commit_ignorance(resolver, emit["ignorance"], player, actor_id, tcs)
         commit_memorable(resolver, emit["memorable"], player, actor_id, tcs)
-        commit_claim(context, emit["claims"], actor_id, tcs)
         spoke
       end
 
@@ -149,8 +262,8 @@ module Harness
       # mood and scene agenda (seeded at scene entry). query_events already
       # scopes to this holder (own + witnessed + local), so the events list is
       # strictly this character's knowledge; no other character's memories enter.
-      def npc_knowledge(resolver, char, tcs, active)
-        res, _ = execute_tool(resolver, "query_events", { "for_holder_id" => char["id"], "limit" => EVENT_SUMMARY_CAP }, into: tcs)
+      def npc_knowledge(resolver, char, tcs, active, event_cap: EVENT_SUMMARY_CAP)
+        res, _ = execute_tool(resolver, "query_events", { "for_holder_id" => char["id"], "limit" => event_cap }, into: tcs)
         events = Array(res.is_a?(Hash) ? res["events"] : res)
           .map { |e| event_text(e) }
           .reject(&:empty?)
@@ -186,6 +299,31 @@ module Harness
             d.to_s
           end
         text.to_s.strip[0, EVENT_TEXT_CAP].to_s
+      end
+
+      # The physical places around the speakers: the settlement they're in and
+      # its other locations (the sawmill, the shrine, the smithy), plus any
+      # sublocations of where they stand. Surfaced into every voicing call so an
+      # NPC reaches for a REAL neighbouring place instead of inventing a second
+      # one — the logging-hamlet-grows-a-second-sawmill bug. This is the
+      # grounding-first lever: fill the vacuum that invention otherwise fills.
+      # The semantic kind lives in the name ("the Smith's"), so name + a short
+      # description snippet is enough for the model to pick the right one.
+      def nearby_places(context)
+        loc = context.player_location
+        return [] unless loc
+        rows = []
+        rows << loc.parent if loc.parent
+        if loc.parent_id
+          rows.concat(::Location.where(parent_id: loc.parent_id).where.not(id: loc.id).limit(PLACES_CAP).to_a)
+        end
+        rows.concat(::Location.where(parent_id: loc.id).limit(PLACES_CAP).to_a)
+        rows.uniq(&:id).first(PLACES_CAP).map do |l|
+          entry = { "name" => l.name }
+          d = l.description.to_s.strip
+          entry["about"] = d[0, 80] unless d.empty?
+          entry
+        end
       end
 
       # The scene's thread up to now — the prior input→narration pairs, shared
@@ -270,33 +408,39 @@ module Harness
         }, into: tcs)
       end
 
-      # GROUND v0 — realize a specific person this character introduced into a
-      # grounded row so it isn't a ghost (a name in one line with no row behind
-      # it). The speaker is this character. Failure is non-fatal.
-      #
-      # Gate on name-OR-gist, matching the Realizer's own contract: a ROLE
-      # reference ("my brother", "the surveyor") carries a gist but NO name (the
-      # prompt tells the model to omit it — the Realizer's picker names them).
-      # The old name-only guard silently dropped every role-reference claim
-      # before it could reach the Realizer's role-handling path.
-      def commit_claim(context, claim, actor_id, tcs)
-        return unless claim.is_a?(Hash)
-        return unless claim["name"].to_s.strip != "" || claim["gist"].to_s.strip != ""
-        speaker = ::Npc.find_by(id: actor_id)
-        @logger.info do
-          "[Runner conversation] realizing claim name=#{claim['name'].inspect} " \
-          "gist=#{claim['gist'].to_s.slice(0, 60).inspect} at=#{claim['at_location'].inspect} by=#{speaker&.name.inspect}"
+      # Collect an NPC's actual spoken line for post-turn knowledge capture.
+      # Only real NPCs with real dialogue prose (extras and no-op turns carry no
+      # world-facts worth persisting yet).
+      def collect_line(acc, v, emit)
+        return unless v[:kind] == :npc
+        prose = emit.dig("dialogue", "prose").to_s.strip
+        return if prose.empty?
+        acc << { "speaker" => v[:char]["name"], "says" => prose }
+      end
+
+      # Step 2 write path: extract standing world-facts from what was said and
+      # persist them (Knowledge::Capture — the single entity pipe: facts + people
+      # → Realizer). ARMED BY RECALL-MISS: when recall grounded the turn's
+      # substantive speaker (@recall_grounded), the exchange ran on existing
+      # knowledge → skip the extra call; only a semantic miss (or no substantive
+      # speaker) captures. This replaces the crude fires-every-spoken-turn
+      # behaviour. Non-fatal.
+      def capture_knowledge(context, lines)
+        return if lines.empty?
+        if @recall_grounded
+          @logger.info { "[Runner conversation] capture SKIPPED — recall grounded this turn (no semantic miss)" }
+          return
         end
-        res = ::Harness::NarrativeShift::Realizer.run(claim: claim, speaker: speaker, context: context, logger: @logger)
-        @logger.info do
-          status = if res.nil? then "nil (realize declined/failed)"
-          elsif res["minted"] then "MINTED id=#{res['character_id']} #{res['name'].inspect}"
-          elsif res["linked"] then "LINKED to existing id=#{res['character_id']} #{res['name'].inspect}"
-          else res.inspect
-          end
-          "[Runner conversation] claim result: #{status}"
-        end
-        tcs << tool_call("realize_claim", claim, res || { "error" => "claim realize returned nil" })
+        ::Harness::Knowledge::Capture.run(
+          llm:       llm(context),
+          location:  context.player_location,
+          lines:     lines,
+          game_time: context.game_time,
+          context:   context,   # enables person-realization (the single entity pipe)
+          logger:    @logger
+        )
+      rescue StandardError => e
+        @logger.warn { "[Runner conversation] knowledge capture failed: #{e.class}: #{e.message}" }
       end
 
       def preamble

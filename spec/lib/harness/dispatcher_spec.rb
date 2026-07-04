@@ -8,7 +8,7 @@ RSpec.describe Harness::Dispatcher do
   subject(:dispatcher) { described_class.new(context: context, scene_manager: scene_manager, registry: registry) }
 
   def stub_planner(plan: nil, parse_error: nil, raw: "", ms: 5, model: "fake")
-    allow(Harness::Shadow::Planner).to receive(:plan_for).and_return(
+    allow(Harness::Planner).to receive(:plan_for).and_return(
       "plan" => plan, "parse_error" => parse_error, "raw" => raw,
       "duration_ms" => ms, "model" => model, "world" => {}
     )

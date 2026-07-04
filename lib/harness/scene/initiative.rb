@@ -80,7 +80,8 @@ module Harness
         return skip("empty beat for #{actor_name}") if beat.empty?
 
         kind = spec["kind"].to_s.strip
-        stage_beat(npc, player, beat, kind)
+        toward, label = resolve_target(spec["target"], npc, player)
+        stage_beat(npc, player, beat, kind, toward, label)
         @active.last_initiator = npc.id
         @logger.info { "[Scene::Initiative] #{npc.name} acts (#{kind.empty? ? 'beat' : kind})" }
         { npc: npc, beat: beat, kind: kind }
@@ -163,21 +164,36 @@ module Harness
       # turn loop appends the beat from the return value, not from this record.)
       # Hostile/engaging kinds still mark the player a target in the record; a
       # passive 'watch' marks them a witness.
-      def stage_beat(npc, player, beat, kind)
-        role = kind == "watch" ? "witness" : "target"
+      def stage_beat(npc, player, beat, kind, toward, label)
+        role   = kind == "watch" ? "witness" : "target"
+        prefix = label ? "#{npc.name} acts toward #{label}, unprompted" : "#{npc.name} acts, unprompted"
         args = {
           "scope"        => "personal",
           "participants" => [
             { "character_id" => npc.id,    "role" => "actor" },
-            { "character_id" => player.id, "role" => role }
+            { "character_id" => toward.id, "role" => role }
           ],
           "trigger" => "unprompted initiative beat",
-          "details" => "#{npc.name} acts toward the player, unprompted — #{beat}"
+          "details" => "#{prefix} — #{beat}"
         }
         @transcript.record_tool_calls([
           { "name" => "propose_event", "args" => args,
             "result" => { "staged" => true, "summary" => "[initiative beat — rendered, not persisted]" } }
         ])
+      end
+
+      # Resolve the beat's `target` to [character, label]. Default + "player" +
+      # "the room" → the player (label nil for "the room", so the record reads
+      # "acts, unprompted" rather than falsely "toward the player"). A present
+      # character name (not the actor) → that character, so an NPC→NPC beat is
+      # recorded honestly. The target is traceability only — beats no longer
+      # persist as events — so an unrecognised name degrades to the player.
+      def resolve_target(target_name, actor, player)
+        name = target_name.to_s.strip
+        return [ player, "the player" ] if name.empty? || name.casecmp?("player")
+        return [ player, nil ]          if name.casecmp?("the room")
+        other = @active.present_characters.find { |c| c.name.casecmp?(name) && c.id != actor.id }
+        other ? [ other, other.name ] : [ player, "the player" ]
       end
 
       def follower?(c)

@@ -158,6 +158,23 @@ RSpec.describe Harness::Combat::NpcTurn do
       expect(out["result"]["error"]).to be_nil
     end
 
+    it "retries unarmed_strike when a weapon ability is used without a weapon" do
+      # Caelis-in-play repro: an unarmed NPC keeps picking a weapon-gated
+      # ability; resolve tag-gates it every round and the slot wastes. The
+      # recovery rewrites to unarmed_strike and retries so the blow lands.
+      vek.update!(abilities: [
+        { "name" => "Heavy Strike", "stat" => "strength", "opposed_by" => "dexterity",
+          "effect_kind" => "damage", "damage_dice" => "1d8", "uses_remaining" => 3,
+          "range" => "close", "tags" => [ "martial" ], "requires_tags" => [ "weapon" ] }
+      ])
+      adapter = OneShotAdapter.new(tool: "resolve",
+        args: { "actor_id" => vek.id, "ability_name" => "Heavy Strike", "action" => "heavy blow",
+                "target_id" => player.id, "time_minutes" => 1 })
+      out = described_class.run(npc: vek, scene: ctx.active_scene, adapter: adapter, context: ctx)
+      expect(out["args"]["ability_name"]).to eq("unarmed_strike")
+      expect(out["result"]["error"]).to be_nil
+    end
+
     it "fixes an unrecognized stat to strength" do
       adapter = OneShotAdapter.new(tool: "resolve",
         args: { "actor_id" => vek.id, "stat" => "luck", "action" => "shove",

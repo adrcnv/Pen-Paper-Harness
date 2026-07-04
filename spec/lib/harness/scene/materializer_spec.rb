@@ -35,7 +35,7 @@ RSpec.describe Harness::Scene::Materializer do
         "reuse" => [],
         "spawn" => [
           { "subrole" => "barkeep", "properties" => { "personality" => "stoic" } },
-          { "subrole" => "drunk",   "properties" => {} }
+          { "subrole" => "fisher", "properties" => {} }
         ]
       })
       out = described_class.new(llm_client: llm).materialize(location: tavern, target_count: 2)
@@ -57,8 +57,8 @@ RSpec.describe Harness::Scene::Materializer do
       llm = fake_llm({
         "reuse" => [],
         "spawn" => [
-          { "subrole" => "patron" },
-          { "subrole" => "patron" }
+          { "subrole" => "labourer" },
+          { "subrole" => "labourer" }
         ]
       })
       out = described_class.new(llm_client: llm).materialize(location: tavern, target_count: 3)
@@ -160,7 +160,7 @@ RSpec.describe Harness::Scene::Materializer do
     it "creates both and places them at the requesting location" do
       existing = Npc.create!(name: "Korr", location: city, properties: { "dormant" => true })
       llm = fake_llm({
-        "reuse" => [ { "character_id" => existing.id, "subrole" => "patron" } ],
+        "reuse" => [ { "character_id" => existing.id, "subrole" => "fisher" } ],
         "spawn" => [ { "subrole" => "barkeep" } ]
       })
       out = described_class.new(llm_client: llm).materialize(location: tavern, target_count: 2)
@@ -202,7 +202,7 @@ RSpec.describe Harness::Scene::Materializer do
       )
 
       llm = fake_llm({
-        "reuse" => [ { "character_id" => historical.id, "subrole" => "courier", "properties" => { "mood" => "wary" } } ],
+        "reuse" => [ { "character_id" => historical.id, "subrole" => "wanderer", "properties" => { "mood" => "wary" } } ],
         "spawn" => []
       })
       out = described_class.new(llm_client: llm).materialize(location: tavern, target_count: 1)
@@ -211,7 +211,7 @@ RSpec.describe Harness::Scene::Materializer do
       corren = out[:reused].first.reload
       expect(corren.name).to eq("Corren Ashvale")
       expect(corren.location).to eq(tavern)
-      expect(corren.subrole).to eq("courier")
+      expect(corren.subrole).to eq("wanderer")
       expect(corren.properties).to include("mood" => "wary")
       expect(corren.properties).not_to have_key("dormant")
     end

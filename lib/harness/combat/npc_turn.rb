@@ -60,6 +60,21 @@ module Harness
           end
         end
 
+        # Unarmed-fallback retry: the LLM picked a weapon/implement ability
+        # (Heavy Strike, Cleave, Fireball) but the actor owns no item supplying
+        # the required tag, so the resolve tag-gate rejects it and the slot
+        # wastes. The tool's own error names the remedy (unarmed_strike); apply
+        # it and retry once. Mirrors the auto-engage recovery above — reuses the
+        # error the tool already produced rather than re-deriving the tag
+        # requirement here. The rejected resolve returns before any state
+        # mutation, so no action token was spent; the retry spends it cleanly.
+        if tag_gate_error?(result) && call.args["ability_name"].to_s.downcase != "unarmed_strike"
+          call.args.delete("stat")
+          call.args["ability_name"] = "unarmed_strike"
+          logger&.info { "[Combat::NpcTurn] #{npc.name} weapon ability without a weapon → retrying unarmed_strike" }
+          result = resolver.execute(call)
+        end
+
         log_result(npc, call, result, logger)
         { "tool" => call.name, "args" => call.args, "result" => result }
       rescue ::StandardError => e
@@ -72,6 +87,13 @@ module Harness
       # message is constructed in Tools::Resolve#check_combat_range.
       def self.close_range_error?(result)
         result.is_a?(::Hash) && result["error"].to_s.include?("is melee range (close)")
+      end
+
+      # The Resolve tool's tag-gate rejection: a weapon/implement ability whose
+      # required item tags the actor can't supply (Tools::Resolve#call, "requires
+      # item tags=..."). The remedy is a basic unarmed attack.
+      def self.tag_gate_error?(result)
+        result.is_a?(::Hash) && result["error"].to_s.include?("requires item tags")
       end
 
       # Synthesize the move_to(engaged, target_id) call the LLM should have

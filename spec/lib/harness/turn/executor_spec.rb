@@ -29,7 +29,7 @@ RSpec.describe "Harness::Turn::Loop state machine" do
   end
 
   def stub_plan(*runner_labels, parse_error: nil)
-    allow(Harness::Shadow::Planner).to receive(:plan_for).and_return(
+    allow(Harness::Planner).to receive(:plan_for).and_return(
       "plan"        => parse_error ? nil : runner_labels.map { |r| { "runner" => r, "reason" => "do #{r}", "args" => {} } },
       "parse_error" => parse_error,
       "raw"         => "",
@@ -48,6 +48,7 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(transcript.tool_calls.map { |t| t["name"] }).to eq([ "query_scene" ])
     expect(adapter.reasoning_calls).to be_empty            # agentic loop did NOT run
     expect(transcript.narration).to eq("(n)")
+    expect(transcript.runners_ran).to eq([ "inspection" ]) # the executor records which runner ran
   end
 
   it "falls to the agentic loop for the whole turn when the plan names an unbuilt runner" do
@@ -131,6 +132,9 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     say = transcript.tool_calls.find { |t| t["name"] == "propose_event" && t.dig("result", "staged") }
     pids = Array(say&.dig("args", "participants")).map { |p| p["character_id"] }
     expect(pids).to include(barkeep.id, player.id)
+    # The conversation runner ran this turn — the signal initiative gates on so
+    # it doesn't pile an unprompted beat on top of dialogue the player just had.
+    expect(transcript.runners_ran).to include("conversation")
   end
 
   # Post-rework smoke test: a contested action must ROLL inside its runner (the
@@ -197,7 +201,7 @@ RSpec.describe "Harness::Turn::Loop state machine" do
   end
 
   it "skips the dispatcher entirely in :agentic mode" do
-    expect(Harness::Shadow::Planner).not_to receive(:plan_for)
+    expect(Harness::Planner).not_to receive(:plan_for)
     loop_obj, adapter = build_loop(
       registry: { "inspection" => Harness::Runners::Inspection.new }, mode: :agentic
     )

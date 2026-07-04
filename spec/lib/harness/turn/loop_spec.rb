@@ -181,6 +181,57 @@ RSpec.describe Harness::Turn::Loop do
     end
   end
 
+  describe "staged dialogue rendering (structural)" do
+    let(:loop_obj) {
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "MODEL PROSE")
+      described_class.new(adapter: adapter, context: context)
+    }
+    let(:staged) {
+      { "name" => "propose_event",
+        "args" => { "details" => "Bess doesn't stop moving. 'I just pour the ale, sir.'" },
+        "result" => { "staged" => true } }
+    }
+    let(:resolve) {
+      { "name" => "resolve", "args" => { "actor_id" => 1 },
+        "result" => { "outcome" => "success", "action" => "press", "stat" => "charisma", "roll" => 15, "against" => 10 } }
+    }
+
+    it "extracts staged dialogue lines verbatim, ignoring non-staged and reads" do
+      tcs = [ { "name" => "query_events", "args" => {}, "result" => {} },
+              staged,
+              { "name" => "propose_event", "args" => { "details" => "bookkeeping" }, "result" => {} } ]
+      lines = loop_obj.send(:staged_dialogue_lines, tcs)
+      expect(lines).to eq([ "Bess doesn't stop moving. 'I just pour the ale, sir.'" ])
+    end
+
+    it "composes brackets, then model body, then dialogue last" do
+      out = loop_obj.send(:compose_narration, "She relents.", [ resolve, staged ])
+      expect(out).to eq("[press — Charisma 15 vs 10: success]\n\nShe relents.\n\nBess doesn't stop moving. 'I just pour the ale, sir.'")
+    end
+
+    it "renders dialogue alone when there is no model body (dialogue-only turn)" do
+      out = loop_obj.send(:compose_narration, "", [ staged ])
+      expect(out).to eq("Bess doesn't stop moving. 'I just pour the ale, sir.'")
+    end
+
+    it "treats a pure conversation turn as NOT needing the narration model" do
+      expect(loop_obj.send(:other_narratable?, [ staged, { "name" => "query_events" } ])).to be(false)
+      expect(loop_obj.send(:other_narratable?, [ staged, resolve ])).to be(true)
+      expect(loop_obj.send(:other_narratable?, [ { "name" => "transition" } ])).to be(true)
+    end
+
+    it "hides the staged words from the model, leaving a marker" do
+      out = loop_obj.send(:sanitize_tool_calls_for_narration, [ staged ])
+      expect(out.first.dig("args", "details")).to eq(described_class::STAGED_DIALOGUE_MARKER)
+      expect(out.first.dig("args", "details")).not_to include("pour the ale")
+    end
+
+    it "leaves a non-staged propose_event untouched" do
+      ev = { "name" => "propose_event", "args" => { "details" => "a real event" }, "result" => { "staged" => false } }
+      expect(loop_obj.send(:sanitize_tool_calls_for_narration, [ ev ])).to eq([ ev ])
+    end
+  end
+
   describe "player identity in narration" do
     # Regression: the narration payload had no player identity, so when an NPC
     # addressed the player aloud the model borrowed a present character's name
@@ -571,49 +622,6 @@ RSpec.describe Harness::Turn::Loop do
       expect(context.scene_dirty).to be(false)
       # Bootstrap-yield with no rounds → regular narration step ran.
       expect(transcript.narration).to eq("regular narration body")
-    end
-  end
-
-  describe "shadow planner hook" do
-    it "does not run or log when HARNESS_SHADOW_PLANNER is off" do
-      allow(Harness::Shadow).to receive(:enabled?).and_return(false)
-      expect(Harness::Shadow::Planner).not_to receive(:run)
-      expect(Harness::Shadow::Log).not_to receive(:append)
-      run(reasoning: [ { tool: "query_scene", args: {} } ], narration: "n", mode: :agentic)
-    end
-
-    it "is skipped in state-machine mode even when enabled (dispatcher plans live)" do
-      allow(Harness::Shadow).to receive(:enabled?).and_return(true)
-      expect(Harness::Shadow::Planner).not_to receive(:run)
-      expect(Harness::Shadow::Log).not_to receive(:append)
-      run(reasoning: [], narration: "n", mode: :state_machine)
-    end
-
-    it "runs the planner and appends one record when enabled (agentic mode)" do
-      allow(Harness::Shadow).to receive(:enabled?).and_return(true)
-      appended = []
-      allow(Harness::Shadow::Log).to receive(:append) { |record, **| appended << record }
-
-      run(reasoning: [ { tool: "query_scene", args: {} } ], narration: "n", mode: :agentic)
-
-      expect(appended.size).to eq(1)
-      rec = appended.first
-      expect(rec["input"]).to eq("player input")
-      expect(rec["agentic"]["tool_sequence"]).to eq([ "query_scene" ])
-      expect(rec["agentic"]["silent"]).to be(false)
-      # FakeAdapter.complete returns the narration string (not JSON), so the
-      # planner records a parse_error rather than a plan — proving the hook is
-      # wired end-to-end without depending on a JSON-capable fake.
-      expect(rec["planner"]).to be_a(Hash)
-    end
-
-    it "never breaks the turn when the planner raises" do
-      allow(Harness::Shadow).to receive(:enabled?).and_return(true)
-      allow(Harness::Shadow::Planner).to receive(:run).and_raise("planner exploded")
-
-      transcript = run(reasoning: [ { tool: "query_scene", args: {} } ], narration: "n", mode: :agentic)
-      expect(transcript.narration).to eq("n")
-      expect(transcript.error).to be_nil
     end
   end
 end

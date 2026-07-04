@@ -7,6 +7,7 @@ Input:
 - CANDIDATES: dormant historicals living in this city — named figures from past events (genesis backstory) who haven't surfaced in play yet. For each: their character_id, name, current subrole, and most recent events. You may WAKE one (the "reuse" array) — relocating them into this scene with a subrole — if their events suggest they could plausibly still be here. (Active, already-seen NPCs are NOT in this list and must never be relocated; the world moves them on its own.)
 - TARGET_COUNT: total characters we'd like present at this location after materialization (already counts ALREADY_PRESENT).
 - SLOTS_TO_FILL: TARGET_COUNT - ALREADY_PRESENT.count. The upper bound for new characters (wake + spawn combined).
+- VOCATIONS: the closed list of allowed "subrole" values. Every "subrole" you output MUST be copied exactly from this list.
 
 Output MUST be a JSON object of this exact shape:
 {
@@ -22,7 +23,7 @@ Output MUST be a JSON object of this exact shape:
   ],
   "spawn": [
     {
-      "subrole": "drunk_patron",
+      "subrole": "fisher",
       "properties": {
         "personality": "morose"
       }
@@ -34,12 +35,12 @@ HARD RULES:
 - "reuse" and "spawn" are arrays. Both MAY be empty.
 - Every "character_id" in "reuse" MUST appear in CANDIDATES. No inventing reuses.
 - Do NOT supply a "name" field for spawn entries. The engine assigns culturally-coherent names mechanically from the kingdom's name pool. Any name you write is ignored. Describe the character's role via "subrole" + "properties" only. This is the load-bearing rule that keeps the world out of generic-fantasy-name purgatory (no more Elara, no more Silas).
-- "subrole" is a non-empty free-text archetype string ("barkeep", "guard", "drunk_patron", "smith"). For a woken historical, this sets the role they take up now.
+- "subrole" is the character's trade as a CANONICAL bucket — one value copied exactly from the VOCATIONS list. This is what they ARE, a calling that travels with them, NEVER a role relative to THIS place: not "patron", "customer", "guest", "visitor", "drinker" — those turn to nonsense the moment they walk out. A man drinking in a tavern has the subrole of his trade (a fisher, a labourer), not "patron". Never a sentence or a phrase — one listed word. Pick the closest listed bucket. For a woken historical, this is the role they take up now.
 - "properties" is an object. May contain free-text fields like "personality", "disposition", "mood". May be an empty object. For a woken historical, properties MERGE into the existing character's properties; for spawn, they're the initial values. The system clears `dormant` on wake automatically — you do not need to manage it.
 - Combined count of reuse + spawn MUST NOT exceed SLOTS_TO_FILL.
 - Preference order: WAKE-DORMANT > SPAWN. A dormant historical who plausibly could still be here is the better fit; spawning fresh is the fallback. The point: every named historical from genesis has a real row, so the player can find them by walking into the right place — that only works if you actually wake them when they fit.
 - Consider each candidate's history when deciding. Only wake one if their events are recent enough that they could plausibly still be around (the founder is still alive, the missing courier never returned, the journeyman who left for the capital is back in town). If their events suggest they died, were exiled, or moved on, do NOT wake them — leave them dormant.
-- Characters should fit LOCATION's description and kind. A tavern gets a barkeep and patrons, not a guild treasurer. Guildhouses get guild members. Warehouses get laborers or guards.
+- Characters should fit LOCATION's description and kind. A tavern gets a barkeep and local drinkers named by their trade (fishermen, labourers), not a guild treasurer. Guildhouses get guild members. Warehouses get laborers or guards.
 - Characters should ALSO fit LOCATION.setting when present (terrain, economic_basis, size, wealth). The economic_basis is what the settlement works at — a `salt` town's people cut and haul salt, a `fishing` port's crew the boats, a `mining` camp's dig. A `hamlet` is poor and small (few people, humble trades); a rich `city` supports specialists. Let the basis colour even generic roles: the patrons in a salt-hamlet tavern are salt-crusted labourers, not fine merchants.
 
 Not every slot must be filled. A quiet, remote, or depopulated sublocation may legitimately have only one or two characters even if SLOTS_TO_FILL is higher. Choose what fits the scene. Return ONLY the JSON object. No markdown, no explanation.

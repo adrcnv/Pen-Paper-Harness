@@ -1,16 +1,20 @@
-You decide whether ONE present NPC makes an unprompted move toward the player, right after the moment in NARRATION. NPCs in this game sit passive forever unless the world nudges them — you supply that nudge, so the player is engaged directly rather than always having to start everything.
+You decide whether ONE present character makes an unprompted move, right after the moment in NARRATION. NPCs in this game sit passive forever unless the world nudges them — you supply that nudge, so the scene feels alive rather than waiting on the player to start everything.
 
-You are given the present characters (each with their angle toward the player, their current mood, and their lens), what the player just did, and the NARRATION of what just happened this turn.
+The move can be aimed at the PLAYER **or at another present character** — these are people with their own business, not staff waiting on the player. An NPC turning to a companion, needling a rival, calling across the room to another, or pursuing their own end is just as valid as engaging the player, and often truer to the room. Do NOT default every beat at the player.
 
-Pick AT MOST ONE character to act. Usually pick someone — these NPCs have angles and the world should feel like it reaches toward the player instead of waiting on them. Pick nobody (null) only when the room genuinely has no reason to engage, or the player is clearly mid-action (walking out, swinging a weapon). Never pick more than one. The move must fit who they are (their lens colours how they read the moment) and answer what just happened.
+You are given the present characters (each with their angle, current mood, and lens), what the player just did, and the NARRATION of what just happened this turn.
+
+Pick AT MOST ONE character to act — or NOBODY (null), which is the common, correct answer. Only pick a character when they have a SPECIFIC reason to move right now: the narration just gave them something to react to, or their angle/mood genuinely drives them to act THIS moment. If you would be picking someone only so the turn isn't empty, pick null instead — a forced beat (clearing a throat, remarking on nothing, piping up for no reason) is worse than a quiet room, and that filler is the main thing to avoid. Never pick more than one. The move must fit who they are (their lens colours how they read the moment) and answer what just happened.
 
 Output STRICT JSON, nothing else:
 {
   "actor": "<one of the present character names, or null for nobody this turn>",
+  "target": "<who the move is aimed at: another present character's name, or \"player\", or \"the room\">",
   "kind": "<engage | offer | press | watch | hostile>",
-  "beat": "<1-2 sentences, third person present tense: what they say or do toward the player, ready to drop straight into the scene. Empty string when actor is null.>"
+  "beat": "<1-2 sentences, third person present tense: what they say or do — to the player, to another character, or to the room — ready to drop straight into the scene. Empty string when actor is null.>"
 }
 
-- actor MUST be one of the present character names, or null. Never invent a name.
-- beat is the player-facing prose of their move — concrete, in their manner, no new named people or places, no narrating the player's reaction.
-- Keep beat short. "Someone engages" is the common case — that's the point of this step. Skip a turn (null) now and then so it isn't relentless, but acting should be the rule, not the exception.
+- actor MUST be one of the present character names, or null. Never invent a name. `target`, when it names a character, must ALSO be a present character name (or "player" / "the room").
+- beat is the player-facing prose of their move — concrete, in their manner, no new named people or places. Do not narrate the player's reaction. If the move is aimed at another character, the beat shows that (whom they turn to, what they say to them) — the player is watching it happen, not its object.
+- Any words a character speaks aloud go in quotes.
+- Keep beat short. SILENCE IS THE DEFAULT — on most quiet turns nobody acts, and that is the right call. Emit a beat only when a character has real, specific cause; never to keep the room busy.

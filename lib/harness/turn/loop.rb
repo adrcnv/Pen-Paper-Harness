@@ -128,13 +128,6 @@ module Harness
         transcript = Transcript.new(input: input, location_id: @context.player_location.id)
         logger.info { "[Turn::Loop] input=#{input.inspect} location=#{@context.player_location.name}" }
 
-        # Shadow-mode planner (diagnostic; OFF unless HARNESS_SHADOW_PLANNER).
-        # Runs BEFORE the live reasoning loop so it sees the same pre-turn
-        # scene the agentic loop sees. Executes nothing — just captures a plan
-        # we log alongside what the agentic loop actually does. Fully
-        # failure-isolated; never affects the live turn.
-        shadow_result = maybe_run_shadow_planner(input)
-
         begin
           if @mode == :agentic
             run_reasoning(input, transcript)
@@ -211,7 +204,15 @@ module Harness
           # supplying the engagement the LLM never volunteers). Skipped during
           # combat (it owns its own beats) and when the player is leaving the
           # scene (the agenda belongs to the scene being left).
-          unless combat_result || @context.scene_dirty || @scene_manager.active&.in_combat?
+          # Initiative is the world piping up on a turn the player did NOT spend
+          # talking. When the player was already in conversation this turn, the
+          # NPCs have just had their say through the conversation runner —
+          # bolting an unprompted beat on top is the "goober forced to speak"
+          # noise. So skip initiative on conversation turns; let it fire on the
+          # quiet turns (look around, move, examine) where the room would
+          # otherwise be silent.
+          player_conversed = transcript.runners_ran.include?("conversation")
+          unless combat_result || @context.scene_dirty || @scene_manager.active&.in_combat? || player_conversed
             beat = maybe_run_initiative(transcript, narration)
             if beat && !beat.empty?
               narration = "#{narration}\n\n#{beat}"
@@ -232,7 +233,6 @@ module Harness
         ensure
           transcript.persist!
           snapshot_db(transcript.turn_log) if transcript.turn_log
-          maybe_log_shadow_planner(shadow_result, transcript)
         end
 
         transcript
@@ -248,45 +248,6 @@ module Harness
         r = reason.to_s.strip
         r = "that action couldn't be carried out" if r.empty?
         "( ⚙ Out of character — the engine couldn't resolve: #{r}. Try rephrasing or being more specific. )"
-      end
-
-      # Run the shadow planner if enabled. Returns the planner result hash, or
-      # nil (disabled, or any failure — the diagnostic must never break play).
-      #
-      # Only meaningful in :agentic mode: it logs what the planner WOULD do
-      # next to what the agentic loop actually did. In :state_machine mode the
-      # dispatcher already plans live (and logs to play.log), so a second
-      # shadow plan is a redundant extra LLM call — skip it even if the flag is
-      # still set from an earlier diagnostic session.
-      def maybe_run_shadow_planner(input)
-        return nil unless ::Harness::Shadow.enabled?
-        if @mode != :agentic
-          logger.debug { "[Turn::Loop] shadow planner skipped (redundant in #{@mode} mode; dispatcher plans live)" }
-          return nil
-        end
-        ::Harness::Shadow::Planner.run(
-          context:       @context,
-          scene_manager: @scene_manager,
-          input:         input,
-          logger:        logger
-        )
-      rescue StandardError => e
-        logger.warn { "[Turn::Loop] shadow planner failed: #{e.class}: #{e.message}" }
-        nil
-      end
-
-      # Append the planner plan + the agentic actual to the JSONL sink. No-op
-      # when the planner didn't run. Failure-isolated.
-      def maybe_log_shadow_planner(shadow_result, transcript)
-        return unless shadow_result
-        record = ::Harness::Shadow::Log.record_for(
-          turn_number:    transcript.turn_log&.turn_number,
-          planner_result: shadow_result,
-          transcript:     transcript
-        )
-        ::Harness::Shadow::Log.append(record, logger: logger)
-      rescue StandardError => e
-        logger.warn { "[Turn::Loop] shadow log failed: #{e.class}: #{e.message}" }
       end
 
       def run_reasoning(input, transcript)
@@ -387,6 +348,7 @@ module Harness
           end
 
           outcome = runner.run(context: @context, scene: scene, input: input, step: step)
+          transcript.runners_ran << step.runner
           transcript.record_tool_calls(outcome.tool_calls)
           outcome.tool_calls.each do |tc|
             next unless tc["name"] == "propose_location"
@@ -433,10 +395,23 @@ module Harness
 
       def run_narration(input, transcript)
         ::Harness::CostTracker.in_subsystem(:narration) do
-          user = narration_user_message(input, transcript)
-          transcript.narration_prompt = user
-          prose = @adapter.complete(system: narration_preamble, user: user)
-          transcript.narration = compose_narration(prose, transcript.tool_calls)
+          dialogue = staged_dialogue_lines(transcript.tool_calls)
+          # Dialogue-only turn: the staged line IS the whole narration. Render
+          # it directly and DON'T call the model. Handed a line to narrate, the
+          # weak tier drops it and echoes the prior room description from
+          # recent_history verbatim (the observed bug). Nothing else this turn
+          # needs prose, so skipping the call also saves it. Mixed turns still
+          # narrate — the dialogue is stripped to a marker (sanitize) and
+          # rendered verbatim here, so it can neither be dropped nor doubled.
+          prose =
+            if dialogue.any? && !other_narratable?(transcript.tool_calls)
+              ""
+            else
+              user = narration_user_message(input, transcript)
+              transcript.narration_prompt = user
+              @adapter.complete(system: narration_preamble, user: user)
+            end
+          transcript.narration = compose_narration(prose, transcript.tool_calls, dialogue)
         end
       end
 
@@ -450,10 +425,41 @@ module Harness
       # model's context entirely (see sanitize_tool_calls_for_narration), so it
       # has nothing to fabricate from; any `[...]` it emits anyway is discarded
       # here and replaced by the authoritative Ruby-rendered lines.
-      def compose_narration(prose, tool_calls)
-        body = strip_leading_brackets(prose.to_s)
-        lines = resolve_bracket_lines(tool_calls)
-        lines.empty? ? body : "#{lines.join("\n")}\n\n#{body}"
+      # Assemble the final narration from three sources, in reading order:
+      #   1. resolve brackets  — mechanical dice lines (Ruby-rendered)
+      #   2. body              — the narration model's connective prose (empty
+      #                          on a dialogue-only turn, where no call was made)
+      #   3. staged dialogue   — the NPCs' actual spoken lines, verbatim
+      # Dialogue last so a framing beat (body) leads into the line. Both the
+      # brackets and the dialogue are authoritative Ruby, never the model's.
+      def compose_narration(prose, tool_calls, dialogue = nil)
+        body     = strip_leading_brackets(prose.to_s)
+        dialogue ||= staged_dialogue_lines(tool_calls)
+        parts = resolve_bracket_lines(tool_calls)
+        parts << body unless body.strip.empty?
+        parts.concat(dialogue)
+        parts.join("\n\n")
+      end
+
+      # The NPC lines staged this turn (the conversation runner marks each
+      # result.staged). Rendered verbatim, like the resolve bracket — `details`
+      # already reads as full prose (a physical beat + the quote).
+      def staged_dialogue_lines(tool_calls)
+        Array(tool_calls).filter_map do |tc|
+          next unless tc["name"] == "propose_event" && tc.dig("result", "staged")
+          line = tc.dig("args", "details").to_s.strip
+          line.empty? ? nil : line
+        end
+      end
+
+      # Does the turn hold anything BESIDES staged dialogue that the narration
+      # model needs to render? Rolls, movement, world changes, creations — yes.
+      # A pure conversation turn (only staged lines + internal reads) — no.
+      FRAMING_TOOLS = %w[resolve transition mutate_character start_combat
+                         propose_location propose_character propose_item].freeze
+
+      def other_narratable?(tool_calls)
+        Array(tool_calls).any? { |tc| FRAMING_TOOLS.include?(tc["name"]) }
       end
 
       def strip_leading_brackets(text)
@@ -836,8 +842,18 @@ module Harness
       # mood line.
       NARRATION_HIDDEN_FIELDS = %w[internal_state agenda].freeze
 
+      # A character's staged line is rendered verbatim by compose_narration.
+      # The model must never see the words — handed them, it drops, rewords, or
+      # echoes them. Leave a marker it can write connective tissue around.
+      STAGED_DIALOGUE_MARKER =
+        "(spoke aloud — their exact line is rendered separately; do NOT repeat, reword, or invent it)".freeze
+
       def sanitize_tool_calls_for_narration(tool_calls)
         tool_calls.map { |tc|
+          if tc["name"] == "propose_event" && tc.dig("result", "staged")
+            args = (tc["args"] || {}).merge("details" => STAGED_DIALOGUE_MARKER)
+            next tc.merge("args" => args)
+          end
           next tc unless tc["name"] == "query_scene"
           chars = tc.dig("result", "present_characters")
           next tc unless chars.is_a?(Array)

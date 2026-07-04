@@ -13,8 +13,10 @@ RSpec.describe Harness::Scene::Initiative do
     Class.new { define_method(:complete) { |system:, user:| body } }.new
   end
 
-  def emit(actor:, kind: "engage", beat: "leans in toward the player and says a few low words")
-    { "actor" => actor, "kind" => kind, "beat" => (actor.nil? ? "" : beat) }.to_json
+  def emit(actor:, kind: "engage", beat: "leans in toward the player and says a few low words", target: nil)
+    h = { "actor" => actor, "kind" => kind, "beat" => (actor.nil? ? "" : beat) }
+    h["target"] = target if target
+    h.to_json
   end
 
   def npc(name:, subrole: "barkeep", properties: {})
@@ -81,6 +83,20 @@ RSpec.describe Harness::Scene::Initiative do
     t = transcript
     expect(run(a, t)).to be_nil
     expect(names(t)).not_to include("propose_event")
+  end
+
+  it "aims a beat at ANOTHER present character when target names them (NPC-to-NPC)" do
+    maren = npc(name: "Maren", subrole: "barkeep")
+    korr  = npc(name: "Korr", subrole: "patron")
+    a = active_with(present: [ maren, korr ], agendas: { maren.id => "wants to needle Korr about his tab" })
+    context.llm_nuance = stub_llm(emit(actor: "Maren", target: "Korr",
+      beat: "Maren turns to Korr and asks, loud enough for the room, when he means to settle his tab."))
+    t = transcript
+    run(a, t)
+    rec = t.tool_calls.find { |tc| tc["name"] == "propose_event" }
+    targeted = rec.dig("args", "participants").find { |p| p["role"] == "target" }
+    expect(targeted["character_id"]).to eq(korr.id)         # aimed at Korr, not the player
+    expect(rec.dig("args", "details")).to match(/toward Korr/)
   end
 
   it "tags a watch-kind beat's player participant as a witness, not a target" do

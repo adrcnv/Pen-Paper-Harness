@@ -18,8 +18,15 @@ module Harness
     RULE_COLOR  = "\e[2m"    # dim
     DIM         = "\e[2m"
     QUOTE_COLOR = "\e[32m"   # green — spoken text
-    # Quoted speech: straight or curly double quotes (the local model uses both).
-    QUOTE_RE    = /["“][^"”\n]*["”]/
+    # Quoted speech — the local model uses double AND single quotes freely, so
+    # we colour both rather than fighting it in the prompt. Two branches:
+    #   1. double (straight/curly): unambiguous, simple.
+    #   2. single (straight/curly): ambiguous with apostrophes (rain's, doesn't),
+    #      so a delimiter is a quote NOT flanked by letters — the opening isn't
+    #      preceded by a letter, the closing isn't followed by one — while a
+    #      word-internal apostrophe (quote-followed-by-letter) is allowed THROUGH
+    #      the span rather than ending it. So 'The rain's steady' colours whole.
+    QUOTE_RE    = /["“][^"”\n]*["”]|(?<!\p{L})['‘](?:[^'‘’\n]|['’](?=\p{L}))*['’](?!\p{L})/
     # An optional trailing possessive, so a known name colours through its 's
     # ("Hilde's" → all cyan), straight or curly apostrophe.
     POSSESSIVE  = /(?:['’]s)?/
@@ -69,6 +76,22 @@ module Harness
       bar  = "─" * ((width - 3) / 2)
       line = "#{bar}◆#{bar}"
       color ? "#{RULE_COLOR}#{line}#{RESET}" : line
+    end
+
+    COMBAT_COLOR = "\e[1;31m" # bold red — you are in a fight
+
+    # A mechanical "you are in combat" banner, shown after the turn's prose
+    # while a fight is running. The state machine swaps to the combat tool
+    # surface silently, so without this the player can't tell a brawl from a
+    # chat (the failure this fixes). `allies` / `foes` are arrays of
+    # [name, current_hp, max_hp]; the player should be among allies.
+    def combat_banner(round:, allies:, foes:, color: true)
+      head  = "⚔ IN COMBAT — round #{round}"
+      you   = allies.map { |n, hp, mx| "#{n} #{hp}/#{mx}" }.join("   ")
+      them  = foes.map   { |n, hp, mx| "#{n} #{hp}/#{mx}" }.join("   ")
+      lines = [ head, "  you:  #{you}", "  foes: #{them}" ]
+      return lines.join("\n") unless color
+      "#{COMBAT_COLOR}#{head}#{RESET}\n#{DIM}  you:  #{you}\n  foes: #{them}#{RESET}"
     end
 
     # --- internals -----------------------------------------------------------

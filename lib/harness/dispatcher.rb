@@ -1,7 +1,7 @@
 module Harness
   # Live dispatcher: classifies the player input into an ordered PLAN of
-  # runner steps, and owns the runner registry. This is the shadow planner
-  # promoted to drive execution instead of just logging.
+  # runner steps, and owns the runner registry. Wraps Harness::Planner (the
+  # model call) and turns its result into Step structs for the executor.
   #
   # Returns Step structs. Per locked decision #1, a Step carries the runner
   # label + the planner's intent prose + arg HINTS only — never bound ids.
@@ -31,7 +31,7 @@ module Harness
 
     def plan(input)
       res = ::Harness::CostTracker.in_subsystem(:dispatcher) do
-        ::Harness::Shadow::Planner.plan_for(
+        ::Harness::Planner.plan_for(
           context: @context, scene_manager: @scene_manager, input: input, logger: @logger
         )
       end

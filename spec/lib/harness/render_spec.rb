@@ -77,6 +77,26 @@ RSpec.describe Harness::Render do
       expect(out).to include("#{K}Maren#{Q}")
       expect(out).to start_with(%(She said #{Q}"find ))
     end
+
+    it "colors single-quoted speech green (the model uses single quotes too)" do
+      out = described_class.narration(%(She said 'good morning' softly.), known_names: [], color: true)
+      expect(out).to include("#{Q}'good morning'#{R}")
+    end
+
+    it "spans a word-internal apostrophe instead of stopping at it" do
+      out = described_class.narration(%(Astrid said 'the rain's been steady' and turned.), known_names: [], color: true)
+      expect(out).to include("#{Q}'the rain's been steady'#{R}")
+    end
+
+    it "colors curly single-quoted speech green" do
+      out = described_class.narration("She said ‘good morning’ softly.", known_names: [], color: true)
+      expect(out).to include("#{Q}‘good morning’#{R}")
+    end
+
+    it "does NOT treat a bare possessive apostrophe as a quote" do
+      out = described_class.narration("Hilde's ledger sits open on the table.", known_names: [], color: true)
+      expect(out).not_to include(Q)
+    end
   end
 
   describe ".rule" do
@@ -88,6 +108,24 @@ RSpec.describe Harness::Render do
       r = described_class.rule(width: 21, color: true)
       expect(r).to start_with(Harness::Render::RULE_COLOR)
       expect(r).to end_with(Harness::Render::RESET)
+    end
+  end
+
+  describe ".combat_banner" do
+    let(:allies) { [ [ "Picolo", 19, 19 ] ] }
+    let(:foes)   { [ [ "Caelis Joravor", 16, 16 ] ] }
+
+    it "renders round, allies, and foes as plain text when color is off" do
+      out = described_class.combat_banner(round: 2, allies: allies, foes: foes, color: false)
+      expect(out).to include("IN COMBAT — round 2")
+      expect(out).to include("Picolo 19/19")
+      expect(out).to include("Caelis Joravor 16/16")
+      expect(out).not_to include("\e[")
+    end
+
+    it "paints the heading combat-red when color is on" do
+      out = described_class.combat_banner(round: 1, allies: allies, foes: foes, color: true)
+      expect(out).to start_with(Harness::Render::COMBAT_COLOR)
     end
   end
 end

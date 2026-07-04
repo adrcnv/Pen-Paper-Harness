@@ -7,6 +7,11 @@ module Harness
       attr_accessor :input, :reasoning_prompt, :narration, :narration_prompt,
                     :location_id, :error, :combat, :unresolved, :notice
       attr_reader :tool_calls
+      # Names of the runners that executed this turn (state-machine path), in
+      # order. Lets post-turn consumers know what kind of turn this was — e.g.
+      # initiative skips a turn where the player was already in conversation, so
+      # an NPC isn't forced to pipe up on top of the dialogue they just had.
+      attr_accessor :runners_ran
 
       def initialize(input:, location_id: nil)
         @input            = input
@@ -27,6 +32,7 @@ module Harness
         # wall-break so they know it was an engine limit, not an in-world
         # refusal, and can rephrase. The frontend prints it after narration.
         @notice           = nil
+        @runners_ran      = []
       end
 
       def record_tool_call(call, result)

@@ -304,4 +304,57 @@ RSpec.describe Harness::LLM::OpenAICompatAdapter do
       expect(http.calls.size).to eq(2)
     end
   end
+
+  describe "#embed" do
+    def embed_response(vectors)
+      { status: 200,
+        body: JSON.generate("object" => "list",
+          "data" => vectors.each_with_index.map { |v, i| { "index" => i, "object" => "embedding", "embedding" => v } }) }
+    end
+
+    it "returns a single vector for a String input and posts to /embeddings" do
+      http = stub_http([ embed_response([ [ 0.1, 0.2, 0.3 ] ]) ])
+      out  = adapter(http).embed("hello")
+      expect(out).to eq([ 0.1, 0.2, 0.3 ])
+      expect(http.calls.first[:url]).to end_with("/v1/embeddings")
+      expect(http.calls.first[:body]).to eq("model" => "test-model", "input" => [ "hello" ])
+    end
+
+    it "returns vectors in input order for an Array input (mget batch)" do
+      http = stub_http([ embed_response([ [ 1.0, 0.0 ], [ 0.0, 1.0 ] ]) ])
+      out  = adapter(http).embed([ "a", "b" ])
+      expect(out).to eq([ [ 1.0, 0.0 ], [ 0.0, 1.0 ] ])
+      expect(http.calls.size).to eq(1)
+    end
+
+    it "re-sorts by the response index (never trusts array order)" do
+      scrambled = { status: 200, body: JSON.generate("data" => [
+        { "index" => 1, "embedding" => [ 0.0, 1.0 ] },
+        { "index" => 0, "embedding" => [ 1.0, 0.0 ] }
+      ]) }
+      out = adapter(stub_http([ scrambled ])).embed([ "a", "b" ])
+      expect(out).to eq([ [ 1.0, 0.0 ], [ 0.0, 1.0 ] ])
+    end
+
+    it "chunks a large array to EMBED_BATCH per request" do
+      described_class::EMBED_BATCH.then do |cap|
+        texts = Array.new(cap + 5) { |i| "t#{i}" }
+        http  = stub_http([
+          embed_response(Array.new(cap) { [ 0.0 ] }),
+          embed_response(Array.new(5)   { [ 0.0 ] })
+        ])
+        out = adapter(http).embed(texts)
+        expect(out.size).to eq(cap + 5)
+        expect(http.calls.size).to eq(2)
+        expect(http.calls.first[:body]["input"].size).to eq(cap)
+        expect(http.calls.last[:body]["input"].size).to eq(5)
+      end
+    end
+
+    it "returns [] for an empty array without calling the server" do
+      http = stub_http([])
+      expect(adapter(http).embed([])).to eq([])
+      expect(http.calls).to be_empty
+    end
+  end
 end

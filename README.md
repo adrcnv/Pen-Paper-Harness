@@ -1,9 +1,6 @@
 # Harness
 
-A solo tabletop-RPG engine where a Ruby/SQLite core owns the world and an LLM
-plays Dungeon Master. The core handles dice, state, time, and history. The
-LLM reads your input, picks tools to enact your intent, and narrates what
-happened. Neither side can bypass the other.
+1
 
 > **Status:** personal exploratory project. Plays end-to-end against a real
 > model, but it's a sandbox — expect rough edges, half-built subsystems, and

@@ -71,58 +71,49 @@ RSpec.describe Harness::Runners::Conversation do
     expect(ev.details.to_s).to match(/have not heard of the Shadow Hand/)
   end
 
-  it "realizes a claimed person into a grounded row (GROUND v0)" do
-    allow(Harness::Character::Hatchery).to receive(:spawn) do |**kw|
-      Npc.create!(name: kw[:name], subrole: kw[:subrole], location: kw[:location], properties: kw[:properties] || {})
+  # Named people are now realized by the post-turn Knowledge::Capture pass (the
+  # single entity pipe), not a per-emit `claims` field. The capture LLM returns
+  # a `people` list; capture hands each to the Realizer.
+  def capture_people(*people, dialogue: "Ask for Harek at the relay.")
+    context_with do |full|
+      if full.include?("WORLD MEMORY")
+        { "facts" => [], "people" => people }.to_json
+      else
+        { "speak" => true, "dialogue" => { "summary" => "points", "prose" => dialogue } }.to_json
+      end
     end
-    ctx = context_with do
-      { "speak" => true,
-        "dialogue" => { "summary" => "points the way", "prose" => "Ask for Harek at the relay." },
-        "claims" => { "name" => "Harek", "subrole" => "contact", "gist" => "the relay contact" } }.to_json
-    end
-    scene = Harness::Tools::QueryScene.build(ctx)
-
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "who do I deliver to?", step: step)
-
-    expect(outcome.status).to eq(:ok)
-    claim_call = outcome.tool_calls.find { |t| t["name"] == "realize_claim" }
-    expect(claim_call).to be_present
-    expect(claim_call["result"]).to include("minted" => true)
-    expect(Npc.find_by(name: "Harek")).to be_present
   end
 
-  it "realizes a ROLE-reference claim with no name (the picker names them)" do
-    # The NPC referred to someone by role, not name ("my brother"), so claims
-    # carries a gist but no `name`. This MUST still realize — the old name-only
-    # guard silently dropped these even though the Realizer handles them.
+  it "realizes a person named in dialogue via the capture pipe" do
     allow(Harness::Character::Hatchery).to receive(:spawn) do |**kw|
       Npc.create!(name: kw[:name], subrole: kw[:subrole], location: kw[:location], properties: kw[:properties] || {})
     end
-    ctx = context_with do
-      { "speak" => true,
-        "dialogue" => { "summary" => "points to kin", "prose" => "My brother runs the relay — ask for him." },
-        "claims" => { "subrole" => "courier", "gist" => "the speaker's brother who runs the relay" } }.to_json
-    end
+    ctx = capture_people({ "name" => "Harek", "subrole" => "contact", "gist" => "the relay contact", "by" => "Tomas" })
     scene = Harness::Tools::QueryScene.build(ctx)
 
     expect {
-      @outcome = described_class.new.run(context: ctx, scene: scene, input: "who runs the relay?", step: step)
+      described_class.new.run(context: ctx, scene: scene, input: "who do I deliver to?", step: step)
     }.to change(Npc, :count).by(1)
-
-    claim_call = @outcome.tool_calls.find { |t| t["name"] == "realize_claim" }
-    expect(claim_call).to be_present
-    expect(claim_call["result"]).to include("minted" => true)
-    expect(claim_call.dig("result", "character_id")).to be_present
+    expect(Npc.find_by(name: "Harek")).to be_present
   end
 
-  it "does not duplicate a claimed person who already exists" do
+  it "realizes a ROLE-reference person with no name (the picker names them) via capture" do
+    allow(Harness::Character::Hatchery).to receive(:spawn) do |**kw|
+      Npc.create!(name: kw[:name], subrole: kw[:subrole], location: kw[:location], properties: kw[:properties] || {})
+    end
+    ctx = capture_people({ "subrole" => "courier", "gist" => "the speaker's brother who runs the relay", "by" => "Tomas" },
+                         dialogue: "My brother runs the relay — ask for him.")
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    expect {
+      described_class.new.run(context: ctx, scene: scene, input: "who runs the relay?", step: step)
+    }.to change(Npc, :count).by(1)
+  end
+
+  it "does not duplicate a person who already exists (links instead) via capture" do
     allow(Harness::Character::Hatchery).to receive(:spawn).and_call_original
     Npc.create!(name: "Harek", subrole: "contact", location: tavern)
-    ctx = context_with do
-      { "speak" => true,
-        "dialogue" => { "summary" => "points the way", "prose" => "Ask for Harek." },
-        "claims" => { "name" => "Harek", "subrole" => "contact" } }.to_json
-    end
+    ctx = capture_people({ "name" => "Harek", "subrole" => "contact", "by" => "Tomas" })
     scene = Harness::Tools::QueryScene.build(ctx)
 
     expect {
@@ -150,6 +141,29 @@ RSpec.describe Harness::Runners::Conversation do
 
     expect(captured).to include("exchange_so_far", "who runs this place?")          # the shared thread
     expect(captured).to include("gruff, taciturn", "wary of strangers", "wants the player to drink or leave") # the soul
+  end
+
+  it "surfaces the real nearby places into the voicing call (grounding against invented duplicates)" do
+    # The grounding-first lever: the NPC's own surroundings are in its context,
+    # so when it reaches for 'the sawmill' the REAL one is right there to name —
+    # it can't quietly coin a second.
+    town = Location.create!(name: "Ashford")
+    tavern.update!(parent_id: town.id)
+    Location.create!(name: "the Old Sawmill", parent_id: town.id, description: "the town's lumber mill")
+    captured = nil
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full| captured = full; { "speak" => false }.to_json })
+    ctx.active_scene = Harness::Scene::Active.new(
+      location: tavern, snapshot: nil, narrations: [], internal_state: {},
+      agendas: {}, extras: [], entered_at_game_time: 0
+    )
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "where's the timber milled?", step: step)
+
+    expect(captured).to include("nearby_places")
+    expect(captured).to include("the Old Sawmill") # the real mill is in the prompt
+    expect(captured).to include("Ashford")         # so is the parent settlement
   end
 
   it "does NOT expose another present character's private events to a character's call (theory-of-mind boundary)" do
@@ -190,7 +204,133 @@ RSpec.describe Harness::Runners::Conversation do
     scene = Harness::Tools::QueryScene.build(ctx)
 
     described_class.new.run(context: ctx, scene: scene, input: "hello everyone", step: step("greet the room"))
-    expect(polled.size).to eq(2)
+    # Count VOICING calls only — the post-turn capture pass (WORLD MEMORY) is orthogonal.
+    voicing = polled.reject { |p| p.include?("WORLD MEMORY") || p.include?("filter stored facts") }
+    expect(voicing.size).to eq(2)
+  end
+
+  describe "knowledge recall (substantive speaker)" do
+    it "recalls a gate-approved fact into the substantive speaker's voicing context" do
+      Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
+      voicing_prompt = nil
+      ctx = context_with do |full|
+        if full.include?("filter stored facts")   # the relevance gate (synthetic ids: fact is candidate #1)
+          { "relevant" => [ 1 ] }.to_json
+        else                                       # the barkeep's voicing
+          voicing_prompt = full
+          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Aye, repealed last winter." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "is there still a salt tithe?", step: step("ask about the tithe"))
+      expect(voicing_prompt).to include("The salt tithe was repealed last winter.")
+    end
+
+    it "feeds the NPC's own memories into the SAME relevance gate as facts (fusion)" do
+      Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
+      Harness::Event::ForwardAppender.append(
+        game_time: 0, scope: "personal", location: tavern,
+        details: { "narrative" => { "trigger" => "saw", "details" => "The ferryman drowned at the crossing." } },
+        participants: [ { character: barkeep, role: "subject" } ]
+      )
+      gate_prompt = nil
+      ctx = context_with do |full|
+        if full.include?("filter stored facts")
+          gate_prompt = full
+          { "relevant" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "x", "prose" => "Hm." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "what happened at the crossing?", step: step)
+      expect(gate_prompt).to include("The salt tithe was repealed")  # the fact
+      expect(gate_prompt).to include("ferryman drowned")             # the memory — both through one gate
+    end
+
+    it "injects nothing when the gate rejects every candidate" do
+      Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
+      voicing_prompt = nil
+      ctx = context_with do |full|
+        if full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        else
+          voicing_prompt = full
+          { "speak" => true, "dialogue" => { "summary" => "shrugs", "prose" => "Couldn't say." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "is there still a salt tithe?", step: step)
+      expect(voicing_prompt).not_to include("The salt tithe was repealed")
+    end
+
+    it "does not recall (no gate call) when the NPC has no matching knowledge" do
+      gate_called = false
+      ctx = context_with do |full|
+        gate_called = true if full.include?("filter stored facts")
+        { "speak" => true, "dialogue" => { "summary" => "greets", "prose" => "What'll it be?" } }.to_json
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "anything worth knowing?", step: step)
+      expect(gate_called).to be(false)
+    end
+  end
+
+  describe "knowledge capture" do
+    it "captures a world-fact from spoken dialogue" do
+      ctx = context_with do |full|
+        if full.include?("WORLD MEMORY")   # the capture call
+          { "facts" => [ { "content" => "The salt tithe was repealed last winter.", "subrole" => nil, "scope" => "local", "min_int" => nil } ] }.to_json
+        else                               # the barkeep's voicing call
+          { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "They say the salt tithe was repealed last winter." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      expect {
+        described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
+      }.to change(Knowledge, :count).by(1)
+      expect(Knowledge.last.content).to match(/salt tithe/)
+    end
+
+    it "SKIPS capture when recall grounded the substantive speaker (gate arms capture)" do
+      Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
+      capture_ran = false
+      ctx = context_with do |full|
+        if full.include?("filter stored facts")   # gate grounds (candidate #1 relevant) → disarms capture
+          { "relevant" => [ 1 ] }.to_json
+        elsif full.include?("WORLD MEMORY")        # capture — must NOT run
+          capture_ran = true
+          { "facts" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Aye, repealed." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+      described_class.new.run(context: ctx, scene: scene, input: "is there still a tithe?", step: step)
+      expect(capture_ran).to be(false)
+    end
+
+    it "still captures on a recall MISS (gate returns none)" do
+      Knowledge.create!(content: "An unrelated fact about the docks.", location_id: tavern.id, current: true, game_time: 0)
+      ctx = context_with do |full|
+        if full.include?("filter stored facts")
+          { "relevant" => [] }.to_json           # MISS → arms capture
+        elsif full.include?("WORLD MEMORY")
+          { "facts" => [ { "content" => "The bridge toll doubled at midsummer.", "subrole" => nil, "scope" => "local", "min_int" => nil } ] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "x", "prose" => "The toll doubled." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+      expect {
+        described_class.new.run(context: ctx, scene: scene, input: "what's new?", step: step)
+      }.to change(Knowledge, :count).by(1)
+    end
   end
 
   it "re-dispatches when no one is present" do
@@ -268,6 +408,23 @@ RSpec.describe Harness::Runners::Conversation do
       say = @outcome.tool_calls.find { |t| t["name"] == "propose_event" && t.dig("result", "staged") }
       actor_ids = say.dig("args", "participants").select { |p| p["role"] == "actor" }.map { |p| p["character_id"] }
       expect(actor_ids).to eq([ new_id ]) # the recruit speaks, not the barkeep
+    end
+
+    it "never polls an UNADDRESSED ambient extra (a horse doesn't fill a speaker slot or get minted)" do
+      voiced = []
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+        llm_nuance: StubLLM.new { |full| voiced << full; { "speak" => false }.to_json })
+      ctx.active_scene = Harness::Scene::Active.new(
+        location: tavern,
+        snapshot: Harness::Scene::Assembler.for(location: tavern),
+        extras: [ "a lone horse whinnies softly from the stabling out back" ]
+      )
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      expect {
+        described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step("greet the barkeep"))
+      }.not_to change(Npc, :count)                          # no phantom character minted
+      expect(voiced.any? { |v| v.include?("lone horse") }).to be(false) # the horse was never voiced
     end
   end
 end

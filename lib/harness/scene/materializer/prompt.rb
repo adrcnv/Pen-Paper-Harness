@@ -20,7 +20,9 @@ module Harness
             "already_present" => already_present.map { |c| present_hash(c) },
             "candidates"      => candidates.map { |c| candidate_hash(c) },
             "target_count"    => target_count,
-            "slots_to_fill"   => slots_to_fill
+            "slots_to_fill"   => slots_to_fill,
+            # Closed vocabulary the "subrole" field MUST be drawn from (exact).
+            "vocations"       => ::Harness::Vocations.all
           }
         end
 

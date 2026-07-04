@@ -407,7 +407,10 @@ loop do
   # mid-line) at the prompt — the plain $stdin.gets had neither. `true` adds the
   # entered line to history. Returns nil on EOF (Ctrl-D), raises on Ctrl-C.
   begin
-    input = Reline.readline("> ", true)
+    # Combat-aware prompt: a persistent ⚔ marker at the input line so the
+    # player can't mistake a running fight for ongoing dialogue.
+    prompt = context.active_scene&.in_combat? ? "⚔ > " : "> "
+    input = Reline.readline(prompt, true)
   rescue Interrupt
     puts
     puts "Bye."
@@ -897,6 +900,25 @@ loop do
     puts
     puts transcript.notice
   end
+
+  # Combat status banner. The turn loop swaps to the combat tool surface
+  # silently; surface it mechanically so the player knows a fight is on (and
+  # who's in it) rather than mistaking it for ongoing dialogue.
+  active = context.active_scene
+  if active&.in_combat?
+    state    = active.combat
+    player   = Player.first
+    my_side  = state.side_of(player.id)
+    rows     = state.all_combatant_ids.filter_map do |cid|
+      c = Character.find_by(id: cid)
+      next unless c
+      [ state.side_of(cid), [ c.name, c.current_hp, c.max_hp ] ]
+    end
+    allies, foes = rows.partition { |side, _| side == my_side }.map { |grp| grp.map(&:last) }
+    puts
+    puts Harness::Render.combat_banner(round: state.round, allies: allies, foes: foes, color: color)
+  end
+
   puts
   turn_cost = Harness::CostTracker.turn_total
   if turn_cost > 0

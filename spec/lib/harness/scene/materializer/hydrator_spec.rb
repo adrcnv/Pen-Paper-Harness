@@ -17,11 +17,11 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
   describe "happy path" do
     it "returns normalized reuse and spawn entries" do
       out = hydrate(
-        "reuse" => [ { "character_id" => 17, "subrole" => "smuggler", "properties" => { "personality" => "cagey" } } ],
-        "spawn" => [ { "subrole" => "drunk_patron", "properties" => {} } ]
+        "reuse" => [ { "character_id" => 17, "subrole" => "bandit", "properties" => { "personality" => "cagey" } } ],
+        "spawn" => [ { "subrole" => "fisher", "properties" => {} } ]
       )
-      expect(out["reuse"].first).to include("character_id" => 17, "subrole" => "smuggler")
-      expect(out["spawn"].first).to include("subrole" => "drunk_patron")
+      expect(out["reuse"].first).to include("character_id" => 17, "subrole" => "bandit")
+      expect(out["spawn"].first).to include("subrole" => "fisher")
       # Post-Phase-3: names are mechanical; hydrator does not emit a name field.
       expect(out["spawn"].first).not_to have_key("name")
     end
@@ -33,7 +33,7 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
     end
 
     it "defaults missing properties to empty hash" do
-      out = hydrate("reuse" => [ { "character_id" => 17, "subrole" => "smuggler" } ], "spawn" => [])
+      out = hydrate("reuse" => [ { "character_id" => 17, "subrole" => "bandit" } ], "spawn" => [])
       expect(out["reuse"].first["properties"]).to eq({})
     end
   end
@@ -55,13 +55,13 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
   describe "reuse validation" do
     it "rejects character_id not in CANDIDATES" do
       expect {
-        hydrate("reuse" => [ { "character_id" => 999, "subrole" => "x" } ], "spawn" => [])
+        hydrate("reuse" => [ { "character_id" => 999, "subrole" => "smith" } ], "spawn" => [])
       }.to raise_error(described_class::InvalidOutput, /not in CANDIDATES/)
     end
 
     it "rejects non-integer character_id" do
       expect {
-        hydrate("reuse" => [ { "character_id" => "17", "subrole" => "x" } ], "spawn" => [])
+        hydrate("reuse" => [ { "character_id" => "17", "subrole" => "smith" } ], "spawn" => [])
       }.to raise_error(described_class::InvalidOutput, /character_id must be an integer/)
     end
 
@@ -69,8 +69,8 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
       expect {
         hydrate(
           "reuse" => [
-            { "character_id" => 17, "subrole" => "x" },
-            { "character_id" => 17, "subrole" => "y" }
+            { "character_id" => 17, "subrole" => "smith" },
+            { "character_id" => 17, "subrole" => "fisher" }
           ],
           "spawn" => []
         )
@@ -80,13 +80,33 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
     it "rejects missing subrole" do
       expect {
         hydrate("reuse" => [ { "character_id" => 17 } ], "spawn" => [])
-      }.to raise_error(described_class::InvalidOutput, /subrole must be a non-empty string/)
+      }.to raise_error(described_class::InvalidOutput, /subrole.*must be one of the VOCATIONS list/)
     end
 
     it "rejects non-hash properties" do
       expect {
-        hydrate("reuse" => [ { "character_id" => 17, "subrole" => "x", "properties" => "bad" } ], "spawn" => [])
+        hydrate("reuse" => [ { "character_id" => 17, "subrole" => "smith", "properties" => "bad" } ], "spawn" => [])
       }.to raise_error(described_class::InvalidOutput, /properties must be an object/)
+    end
+  end
+
+  describe "subrole validation" do
+    it "rejects a subrole that is not in the closed VOCATIONS list" do
+      expect {
+        hydrate("reuse" => [], "spawn" => [ { "subrole" => "patron" } ])
+      }.to raise_error(described_class::InvalidOutput, /subrole.*must be one of the VOCATIONS list/)
+    end
+
+    it "rejects a free-text sentence subrole" do
+      expect {
+        hydrate("reuse" => [], "spawn" => [ { "subrole" => "wealthy merchant with flour debts" } ])
+      }.to raise_error(described_class::InvalidOutput, /subrole.*must be one of the VOCATIONS list/)
+    end
+
+    it "accepts an extras (non-building) subrole" do
+      expect {
+        hydrate("reuse" => [], "spawn" => [ { "subrole" => "bandit" } ])
+      }.not_to raise_error
     end
   end
 
@@ -99,7 +119,7 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
     it "still requires a subrole" do
       expect {
         hydrate("reuse" => [], "spawn" => [ { "properties" => {} } ])
-      }.to raise_error(described_class::InvalidOutput, /subrole must be a non-empty string/)
+      }.to raise_error(described_class::InvalidOutput, /subrole.*must be one of the VOCATIONS list/)
     end
   end
 
@@ -107,8 +127,8 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
     it "rejects total reuse+spawn exceeding SLOTS_TO_FILL" do
       expect {
         hydrate(
-          "reuse" => [ { "character_id" => 17, "subrole" => "x" }, { "character_id" => 23, "subrole" => "x" } ],
-          "spawn" => [ { "subrole" => "x" }, { "subrole" => "x" } ]
+          "reuse" => [ { "character_id" => 17, "subrole" => "smith" }, { "character_id" => 23, "subrole" => "smith" } ],
+          "spawn" => [ { "subrole" => "smith" }, { "subrole" => "smith" } ]
           # total 4, slots 3
         )
       }.to raise_error(described_class::InvalidOutput, /exceeds SLOTS_TO_FILL/)
@@ -117,15 +137,15 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
     it "accepts total equal to SLOTS_TO_FILL" do
       expect {
         hydrate(
-          "reuse" => [ { "character_id" => 17, "subrole" => "x" } ],
-          "spawn" => [ { "subrole" => "x" }, { "subrole" => "x" } ]
+          "reuse" => [ { "character_id" => 17, "subrole" => "smith" } ],
+          "spawn" => [ { "subrole" => "smith" }, { "subrole" => "smith" } ]
         )
       }.not_to raise_error
     end
 
     it "accepts fewer than SLOTS_TO_FILL (quiet scene)" do
       expect {
-        hydrate("reuse" => [], "spawn" => [ { "subrole" => "x" } ])
+        hydrate("reuse" => [], "spawn" => [ { "subrole" => "smith" } ])
       }.not_to raise_error
     end
   end

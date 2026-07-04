@@ -98,10 +98,17 @@ module Harness
           end
         end
 
+        # `subrole` here is the character's trade as a CANONICAL bucket — it
+        # MUST be an exact member of the closed Vocations vocabulary. This is
+        # what keeps materialized townsfolk out of free-text sentence-drift
+        # ("wealthy merchant with flour debts") and gives the knowledge facet a
+        # clean value to gate on. Retry-on-mismatch steers the weak model onto
+        # the list. (Genesis/quests write wider free-text subroles by a
+        # different path; only the materializer enforces the vocabulary.)
         def validate_subrole(e, prefix)
           s = e["subrole"]
-          unless s.is_a?(String) && !s.strip.empty?
-            @errors << "#{prefix}: subrole must be a non-empty string"
+          unless ::Harness::Vocations.valid?(s)
+            @errors << "#{prefix}: subrole=#{s.inspect} must be one of the VOCATIONS list"
           end
         end
 

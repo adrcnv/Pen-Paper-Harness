@@ -29,6 +29,17 @@ module Harness
             .map    { |t| build_spec(t, rng) }
         end
 
+        # Every distinct proprietor subrole the manifest can produce, across
+        # ALL economic baseis (unfiltered). The building-trade half of the
+        # canonical vocation vocabulary (Harness::Vocations) — kept derived
+        # from this data table so the two can't drift.
+        def all_subroles
+          d = data
+          rows  = (d["universal"] || []) + (d["by_size"] || []) + (d["by_wealth"] || [])
+          rows += (d["by_basis"] || {}).values.flatten
+          rows.filter_map { |r| r["subrole"] }.uniq
+        end
+
         private
 
         def candidate_templates(basis)
