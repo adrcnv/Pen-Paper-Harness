@@ -103,7 +103,7 @@ module Harness
         # what keeps materialized townsfolk out of free-text sentence-drift
         # ("wealthy merchant with flour debts") and gives the knowledge facet a
         # clean value to gate on. Retry-on-mismatch steers the weak model onto
-        # the list. (Genesis/quests write wider free-text subroles by a
+        # the list. (Genesis writes wider free-text subroles by a
         # different path; only the materializer enforces the vocabulary.)
         def validate_subrole(e, prefix)
           s = e["subrole"]

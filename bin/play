@@ -347,6 +347,20 @@ context = Harness::Turn::Context.new(
   game_time:       initial_game_time
 )
 
+# Mechanical gate before the engine walks the player out of a scene. The
+# planner (a small local model) sometimes reads a mid-conversation question as
+# a movement command; rather than keep hardening its judgment, we confirm the
+# irreversible part. Default is NO (bare Enter cancels) — an unexpected prompt
+# never teleports you. Non-TTY (piped/headless) auto-confirms so scripted runs
+# don't hang.
+context.confirm_scene_change = lambda do |dest_name|
+  next true unless $stdin.tty?
+  answer = Reline.readline("Leave the scene for #{dest_name}? [y/N] ", false).to_s.strip.downcase
+  %w[y yes].include?(answer)
+rescue Interrupt, StandardError
+  false # Ctrl-C or a read error at the gate → treat as "no, don't move"
+end
+
 loop_obj = Harness::Turn::Loop.new(
   adapter:      nuance_adapter,
   context:      context,
@@ -372,8 +386,6 @@ puts "  /abilities                  show your character sheet (class, level, HP,
 puts "  /history                    dump conversation turns"
 puts "  /cost                       per-turn LLM cost breakdown (auto-shown after each turn)"
 puts "  /map                        render the world map (worldgen-rooted saves only)"
-puts "  /quests                     list quests you've encountered"
-puts "  /quests <N>                 show detail for quest N"
 if debug_log_path
   puts "  /debug scene                engine view of scene (internal_state, agendas, extras)"
   puts "  /debug travel               active travel journey state (cursor, remaining distance)"
@@ -779,70 +791,6 @@ loop do
     end
     puts
     next
-  when "/quests"
-    quests = Quest.where(state: %w[offered active complete abandoned]).order(:id).select(&:player_has_met_giver?)
-    if quests.empty?
-      puts "(no quests yet — you haven't met anyone offering one)"
-    else
-      puts "── quests ──"
-      quests.each do |q|
-        progress = if q.state == "active"
-          steps = q.quest_steps.to_a
-          done  = steps.count { |s| s.state == "fulfilled" }
-          " step #{done + 1}/#{steps.size}"
-        else
-          ""
-        end
-        puts format("  %d. %-40s [%s]%s", q.id, q.name, q.state, progress)
-      end
-    end
-    puts
-    next
-  when %r{\A/quests\s+(\d+)\s*\z}
-    qid = Regexp.last_match(1).to_i
-    q = Quest.find_by(id: qid)
-    if q.nil? || !q.player_has_met_giver?
-      puts "unknown quest: #{qid}"
-      puts
-      next
-    end
-    puts "── Quest ##{q.id}: #{q.name} ──"
-    puts "  archetype: #{q.archetype_id}"
-    puts "  giver:     #{q.giver.name} (#{q.giver.subrole || 'unknown role'}) at #{q.giver.location&.name || '?'}"
-    puts "  state:     #{q.state}"
-    puts "  summary:   #{q.summary}"
-    puts
-    puts "  steps:"
-    q.quest_steps.order(:position).each_with_index do |s, i|
-      marker = case s.state
-               when "fulfilled" then "[✓]"
-               when "active"    then "[●]"
-               when "skipped"   then "[~]"
-               else                  "[ ]"
-               end
-      puts "    #{marker} #{i + 1}. #{s.description}"
-      target_line = case s.fulfillment_kind
-                    when "information"
-                      "informant: #{s.target_character&.name || '?'} (id #{s.target_character_id})"
-                    when "item_in_inventory"
-                      "target item: #{s.target_item&.name || '?'} (id #{s.target_item_id})"
-                    when "character_dead"
-                      "target: #{s.target_character&.name || '?'} (id #{s.target_character_id}) alive→dead"
-                    when "character_at_location"
-                      "lure #{s.target_character&.name || '?'} (id #{s.target_character_id}) to #{s.target_location&.name || '?'}"
-                    end
-      puts "          #{target_line}" if target_line
-      if s.opened_at_game_time
-        puts "          opened at game_time #{s.opened_at_game_time}"
-      end
-      if s.fulfilled_at_game_time
-        puts "          fulfilled at game_time #{s.fulfilled_at_game_time}"
-      end
-      evs = Array(s.related_event_ids)
-      puts "          related events: #{evs.join(', ')}" if evs.any?
-    end
-    puts
-    next
   when "/cost"
     breakdown = Harness::CostTracker.turn_breakdown
     if breakdown.empty?
@@ -866,7 +814,7 @@ loop do
     # Misspellings or unknown commands short-circuit here without touching
     # the LLM or DB. The narration/Phase 1 path only gets non-slash input.
     puts "unknown command: #{input.split.first}"
-    puts "available: /scene  /abilities  /history  /cost  /map  /quests  /debug  /quit  (and aliases /exit, /q)"
+    puts "available: /scene  /abilities  /history  /cost  /map  /debug  /quit  (and aliases /exit, /q)"
     puts
     next
   end

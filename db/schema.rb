@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_01_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_05_120000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -138,45 +138,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_01_130000) do
     t.index ["parent_id"], name: "index_locations_on_parent_id"
   end
 
-  create_table "quest_steps", force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.text "description", null: false
-    t.integer "fulfilled_at_game_time"
-    t.string "fulfillment_kind", null: false
-    t.integer "opened_at_game_time"
-    t.integer "position", null: false
-    t.integer "quest_id", null: false
-    t.json "related_event_ids", default: []
-    t.string "state", default: "pending", null: false
-    t.integer "target_character_id"
-    t.integer "target_item_id"
-    t.integer "target_location_id"
-    t.datetime "updated_at", null: false
-    t.index ["quest_id", "position"], name: "index_quest_steps_on_quest_id_and_position", unique: true
-    t.index ["quest_id"], name: "index_quest_steps_on_quest_id"
-    t.index ["state"], name: "index_quest_steps_on_state"
-    t.index ["target_character_id"], name: "index_quest_steps_on_target_character_id"
-    t.index ["target_item_id"], name: "index_quest_steps_on_target_item_id"
-    t.index ["target_location_id"], name: "index_quest_steps_on_target_location_id"
-  end
-
-  create_table "quests", force: :cascade do |t|
-    t.string "archetype_id", null: false
-    t.integer "city_location_id", null: false
-    t.datetime "created_at", null: false
-    t.integer "created_event_id"
-    t.integer "giver_character_id", null: false
-    t.string "name", null: false
-    t.integer "resolved_event_id"
-    t.string "state", default: "offered", null: false
-    t.text "summary", null: false
-    t.datetime "updated_at", null: false
-    t.index ["archetype_id"], name: "index_quests_on_archetype_id"
-    t.index ["city_location_id"], name: "index_quests_on_city_location_id"
-    t.index ["giver_character_id"], name: "index_quests_on_giver_character_id"
-    t.index ["state"], name: "index_quests_on_state"
-  end
-
   create_table "turn_logs", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.text "error"
@@ -211,12 +172,4 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_01_130000) do
   add_foreign_key "journeys", "locations", column: "destination_id"
   add_foreign_key "locations", "factions"
   add_foreign_key "locations", "locations", column: "parent_id"
-  add_foreign_key "quest_steps", "characters", column: "target_character_id"
-  add_foreign_key "quest_steps", "items", column: "target_item_id"
-  add_foreign_key "quest_steps", "locations", column: "target_location_id"
-  add_foreign_key "quest_steps", "quests"
-  add_foreign_key "quests", "characters", column: "giver_character_id"
-  add_foreign_key "quests", "events", column: "created_event_id"
-  add_foreign_key "quests", "events", column: "resolved_event_id"
-  add_foreign_key "quests", "locations", column: "city_location_id"
 end

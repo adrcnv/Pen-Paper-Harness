@@ -5,7 +5,7 @@ module Harness
     # `faction_id` (kingdom).
     #
     # `biome` stays the coarse lowland/highland fact (legacy consumers: tags,
-    # quest_debt, cost fallback). `terrain` / `coastal` / `riverside` are the
+    # cost fallback). `terrain` / `coastal` / `riverside` are the
     # richer geography facts denormalized onto the city for settlement profiles
     # and rendering — sampled from Worldgen::Geography at placement.
     # `economic_basis` / `size` / `wealth` are the mechanical settlement profile

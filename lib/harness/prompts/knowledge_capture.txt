@@ -19,19 +19,24 @@ Then, for each fact, output:
 
 Prefer FEWER, well-formed facts. When unsure whether something is a real fact, leave it out.
 
-ALSO pull out any SPECIFIC PERSON a speaker named that the player could go and find — a contact they were sent to, a relative, the courier who vanished, "the foreman at the mill". These become real, findable people. For each:
-- "name": the name IF a speaker actually said it (e.g. "Harek"); omit if they referred to the person only by role ("my brother", "the foreman") — the engine names them.
+ALSO pull out any SPECIFIC PERSON a speaker VOLUNTEERS as a real, living individual the player could go and find — a contact they send the player to, a relative, the courier who vanished, "the foreman at the mill". These become real, findable people. For each:
+- "name": the name IF a speaker actually said it (e.g. "Harek"); omit if they pointed to ONE specific person only by role ("my brother", "the foreman at the mill") — the engine names them.
 - "subrole": their trade/role in one word.
 - "gist": one clause — who they are and why they matter.
 - "at_location": a place they were named at, if any.
 - "by": the speaker who named them.
-Only REAL individuals a player could seek out. NOT gods, crowds, the player, or anyone already talking here. Rare — usually an empty list.
+Do NOT mint:
+- Someone a speaker DENIES knowing or says isn't real ("never heard that name", "no one like that here").
+- The DEAD or long-gone historical figures (a departed founder, an ancestor in a story) — they belong in facts/places, not as findable people.
+- A name the PLAYER raised that a speaker did not confirm as a real, living person.
+- A vague role thrown out to brush the player off ("go ask the elder", "the ones who patrol the reeds") — a deflection is not a specific person the speaker knows.
+Mint ONLY someone the SPEAKER themselves brings forward as a real, living, specific individual they could actually point the player to. NOT gods, crowds, the player, or anyone already talking here. Rare — usually an empty list.
 
-ALSO pull out any SPECIFIC, PROPERLY-NAMED PLACE a speaker mentioned that could be a real, findable building or site — "the Grand Hall", "Corin's Forge", "the Salt Wharf". A PROPER NAME only. Do NOT list a generic reference ("the mill", "the market", "the square", "up the road", "across the way") — those already exist or aren't real places. For each:
-- "name": the place's proper name, as said.
-- "about": one clause — what it is.
-- "parent": the settlement or location it sits in IF a speaker named one, else null (defaults to the current town).
-Only NAMED places that could become real rows. Rare — usually an empty list.
+ALSO pull out any SPECIFIC PLACE the conversation treats as a real, distinct spot the player could go to — a building, ruin, site, or landmark tied to a NAME, a person, an event, or a unique feature: "the Grand Hall", "Corin's Forge", "Elara's hut", "the drowned chapel", "the barrow where the reeve is buried". Be generous — if the talk gives it substance (whose it is, what happened there, roughly where it lies), it should become a real row, even a ruined or vanished one (a findable SPOT still matters). For each:
+- "name": a concise, Capitalized name for it — coin one from what was said if the speakers gave no formal name ("Elara's Hut", "The Drowned Chapel").
+- "about": one or two clauses of what's known — its history, its state, and roughly where it lies, drawn from the talk. This is the worldbuilding attached to the place, so make it carry the substance the speakers gave.
+- "parent": the settlement or location it sits in IF named, else null (defaults to the current town).
+Do NOT list a BARE generic room every settlement just has and surely already exists ("the market", "the tavern", "the docks", "up the road") UNLESS the talk gave it a distinguishing name or history. Usually 0-1 places.
 
 Output ONLY this JSON, nothing else:
 { "facts": [ { "content": "...", "concerns": [], "subrole": null, "scope": "local", "min_int": null } ],

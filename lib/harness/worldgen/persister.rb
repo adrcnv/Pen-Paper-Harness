@@ -70,29 +70,17 @@ module Harness
       end
 
       # Properties seeded at worldgen for downstream systems:
-      #   tags       — city tags used by Quest::Library archetype filtering
-      #                (biome-derived; capital/political tags TBD).
-      #   quest_debt — count of quests this city should produce over its
-      #                lifetime. Drained at first scene entry to the city
-      #                (one quest) and on each first-time entry to a fresh
-      #                sublocation thereafter (debt-spreading per
-      #                QUESTS_DESIGN.md). Lowlands lean mercantile (more
-      #                debt); highlands lean frontier (less).
+      #   tags — descriptive city tags (biome-derived; capital/political tags
+      #          TBD). No consumer today (the quest system that read them was
+      #          killed); kept as cheap descriptive metadata.
       def self.city_properties(c, rng: Random.new)
         tags = case c.biome
-               when ::Harness::Worldgen::Biome::LOWLAND  then %w[lowland trade_hub mercantile]
-               when ::Harness::Worldgen::Biome::HIGHLAND then %w[highland frontier]
-               else []
-               end
-        debt = case c.biome
-               when ::Harness::Worldgen::Biome::LOWLAND  then 2 + rng.rand(2)  # 2-3
-               when ::Harness::Worldgen::Biome::HIGHLAND then 1 + rng.rand(2)  # 1-2
-               else 1
-               end
+        when ::Harness::Worldgen::Biome::LOWLAND  then %w[lowland trade_hub mercantile]
+        when ::Harness::Worldgen::Biome::HIGHLAND then %w[highland frontier]
+        else []
+        end
         props = {
-          "tags"                  => tags,
-          "quest_debt"            => debt,
-          "quest_generated_count" => 0
+          "tags" => tags
         }
         # Rich geography facts (additive; biome stays the legacy coarse fact).
         props["terrain"]   = c.terrain   unless c.terrain.nil?

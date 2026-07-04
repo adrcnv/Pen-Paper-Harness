@@ -14,6 +14,11 @@ module Harness
     #   :combat     — the step entered combat. Hard terminator: the executor
     #                 aborts remaining steps and the turn loop's combat
     #                 hand-off takes over.
+    #   :halted     — the player declined an irreversible action at a mechanical
+    #                 confirmation gate (e.g. a scene-change they didn't mean).
+    #                 Hard terminator: the executor aborts remaining steps, and
+    #                 the turn loop narrates/records NOTHING and shows `note` as
+    #                 an OOC notice — the turn leaves no trace (reset to before).
     Outcome = Struct.new(:tool_calls, :scene_dirty, :status, :note, keyword_init: true) do
       def initialize(tool_calls: [], scene_dirty: false, status: :ok, note: nil)
         super
@@ -22,6 +27,7 @@ module Harness
       def ok?         = status == :ok
       def redispatch? = status == :redispatch
       def combat?     = status == :combat
+      def halted?     = status == :halted
     end
   end
 end

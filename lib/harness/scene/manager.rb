@@ -58,7 +58,6 @@ module Harness
         maybe_lay_out_settlement(loc)
         maybe_place_claims(loc)
         maybe_run_catch_up(loc)
-        maybe_run_quest_generation(loc)
         maybe_run_materialize(loc, materialize_target)
         maybe_pull_traveler(loc)
         maybe_draw_local(loc)
@@ -250,68 +249,6 @@ module Harness
         ::Harness::Scene::LocalDraw.maybe_draw(loc, rng: @rng, logger: logger)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] local draw failed for #{loc.name}: #{e.class}: #{e.message}" }
-      end
-
-      # Quest generation on first entry — debt-spreading per QUESTS_DESIGN.md.
-      # The trigger is "first-time entry to a city or one of its sublocations,
-      # while the city still has unspent quest_debt." Each fire authors ONE
-      # complete quest (people + sublocations + items + a backward kickoff
-      # event); the player discovers it later by talking to participants.
-      # Skipped for:
-      #   - locations without a top-level worldgen-rooted city in their chain
-      #     (wilderness leaves, hand-authored fixture top-tiers).
-      #   - locations already entered before (`properties.first_entered_at_game_time`).
-      #   - quest-spawned sublocations themselves (would recurse pointlessly
-      #     since the city's debt is the per-city count).
-      #   - cities whose debt is fully paid (`quest_debt <= quest_generated_count`).
-      #   - test/dry-run setups without llm_grunt.
-      # Failure non-fatal — scene entry continues. The marking is done EVEN
-      # on failure so we don't retry on every re-entry.
-      def maybe_run_quest_generation(loc)
-        return unless @context.llm_grunt
-        return unless ::Harness::Quests.enabled?  # HARNESS_QUESTS=on gate
-
-        # Always mark first-entry regardless of whether we fire. Stops infinite
-        # retries on repeat entry to a location quest gen failed at.
-        already_entered = loc.properties.is_a?(Hash) && loc.properties["first_entered_at_game_time"]
-        mark_first_entry!(loc) unless already_entered
-        return if already_entered
-
-        # Don't recurse from quest-spawned sublocations.
-        return if loc.properties.is_a?(Hash) && loc.properties["kind"] == "quest_sublocation"
-
-        city = top_level_city_for(loc)
-        return unless city
-
-        city_props = city.properties || {}
-        debt       = city_props["quest_debt"].to_i
-        generated  = city_props["quest_generated_count"].to_i
-        return if generated >= debt
-
-        ::Harness::Quests::Generator
-          .new(llm_client: @context.llm_grunt, logger: logger, rng: @rng)
-          .generate(city: city, current_game_time: @context.game_time || 0)
-      rescue StandardError => e
-        logger.warn { "[Scene::Manager] quest generation failed for #{loc.name}: #{e.class}: #{e.message}" }
-      end
-
-      def mark_first_entry!(loc)
-        props = (loc.properties || {}).dup
-        props["first_entered_at_game_time"] = @context.game_time || 0
-        loc.update!(properties: props)
-      end
-
-      # Walk up to the nearest top-level (parent_id nil) ancestor with
-      # worldgen coords. nil for hand-authored fixtures without a real city.
-      def top_level_city_for(loc)
-        current = loc
-        while current
-          if current.parent_id.nil? && current.x.present? && current.y.present?
-            return current
-          end
-          current = current.parent
-        end
-        nil
       end
 
       # Lay out a worldgen city's KNOWN SHAPE on entry — create the manifest's

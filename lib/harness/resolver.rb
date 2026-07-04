@@ -37,7 +37,6 @@ module Harness
       Tools::ProposeFaction,
       Tools::ProposeItem,
       Tools::ProposeLocation,
-      Tools::AcceptQuest,
       ::Harness::Combat::Tools::StartCombat
     ].freeze
 
@@ -78,8 +77,7 @@ module Harness
     # DEFAULT_TOOLS).
     def self.tools_for(context, normal_tools: DEFAULT_TOOLS)
       return COMBAT_TOOLS if context&.active_scene&.in_combat?
-      return normal_tools if ::Harness::Quests.enabled?
-      normal_tools.reject { |t| t == Tools::AcceptQuest }
+      normal_tools
     end
 
     def initialize(context:, tools: DEFAULT_TOOLS, logger: Rails.logger)

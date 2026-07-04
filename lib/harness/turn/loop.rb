@@ -173,14 +173,6 @@ module Harness
             @context.clear_scene_dirty!
           end
 
-          # End-of-turn quest fulfillment check. Pure Ruby; no LLM. Walks
-          # each active quest's current step; promotes when world state
-          # satisfies the structural check. Runs BEFORE narration so the
-          # narration step can render a fulfilled step as completed if
-          # there's been one this turn. Idempotent — safe to fail and retry.
-          # Gated by HARNESS_QUESTS=on (see lib/harness/quests.rb).
-          ::Harness::Quests::FulfillmentCheck.run!(@context, logger: logger) if ::Harness::Quests.enabled?
-
           # Pick narration source:
           # - Combat with content (rounds processed OR a player-fled wrap-up):
           #   render the combat narration.
@@ -190,6 +182,16 @@ module Harness
           #   and the start_combat event are still in transcript.tool_calls
           #   and the regular narration handles them.
           # - No combat: regular narration.
+          # Player declined a scene change at the confirmation gate. The turn is
+          # a no-op: narrate nothing, run no initiative, record nothing to scene
+          # history or conversation memory — it leaves no trace, as if the input
+          # were never sent. Only the OOC notice (set by the executor) is shown.
+          if transcript.halted
+            transcript.narration = nil
+            transcript.notice  ||= halted_notice(nil)
+            return transcript   # `ensure` still persists the TurnLog + snapshots
+          end
+
           narration = if combat_result && (combat_result.round_summaries.any? || combat_result.player_fled_resolution)
             combat_narration = assemble_combat_narration(combat_result)
             transcript.narration = combat_narration
@@ -220,6 +222,13 @@ module Harness
             end
           end
 
+          # The weak model sometimes writes the engine word "the player" into
+          # prose (staged dialogue beats especially) instead of the name it was
+          # handed. Scrub it mechanically to the real name — BEFORE recording, so
+          # the leak never reaches the scene thread / next turn's context either.
+          narration = scrub_player_reference(narration)
+          transcript.narration = narration
+
           # Record only the diegetic narration to scene history (keeps the
           # fiction record clean). The OOC notice below is display-only.
           @scene_manager.record_narration(input, narration)
@@ -248,6 +257,26 @@ module Harness
         r = reason.to_s.strip
         r = "that action couldn't be carried out" if r.empty?
         "( ⚙ Out of character — the engine couldn't resolve: #{r}. Try rephrasing or being more specific. )"
+      end
+
+      # Replace the engine phrase "the player" (and its possessive) in prose with
+      # the player character's actual name — the model is handed the name but
+      # sometimes falls back to the engine word. Narrow on purpose: only the
+      # definite phrase "the player['s]" (never a bare "player", which can mean a
+      # dice-player in a crowd). No-op when there's no player row.
+      def scrub_player_reference(text)
+        return text if text.nil? || text.empty?
+        name = ::Player.first&.name
+        return text if name.to_s.strip.empty?
+        text.gsub(/\bthe player(’s|'s)?\b/i) { "#{name}#{Regexp.last_match(1) ? "’s" : ""}" }
+      end
+
+      # Player declined a scene change at the confirmation gate. Tell them, out
+      # of character, that nothing happened and to restate their intent clearly.
+      def halted_notice(reason)
+        r = reason.to_s.strip
+        tail = r.empty? ? "" : " (#{r})"
+        "( ⚙ Out of character — held your place; nothing happened#{tail}. Say plainly where you want to go, e.g. \"go to the mending shed\", or keep doing what you were doing. )"
       end
 
       def run_reasoning(input, transcript)
@@ -359,6 +388,13 @@ module Harness
 
           if outcome.combat?
             logger.info { "[Executor] combat terminator at step #{step_no}; aborting #{pending.size} remaining step(s)" }
+            break
+          end
+
+          if outcome.halted?
+            logger.info { "[Executor] player halted the turn at step #{step_no} (#{outcome.note}); aborting #{pending.size} remaining step(s)" }
+            transcript.halted = true
+            transcript.notice = halted_notice(outcome.note)
             break
           end
 
@@ -550,12 +586,6 @@ module Harness
           "recent_events_here" => recent_events_here_payload,
           "recent_history" => recent
         }
-        # Surface quests structurally relevant to the current scene. Capped
-        # by visibility rule (giver present, or current step's target in/near
-        # scene) so the reasoning loop isn't tempted to push unrelated
-        # threads. Omitted entirely when empty.
-        relevant = visible_quests_payload
-        payload["relevant_quests"] = relevant if relevant.any?
         # Surface dormant historical figures at this location so the LLM
         # can map role-names in past events ("the Warden") to row ids.
         # Omitted entirely when none exist here.
@@ -569,19 +599,6 @@ module Harness
         "#{header}INPUT:\n#{JSON.pretty_generate(payload)}"
       end
 
-      # Filters active + offered quests by structural-scene relevance so the
-      # reasoning loop only sees what it can plausibly act on this turn.
-      # Visibility rules:
-      #   - offered quest with giver in present_characters → visible (the
-      #     player can accept it via accept_quest).
-      #   - active quest whose current step's target is in/near the scene:
-      #       information / character_dead / character_at_location → target
-      #         character in present_characters.
-      #       item_in_inventory → target item at this location or in player's
-      #         inventory.
-      # All other quests stay hidden from the INPUT block (still visible via
-      # /quests). Per-quest payload includes a fulfillment_hint string the
-      # LLM uses as a guide for what tool calls advance the step.
       # Dormant historical figures at the current location — characters
       # genesis spawned at first-entry (sealed with properties.dormant=true)
       # who are filtered out of present_characters but ARE structurally tied
@@ -641,74 +658,6 @@ module Harness
                     "(no summary)"
           { "id" => e.id, "t" => e.game_time, "scope" => e.scope, "summary" => summary.to_s[0, 100] }
         }
-      end
-
-      def visible_quests_payload
-        active_scene = @scene_manager.active
-        return [] unless active_scene
-        present_char_ids = active_scene.present_characters.map(&:id).to_set
-        present_loc_id   = active_scene.location.id
-        player           = ::Player.first
-
-        quests = ::Quest.where(state: %w[offered active]).includes(:quest_steps, :giver)
-        out = []
-        quests.each do |q|
-          visible = false
-
-          if present_char_ids.include?(q.giver_character_id)
-            visible = true
-          end
-
-          if q.state == "active"
-            step = q.quest_steps.where(state: "active").order(:position).first
-            if step
-              case step.fulfillment_kind
-              when "information", "character_dead", "character_at_location"
-                visible = true if step.target_character_id && present_char_ids.include?(step.target_character_id)
-              when "item_in_inventory"
-                item = step.target_item
-                visible = true if item && (item.location_id == present_loc_id || (player && item.character_id == player.id))
-              end
-            end
-          end
-
-          next unless visible
-          out << quest_payload(q)
-        end
-        out.compact
-      end
-
-      def quest_payload(quest)
-        step = quest.quest_steps.where(state: "active").order(:position).first ||
-               quest.quest_steps.where(state: "pending").order(:position).first
-        return nil unless step
-        {
-          "id"          => quest.id,
-          "state"       => quest.state,
-          "name"        => quest.name,
-          "summary"     => quest.summary,
-          "archetype"   => quest.archetype_id,
-          "giver"       => { "id" => quest.giver_character_id, "name" => quest.giver&.name },
-          "current_step" => {
-            "position"          => step.position,
-            "state"             => step.state,
-            "description"       => step.description,
-            "fulfillment_hint"  => fulfillment_hint_for(step)
-          }
-        }
-      end
-
-      def fulfillment_hint_for(step)
-        case step.fulfillment_kind
-        when "information"
-          "speak with #{step.target_character&.name || '?'} (id #{step.target_character_id}); any event tagging both you and them after this step opened satisfies it"
-        when "item_in_inventory"
-          "obtain item \"#{step.target_item&.name || '?'}\" (id #{step.target_item_id}); pick it up or accept it given to you"
-        when "character_dead"
-          "kill #{step.target_character&.name || '?'} (id #{step.target_character_id})"
-        when "character_at_location"
-          "#{step.target_character&.name || '?'} (id #{step.target_character_id}) must be at location \"#{step.target_location&.name || '?'}\" (id #{step.target_location_id})"
-        end
       end
 
       # The player character's identity for the narration step (name + gender).

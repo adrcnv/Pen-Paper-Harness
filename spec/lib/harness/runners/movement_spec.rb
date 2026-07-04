@@ -25,6 +25,44 @@ RSpec.describe Harness::Runners::Movement do
     expect(player.reload.location_id).to eq(smithy.id)
   end
 
+  it "HALTS the turn (no transition) when the player declines the scene-change gate" do
+    smithy
+    ctx = context_with { { "action" => "transition", "target_id" => smithy.id, "place_name" => nil }.to_json }
+    asked = nil
+    ctx.confirm_scene_change = ->(name) { asked = name; false }   # player says no
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "is the smithy around?", step: step)
+
+    expect(outcome.status).to eq(:halted)
+    expect(outcome.tool_calls).to be_empty              # transition never fired
+    expect(player.reload.location_id).to eq(tavern.id)  # stayed put
+    expect(asked).to eq("Smithy")                       # confirmer saw the destination name
+  end
+
+  it "proceeds normally when the player confirms the gate" do
+    smithy
+    ctx = context_with { { "action" => "transition", "target_id" => smithy.id, "place_name" => nil }.to_json }
+    ctx.confirm_scene_change = ->(_name) { true }
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "go to the smithy", step: step)
+
+    expect(outcome.status).to eq(:ok)
+    expect(player.reload.location_id).to eq(smithy.id)
+  end
+
+  it "gates travel too — a declined far-destination move halts without querying" do
+    ctx = context_with { { "action" => "travel", "place_name" => "Farhold", "target_id" => nil }.to_json }
+    ctx.confirm_scene_change = ->(_name) { false }
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "is Farhold far?", step: step)
+
+    expect(outcome.status).to eq(:halted)
+    expect(outcome.tool_calls).to be_empty              # not even query_location_by_name ran
+  end
+
   it "re-dispatches when the destination doesn't exist yet (travel lookup miss)" do
     ctx = context_with { { "action" => "travel", "place_name" => "Nowheresville", "target_id" => nil }.to_json }
     scene = Harness::Tools::QueryScene.build(ctx)

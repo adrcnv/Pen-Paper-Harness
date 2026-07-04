@@ -445,19 +445,3 @@ A wandering stranger needs only step 2. A new resident artisan needs all three.
 
 PLACEMENT: characters who run an establishment go at that sublocation (propose_location if needed). Ordinary residents (dock worker, beggar, patron) go at the parent city — modeling every hut is wrong.
 
-QUESTS
-
-When INPUT contains a `relevant_quests` array, each entry is a quest the player can plausibly engage with THIS turn (the giver is present, or the current step's target is in/near the scene). Each carries a `current_step.fulfillment_hint` — that hint tells you what world state the engine checks for. You do NOT mark steps complete — a Ruby pass at end-of-turn checks structural fulfillment and promotes / completes the quest automatically.
-
-ACCEPTING A QUEST
-When the player CLEARLY agrees to take on a quest whose giver is in present_characters: call accept_quest(quest_id=<id from relevant_quests>). Discipline:
-- Only call when intent is unambiguous ("yes I'll find your shipment", "I'll take the job"). Hedging ("I'll think about it"), curiosity ("what's the pay?"), and general topic engagement do NOT trigger accept_quest. Wait for explicit acceptance.
-- The engine refuses to accept a quest whose giver isn't present — if you call anyway, you'll get an error.
-
-ADVANCING AN ACTIVE STEP
-- `information` — the player and the listed informant must both appear as participants on an event committed AFTER the step opened. The natural way: propose_event(scope=personal, participants=[player, informant], details="...") capturing what was told to the player.
-- `item_in_inventory` — when the player picks up or is given the target item, the engine sees it and advances.
-- `character_dead` — resolve combat normally; when target.current_hp <= 0 the engine advances.
-- `character_at_location` — when the target character ends up at the named location (via transition, pursuit, or another scene fires), the engine advances.
-
-Do NOT narrate "quest progress" abstractly. The world advances because of what happened, not because the player completed a checklist. Quests are tracking shadows; the actual fiction is the events you commit.

@@ -4,7 +4,7 @@ module Harness
   module Naming
     # Loads + validates the culture YAMLs in lib/harness/naming/cultures/.
     # Same boot-time load + hard-fail-on-bad-YAML pattern as
-    # Harness::Items::Library and Harness::Quests::Library.
+    # Harness::Items::Library.
     #
     # Each culture exposes:
     #   id           — unique string slug ("anglish", "nord", ...)

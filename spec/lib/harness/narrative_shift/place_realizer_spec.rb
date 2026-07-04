@@ -39,6 +39,22 @@ RSpec.describe Harness::NarrativeShift::PlaceRealizer do
     }.not_to change(Location, :count)
   end
 
+  it "mints a possessive-qualified place even without a capitalized proper noun" do
+    res = run({ "name" => "the founder's place", "about" => "a vanished lean-to by the reeds" })
+    expect(res["minted"]).to be(true)
+    loc = Location.find(res["location_id"])
+    expect(loc.parent).to eq(city)
+    expect(loc.description).to match(/vanished lean-to/)   # the worldbuilding is attached
+  end
+
+  it "mints a described ruin tied to a name (aggressive place realization)" do
+    res = run({ "name" => "Elara's Hut", "about" => "the founder's half-built hut, washed away years ago, now just mud and roots" })
+    expect(res["minted"]).to be(true)
+    loc = Location.find(res["location_id"])
+    expect(loc.name).to eq("Elara's Hut")
+    expect(loc.description).to match(/washed away/)
+  end
+
   it "parents under a NAMED existing location when the speaker placed it there" do
     redmarsh = Location.create!(name: "Redmarsh")
     res = run({ "name" => "The Ferryman's Rest", "parent" => "redmarsh" })

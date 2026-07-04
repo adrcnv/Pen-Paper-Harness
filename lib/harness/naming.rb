@@ -2,7 +2,7 @@ require "set"
 
 module Harness
   # Mechanical name generator. Replaces the LLM as the source of new
-  # character names for background spawn paths (Quest gen / Genesis /
+  # character names for background spawn paths (Genesis /
   # Scene::Materializer when they sweep through Phase 3). The reasoning
   # loop's propose_character path STAYS LLM-named because the player
   # picks names in conversation; this primitive is for engine-driven

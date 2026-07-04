@@ -57,17 +57,18 @@ module Harness
         nil
       end
 
-      # A mintable place name is a PROPER name: short, and — after stripping any
-      # leading article — carrying at least one capitalized (proper-noun) word.
-      # This is the whole dupe guard: it accepts "The Grand Hall" / "Corin's
-      # Forge" but rejects the generic definite references ("the mill", "the
-      # market") that would shadow existing rooms.
+      # A mintable place name is SPECIFIC enough not to shadow a settlement's
+      # generic rooms: after stripping any leading article, it carries either a
+      # capitalized (proper-noun) word OR a possessive qualifier. This is the
+      # whole dupe guard — it accepts "The Grand Hall" / "Corin's Forge" /
+      # "the founder's place" but rejects the bare generic references ("the mill",
+      # "the market") that would collide with rooms every town already has.
       def proper_name?(name)
         tokens = name.to_s.strip.split(/\s+/)
         return false if tokens.empty? || tokens.length > 5
         meaningful = ARTICLES.include?(tokens.first.downcase) ? tokens[1..] : tokens
         return false if meaningful.nil? || meaningful.empty?
-        meaningful.any? { |t| t[0] =~ /[[:upper:]]/ }
+        meaningful.any? { |t| t[0] =~ /[[:upper:]]/ || t.include?("'") }
       end
 
       # Parent under a NAMED existing location if the NPC placed it somewhere real

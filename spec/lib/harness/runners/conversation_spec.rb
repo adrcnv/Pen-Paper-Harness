@@ -143,6 +143,36 @@ RSpec.describe Harness::Runners::Conversation do
     expect(captured).to include("gruff, taciturn", "wary of strangers", "wants the player to drink or leave") # the soul
   end
 
+  it "strips the seeded mood/agenda after the NPC's first speaking turn (thread carries it after)" do
+    barkeep.update!(properties: { "personality" => "gruff, taciturn" })
+    active = Harness::Scene::Active.new(
+      location: tavern, snapshot: nil, narrations: [],
+      internal_state: { barkeep.id => "wary of strangers" },
+      agendas: { barkeep.id => "wants the player to drink or leave" },
+      extras: [], entered_at_game_time: 90
+    )
+    voicings = []
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full|
+        voicings << full unless full.include?("WORLD MEMORY") || full.include?("filter stored facts")
+        { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "What'll it be?" } }.to_json
+      })
+    ctx.active_scene = active
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    # First turn: the barkeep speaks — the seeded opening stance is present.
+    described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
+    expect(voicings.last).to include("wary of strangers", "wants the player to drink or leave")
+    expect(active.spoken?(barkeep.id)).to be(true)
+
+    # Second turn, same scene: mood/agenda gone; personality + thread remain.
+    voicings.clear
+    described_class.new.run(context: ctx, scene: scene, input: "still here", step: step)
+    expect(voicings.last).not_to include("wary of strangers")
+    expect(voicings.last).not_to include("wants the player to drink or leave")
+    expect(voicings.last).to include("gruff, taciturn")
+  end
+
   it "surfaces the real nearby places into the voicing call (grounding against invented duplicates)" do
     # The grounding-first lever: the NPC's own surroundings are in its context,
     # so when it reaches for 'the sawmill' the REAL one is right there to name —

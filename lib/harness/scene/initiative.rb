@@ -126,12 +126,16 @@ module Harness
       def decide(candidates, player)
         present = candidates.first(MAX_PRESENT).map do |c|
           props = c.properties.is_a?(::Hash) ? c.properties : {}
+          # Drop the seeded mood/agenda once the NPC has spoken this scene — same
+          # rule as the conversation runner: the frozen self-state only sets the
+          # opening stance, then the scene's events carry them (see Active#spoken?).
+          fresh = !@active.spoken?(c.id)
           {
             "name"           => c.name,
             "subrole"        => c.subrole,
             "lens"           => props["lens"],
-            "internal_state" => @active.state_for(c.id),
-            "agenda"         => @active.agenda_for(c.id)
+            "internal_state" => (@active.state_for(c.id) if fresh),
+            "agenda"         => (@active.agenda_for(c.id) if fresh)
           }.compact
         end
 

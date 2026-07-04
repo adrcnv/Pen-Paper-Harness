@@ -21,9 +21,24 @@ module Harness
     # rotates. Both die with the scene.
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
-      :combat, :initiative_cooldown, :last_initiator,
+      :combat, :initiative_cooldown, :last_initiator, :spoken_ids,
       keyword_init: true
     ) do
+      # Has this character already taken a speaking turn in THIS scene? Seeded
+      # mood/agenda steer an NPC's OPENING stance; once they've spoken, the live
+      # conversation thread carries them and the frozen self-state is dropped (it
+      # otherwise fights the evolving exchange — an NPC yanked back to a
+      # pre-conversation stance reads as fickle). Consumed by the conversation
+      # runner + Scene::Initiative, both of which strip mood/agenda for spoken NPCs.
+      def spoken?(character_id)
+        (spoken_ids || []).include?(character_id)
+      end
+
+      def mark_spoken!(character_id)
+        self.spoken_ids ||= []
+        spoken_ids << character_id unless spoken_ids.include?(character_id)
+      end
+
       # Combat sub-mode helpers. `combat` is nil when no fight is running; set
       # by Tools::StartCombat, cleared by Combat::Loop's end_combat!. While
       # set, the resolver serves the narrow combat-mode tool surface (see

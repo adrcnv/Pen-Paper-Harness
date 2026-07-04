@@ -36,6 +36,8 @@ module Harness
         when "transition"
           tid = decision["target_id"]
           return redispatch("transition target not resolved", tcs) unless tid
+          dest_name = nearby.find { |n| n["id"] == tid }&.dig("name") || "there"
+          return declined(dest_name) unless confirm_scene_change(context, dest_name)
           _, ok = execute_tool(resolver, "transition", { "destination_id" => tid }, into: tcs)
           return redispatch("transition failed for id=#{tid}", tcs) unless ok
           Outcome.new(tool_calls: tcs, scene_dirty: true, status: :ok)
@@ -43,6 +45,7 @@ module Harness
         when "travel"
           name = decision["place_name"].to_s
           return redispatch("no place name for travel", tcs) if name.empty?
+          return declined(name) unless confirm_scene_change(context, name)
           res, ok = execute_tool(resolver, "query_location_by_name", { "name" => name }, into: tcs)
           if ok && res.is_a?(Hash) && res["found"] && res["location_id"]
             _, tok = execute_tool(resolver, "travel", { "destination_id" => res["location_id"] }, into: tcs)
@@ -69,6 +72,27 @@ module Harness
       end
 
       private
+
+      # Mechanical confirmation before an irreversible scene change: the planner
+      # (a weak model) can mis-read a mid-conversation question as a movement
+      # command and teleport the player out of the room. Rather than keep
+      # hardening the planner's judgment, gate the actual exit — ask the player.
+      # No confirmer wired (headless / tests) → auto-confirm, never block.
+      # Chain-created create-then-enter (enter_resolved) is NOT gated: that path
+      # only runs on an explicit "make X and go there", where intent is certain.
+      def confirm_scene_change(context, dest_name)
+        confirmer = context.confirm_scene_change
+        confirmer.nil? || confirmer.call(dest_name)
+      end
+
+      # Player declined the move at the gate. Halt the turn: no transition
+      # commits, the executor aborts the chain, and the loop shows an OOC notice
+      # and records nothing — the turn leaves no trace (reset to before it).
+      def declined(dest_name)
+        @logger.info { "[Runner movement] player declined scene change → #{dest_name.inspect}; halting turn" }
+        Outcome.new(tool_calls: [], scene_dirty: false, status: :halted,
+                    note: "that read as leaving for #{dest_name}, and I wasn't sure you meant to")
+      end
 
       # Enter a location the chain just created. wilderness_leaf is a top-level
       # coordinated place → travel; anything else (sublocation child) → transition.

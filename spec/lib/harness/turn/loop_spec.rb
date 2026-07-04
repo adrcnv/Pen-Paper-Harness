@@ -171,6 +171,17 @@ RSpec.describe Harness::Turn::Loop do
       expect(out).to eq(tcs)
     end
 
+    it "scrubs the engine phrase 'the player' to the player's name (incl. possessive)" do
+      out = loop_obj.send(:scrub_player_reference,
+        "Astrid looks the player up and down, weighing the player's robes.")
+      expect(out).to eq("Astrid looks Hero up and down, weighing Hero’s robes.")
+    end
+
+    it "does not touch a bare 'player' (a dice-player in a crowd stays)" do
+      out = loop_obj.send(:scrub_player_reference, "two players roll dice; a lone player watches")
+      expect(out).to eq("two players roll dice; a lone player watches")
+    end
+
     it "leaves query_scene results without present_characters untouched" do
       tcs = [ {
         "name" => "query_scene", "args" => {},

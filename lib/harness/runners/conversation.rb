@@ -73,7 +73,12 @@ module Harness
           emit = voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, substantive)
           next unless emit
           parsed_any = true
-          spoken += 1 if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
+          if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
+            spoken += 1
+            # First speaking turn consumed the seeded mood/agenda; from now on the
+            # thread carries this NPC (npc_knowledge drops the frozen self-state).
+            active&.mark_spoken!(v[:char]["id"]) if v[:kind] == :npc
+          end
           collect_line(spoken_lines, v, emit)
         end
 
@@ -268,14 +273,18 @@ module Harness
           .map { |e| event_text(e) }
           .reject(&:empty?)
         props = ::Npc.find_by(id: char["id"])&.properties
+        # Seeded mood/agenda only on the OPENING stance — once this NPC has spoken
+        # this scene, the thread carries them and the frozen self-state is dropped
+        # (see Active#spoken?). personality/lens/events persist.
+        fresh = !active&.spoken?(char["id"])
         {
           "id"          => char["id"],
           "name"        => char["name"],
           "subrole"     => char["subrole"],
           "lens"        => char["lens"],
           "personality" => (props["personality"] if props.is_a?(::Hash)),
-          "mood"        => active&.state_for(char["id"]),
-          "agenda"      => active&.agenda_for(char["id"]),
+          "mood"        => (active&.state_for(char["id"]) if fresh),
+          "agenda"      => (active&.agenda_for(char["id"]) if fresh),
           "events"      => events
         }.compact
       end

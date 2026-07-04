@@ -30,6 +30,11 @@ module Harness
       attr_accessor :llm_grunt, :llm_nuance
       attr_accessor :active_scene
       attr_reader   :history
+      # Mechanical player confirmation for an irreversible scene change. A proc
+      # `->(destination_name) { true|false }` set by the frontend (bin/play wires
+      # a y/N prompt). nil = auto-confirm — headless runs and tests never block.
+      # The movement runner calls this before it commits a transition/travel.
+      attr_accessor :confirm_scene_change
 
       def initialize(player_location:, history: [], llm_client: nil, llm_grunt: nil, llm_nuance: nil, game_time: 0)
         @player_location = player_location
