@@ -133,16 +133,14 @@ module Harness
             run_reasoning(input, transcript)
           elsif @scene_manager.active&.in_combat?
             # Already mid-fight: the player's input IS their combat slot. Skip
-            # the dispatcher and drive the slot via the combat-mode tool
-            # surface (Resolver.tools_for swaps to COMBAT_TOOLS when
-            # in_combat?). Combat is a sub-mode; the round-driver hand-off
-            # below runs the NPC slots. Without this guard the dispatcher would
-            # route to the combat ENTRY runner, which calls start_combat, gets
-            # "already in combat", and re-dispatches to the cap — losing the
-            # player's action. The combat runner ENTERS a fight; this CONTINUES
-            # one.
-            logger.debug { "[Turn::Loop] already in combat → combat-mode slot (dispatcher skipped)" }
-            run_reasoning(input, transcript)
+            # the dispatcher (it would route to the combat ENTRY runner, get
+            # "already in combat", and re-dispatch to the cap) and drive the
+            # slot via Combat::PlayerTurn — ONE structured call on the narrow
+            # slot surface, the state-machine replacement for the agentic
+            # reasoning loop that used to flail here (~6 calls per attack).
+            # The round-driver hand-off below runs the NPC slots.
+            logger.debug { "[Turn::Loop] already in combat → structured player slot (dispatcher skipped)" }
+            run_player_slot(input, transcript)
           else
             run_state_machine(input, transcript)
           end
@@ -537,6 +535,25 @@ module Harness
       rescue StandardError => e
         logger.warn { "[Turn::Loop] initiative pass failed: #{e.class}: #{e.message}" }
         nil
+      end
+
+      # The player's mid-combat slot: one structured call (Combat::PlayerTurn).
+      # The executed action is recorded on the transcript exactly like a
+      # reasoning tool call, so dice brackets, the narration sanitizer, and
+      # /debug all read it unchanged. nil = the input wasn't a combat action;
+      # nothing recorded, the slot stays fresh and Combat::Loop yields again.
+      def run_player_slot(input, transcript)
+        ::Harness::CostTracker.in_subsystem(:combat_player_turn) do
+          out = ::Harness::Combat::PlayerTurn.run(
+            player:  ::Player.first,
+            input:   input,
+            scene:   @scene_manager.active,
+            adapter: @adapter,
+            context: @context,
+            logger:  logger
+          )
+          transcript.record_tool_call(out[0], out[1]) if out
+        end
       end
 
       def run_combat(transcript)

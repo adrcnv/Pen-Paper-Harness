@@ -21,7 +21,7 @@ module Harness
     # rotates. Both die with the scene.
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
-      :combat, :initiative_cooldown, :last_initiator, :spoken_ids,
+      :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines,
       keyword_init: true
     ) do
       # Has this character already taken a speaking turn in THIS scene? Seeded
@@ -37,6 +37,19 @@ module Harness
       def mark_spoken!(character_id)
         self.spoken_ids ||= []
         spoken_ids << character_id unless spoken_ids.include?(character_id)
+      end
+
+      # Each character's most recent staged dialogue line this scene — the
+      # repeat-guard's memory (the weak model, shown its own labeled prior
+      # line in the thread, re-emits it near-verbatim; the guard suppresses
+      # the parrot so the character breaks off instead).
+      def last_line_for(character_id)
+        (last_lines || {})[character_id]
+      end
+
+      def record_line!(character_id, prose)
+        self.last_lines ||= {}
+        last_lines[character_id] = prose
       end
 
       # Combat sub-mode helpers. `combat` is nil when no fight is running; set

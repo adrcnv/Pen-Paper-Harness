@@ -3,11 +3,12 @@ require "rails_helper"
 RSpec.describe Harness::Knowledge::Capture do
   let(:city)   { Location.create!(name: "Saltmere") }
   let(:tavern) { Location.create!(name: "Tavern", parent: city) }
-  let(:default_lines) { [ { "speaker" => "Tomas", "says" => "They say the salt tithe was repealed last winter." } ] }
 
-  def capture(response, location: tavern, lines: default_lines, game_time: 100, context: nil)
-    llm = StubLLM.new { |_p| response.is_a?(String) ? response : response.to_json }
-    described_class.run(llm: llm, location: location, lines: lines, game_time: game_time, context: context)
+  # Ingestion-only since the reflection rework: the payload arrives already
+  # extracted (the speaker's own reflection output); the llm serves only the
+  # revision judge + embeddings.
+  def capture(payload, location: tavern, game_time: 100, context: nil, speaker: "Tomas", llm: StubLLM.new { "{}" })
+    described_class.ingest(payload: payload, speaker: speaker, llm: llm, location: location, game_time: game_time, context: context)
   end
 
   def facts(*fs) = { "facts" => fs }
@@ -48,9 +49,9 @@ RSpec.describe Harness::Knowledge::Capture do
     end
 
     it "embeds and stores a vector for a written knowledge fact when the client can embed" do
-      llm = StubLLM.new { |_p| { "facts" => [ { "content" => "clerk lore", "subrole" => "clerk" } ] }.to_json }
+      llm = StubLLM.new { |_p| "{}" }
       llm.define_singleton_method(:embed) { |texts| Array(texts).map { [ 0.5, 0.5 ] } }
-      described_class.run(llm: llm, location: tavern, lines: default_lines, game_time: 100)
+      capture(facts("content" => "clerk lore", "subrole" => "clerk"), llm: llm)
       expect(JSON.parse(Knowledge.last.embedding)).to eq([ 0.5, 0.5 ])
     end
 
@@ -170,19 +171,13 @@ RSpec.describe Harness::Knowledge::Capture do
       )
     end
 
-    # Extraction call returns one local fact; the merge-judge call (recognized
-    # by its distinct prompt) returns `verdict`. Embeds map any text to the
-    # same vector as the standing row → cosine 1.0 → the judge always fires.
+    # The payload carries one local fact; the llm's only complete() call is the
+    # merge judge, which returns `verdict`. Embeds map any text to the same
+    # vector as the standing row → cosine 1.0 → the judge always fires.
     def capture_revision(verdict, fact_content: "The founder was named Elara.", embed_vec: [ 1.0, 0.0 ])
-      llm = StubLLM.new do |p|
-        if p.include?("STANDING fact")
-          verdict.to_json
-        else
-          { "facts" => [ { "content" => fact_content, "scope" => "local" } ] }.to_json
-        end
-      end
+      llm = StubLLM.new { |_p| verdict.to_json }
       llm.define_singleton_method(:embed) { |texts| Array(texts).map { embed_vec } }
-      described_class.run(llm: llm, location: tavern, lines: default_lines, game_time: 100)
+      capture(facts("content" => fact_content, "scope" => "local"), llm: llm)
     end
 
     it "EXTENDS: supersedes the standing row with the merged fact, facets inherited verbatim" do
@@ -222,12 +217,9 @@ RSpec.describe Harness::Knowledge::Capture do
     end
 
     it "below the cosine floor: no judge call, writes fresh" do
-      llm = StubLLM.new do |p|
-        raise "judge must not fire" if p.include?("STANDING fact")
-        { "facts" => [ { "content" => "The harbor closes at dusk.", "scope" => "local" } ] }.to_json
-      end
+      llm = StubLLM.new { |_p| raise "judge must not fire" }
       llm.define_singleton_method(:embed) { |texts| Array(texts).map { [ 0.0, 1.0 ] } } # orthogonal to standing
-      described_class.run(llm: llm, location: tavern, lines: default_lines, game_time: 100)
+      capture(facts("content" => "The harbor closes at dusk.", "scope" => "local"), llm: llm)
 
       expect(standing.reload.current).to be(true)
       expect(Knowledge.find_by(content: "The harbor closes at dusk.")).to be_present
@@ -265,12 +257,30 @@ RSpec.describe Harness::Knowledge::Capture do
     end
   end
 
-  describe "no lines" do
-    it "returns empty and makes NO llm call" do
-      llm = StubLLM.new { |_p| raise "should not be called" }
-      out = described_class.run(llm: llm, location: tavern, lines: [], game_time: 1)
-      expect(out).to eq([])
-      expect(llm.user_calls).to be_empty
+  describe "structural attribution" do
+    it "overrides the model-written `by` with the actual speaker" do
+      elsewhere = Location.create!(name: "Redmarsh")
+      harek     = Npc.create!(name: "Harek", subrole: "ferryman", location: elsewhere)
+      payload = {
+        "people" => [ { "name" => "Harek", "subrole" => "ferryman", "by" => "Somebody Else" } ],
+        "facts"  => [ { "content" => "Harek owes forty marks.", "concerns" => [ "Harek" ] } ]
+      }
+      expect { capture(payload, context: ctx, speaker: "Tomas") }.to change(Event, :count).by(1)
+      expect(Event.last.participants).to include(harek)
+    end
+
+    it "drops a named self-mention (a speaker cannot volunteer themselves)" do
+      tavern # force fixtures
+      payload = { "facts" => [], "people" => [ { "name" => "Tomas", "subrole" => "barkeep", "gist" => "a sharp barkeep" } ] }
+      expect { capture(payload, context: ctx, speaker: "Tomas") }.not_to change(Character, :count)
+    end
+  end
+
+  describe "empty payload" do
+    it "returns empty for a non-hash payload without touching the stores" do
+      tavern
+      expect(capture("not a hash at all")).to eq([])
+      expect(Knowledge.count).to eq(0)
     end
   end
 end

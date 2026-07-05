@@ -312,12 +312,126 @@ RSpec.describe Harness::Runners::Conversation do
     end
   end
 
-  describe "knowledge capture" do
-    it "captures a world-fact from spoken dialogue" do
+  describe "repeat-guard (the parrot suppressor)" do
+    def active_scene_for(ctx)
+      Harness::Scene::Active.new(
+        location: tavern, snapshot: nil, narrations: [], internal_state: {}, agendas: {},
+        extras: [], entered_at_game_time: 0
+      ).tap { |a| ctx.active_scene = a }
+    end
+
+    it "suppresses a verbatim re-emit of the speaker's previous line (breaks off instead)" do
+      line = "Aye, the salt tithe was repealed last winter, and good riddance to it."
       ctx = context_with do |full|
-        if full.include?("WORLD MEMORY")   # the capture call
+        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => line } }.to_json
+      end
+      active_scene_for(ctx)
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      first  = described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
+      second = described_class.new.run(context: ctx, scene: scene, input: "tell me more", step: step)
+
+      expect(first.tool_calls.count  { |t| t["name"] == "propose_event" }).to eq(1)
+      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(0)
+    end
+
+    it "suppresses a long re-emit with an identical head but a mutated tail (the Arn case)" do
+      base = "His grin doesn't waver, though he lowers his voice just enough to cut through the cold stare. He leans in close"
+      lines = [ "#{base} and names the Flats.", "#{base} and names the docks instead." ]
+      calls = 0
+      ctx = context_with do |full|
+        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        calls += 1
+        { "speak" => true, "dialogue" => { "summary" => "pitches", "prose" => lines[calls - 1] } }.to_json
+      end
+      active_scene_for(ctx)
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "go on", step: step)
+      second = described_class.new.run(context: ctx, scene: scene, input: "who exactly?", step: step)
+      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(0)
+    end
+
+    it "suppresses a CROSS-SPEAKER copy (an action beat wrapping a chunk of another's line — the Sten case)" do
+      Npc.create!(name: "Ragnar", subrole: "innkeeper", location: tavern)
+      chunk = "The Reeve is haggling for timber rights again. Not exactly a secret, just business, drink up friend."
+      turn  = 0
+      ctx = context_with do |full|
+        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        tomas = full.include?("\"name\": \"Tomas\"")
+        if turn == 1      # turn 1: Tomas speaks the chunk, Ragnar stays silent
+          tomas ? { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "Tomas leans on the bar. \"#{chunk}\"" } }.to_json : { "speak" => false }.to_json
+        else              # turn 2: RAGNAR parrots Tomas's chunk inside a fresh action beat
+          tomas ? { "speak" => false }.to_json : { "speak" => true, "dialogue" => { "summary" => "echoes", "prose" => "Ragnar crosses his arms. \"#{chunk}\"" } }.to_json
+        end
+      end
+      active_scene_for(ctx)
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      turn = 1
+      first = described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
+      expect(first.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(1)
+
+      turn = 2
+      second = described_class.new.run(context: ctx, scene: scene, input: "timber rights?", step: step)
+      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(0)
+    end
+
+    it "lets a genuinely NEW line through" do
+      calls = 0
+      ctx = context_with do |full|
+        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        calls += 1
+        prose = calls == 1 ? "Aye, what'll it be?" : "The cellar's flooded again, if you must know."
+        { "speak" => true, "dialogue" => { "summary" => "talks", "prose" => prose } }.to_json
+      end
+      active_scene_for(ctx)
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
+      second = described_class.new.run(context: ctx, scene: scene, input: "what's wrong?", step: step)
+      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(1)
+    end
+  end
+
+  describe "venue exposure" do
+    it "tells every voicing call WHERE the conversation is (the Common Room leak fix)" do
+      voicing_prompt = nil
+      ctx = context_with do |full|
+        voicing_prompt = full unless full.include?("WORLD MEMORY") || full.include?("filter stored facts")
+        { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "Well met." } }.to_json
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
+      expect(voicing_prompt).to include("\"location\"")
+      expect(voicing_prompt).to include("\"name\": \"The Drowned Rat\"")
+    end
+
+    it "includes the parent place for a sublocation venue" do
+      city = Location.create!(name: "Saltmere")
+      tavern.update!(parent_id: city.id)
+      voicing_prompt = nil
+      ctx = context_with do |full|
+        voicing_prompt = full unless full.include?("WORLD MEMORY") || full.include?("filter stored facts")
+        { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "Well met." } }.to_json
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
+      expect(voicing_prompt).to include("\"part_of\": \"Saltmere\"")
+    end
+  end
+
+  describe "knowledge reflection (per-speaker capture)" do
+    it "writes a fact the speaker's reflection reports" do
+      ctx = context_with do |full|
+        if full.include?("SECOND PASS: WORLD MEMORY")   # the reflection tail
           { "facts" => [ { "content" => "The salt tithe was repealed last winter.", "subrole" => nil, "scope" => "local", "min_int" => nil } ] }.to_json
-        else                               # the barkeep's voicing call
+        elsif full.include?("filter stored facts")      # relevance gate
+          { "relevant" => [] }.to_json
+        else                                            # the barkeep's voicing call
           { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "They say the salt tithe was repealed last winter." } }.to_json
         end
       end
@@ -329,39 +443,37 @@ RSpec.describe Harness::Runners::Conversation do
       expect(Knowledge.last.content).to match(/salt tithe/)
     end
 
-    it "captures on a GROUNDED turn too (the speaker elaborating a recalled fact is prime revision material)" do
-      Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
-      capture_ran = false
+    it "extends the speaker's OWN voicing context: the reflection prompt carries the payload plus the spoken line" do
+      reflection_prompt = nil
       ctx = context_with do |full|
-        if full.include?("filter stored facts")   # gate grounds (candidate #1 relevant)
-          { "relevant" => [ 1 ] }.to_json
-        elsif full.include?("WORLD MEMORY")        # capture — must STILL run
-          capture_ran = true
+        if full.include?("SECOND PASS: WORLD MEMORY")
+          reflection_prompt = full
           { "facts" => [] }.to_json
+        elsif full.include?("filter stored facts")
+          { "relevant" => [ 1 ] }.to_json   # grounded turn — reflection must still fire
         else
-          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Aye, repealed." } }.to_json
+          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Aye, repealed, and good riddance." } }.to_json
         end
       end
+      Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
       scene = Harness::Tools::QueryScene.build(ctx)
+
       described_class.new.run(context: ctx, scene: scene, input: "is there still a tithe?", step: step)
-      expect(capture_ran).to be(true)
+      expect(reflection_prompt).to include("\"player_input\"")                     # the voicing payload prefix
+      expect(reflection_prompt).to include("Aye, repealed, and good riddance.")    # the line under judgment
+      expect(reflection_prompt).to include("The salt tithe was repealed")          # the speaker's recall, in view
     end
 
-    it "captures on a recall MISS (gate returns none)" do
-      Knowledge.create!(content: "An unrelated fact about the docks.", location_id: tavern.id, current: true, game_time: 0)
+    it "does not reflect for a character who stayed silent" do
+      reflected = false
       ctx = context_with do |full|
-        if full.include?("filter stored facts")
-          { "relevant" => [] }.to_json           # MISS
-        elsif full.include?("WORLD MEMORY")
-          { "facts" => [ { "content" => "The bridge toll doubled at midsummer.", "subrole" => nil, "scope" => "local", "min_int" => nil } ] }.to_json
-        else
-          { "speak" => true, "dialogue" => { "summary" => "x", "prose" => "The toll doubled." } }.to_json
-        end
+        reflected = true if full.include?("SECOND PASS: WORLD MEMORY")
+        { "speak" => false }.to_json
       end
       scene = Harness::Tools::QueryScene.build(ctx)
-      expect {
-        described_class.new.run(context: ctx, scene: scene, input: "what's new?", step: step)
-      }.to change(Knowledge, :count).by(1)
+
+      described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
+      expect(reflected).to be(false)
     end
   end
 

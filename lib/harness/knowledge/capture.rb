@@ -1,7 +1,11 @@
 module Harness
   module Knowledge
-    # Step 2 — the WRITE path, and a two-store ROUTER. After a conversation turn,
-    # read what the NPCs actually SAID and persist it — but to the RIGHT store:
+    # The knowledge-write INGESTION pipe, and a two-store ROUTER. Extraction no
+    # longer happens here — each speaker judges their OWN line in a reflection
+    # pass on their voicing context (Runners::Conversation#reflect_knowledge),
+    # so the what-did-I-claim judgment is made with the speaker's recall,
+    # roster, and thread in view. This class takes that parsed payload and
+    # persists it to the RIGHT store:
     #   - ATTRIBUTE-scoped fact (true of a CLASS or PLACE — "the salt tithe was
     #     repealed", "form 4-B goes to the strongroom") → the KNOWLEDGE store,
     #     faceted, read by every matching NPC.
@@ -10,40 +14,37 @@ module Harness
     #     single `personal`-scope event with those parties as participants. Only
     #     they recall it; `ids_for_holder` never projects a personal event to
     #     co-locators or the public, so it does NOT leak to the whole town.
-    # The LLM tags each fact with `concerns` (the named parties); non-empty →
-    # events, empty → knowledge. This is what keeps one person's claim from
-    # becoming town doctrine.
-    #
-    # THE HARD JUDGMENT lives here and is what step 2 exists to de-risk:
-    #   - is this a storable fact, or leverage-able trivia the model can just
-    #     regenerate (how to skin a rabbit)? — the razor.
-    #   - which STORE (the concerns fork above), and at what FACET GRANULARITY
-    #     for the knowledge branch? too broad → one offhand remark becomes
-    #     universal doctrine; too narrow → nothing fans out.
-    # Validate by reading the rows this writes.
+    # The reflection tags each fact with `concerns` (the named parties);
+    # non-empty → events, empty → knowledge. This is what keeps one person's
+    # claim from becoming town doctrine.
     #
     # Place granularity is mechanical for now: a "local" fact scopes to the
     # scene's ROOT settlement (town-wide), matching Query's ancestry up-chain so
-    # every sublocation shares it; "world" scopes to null. Finer place tiers and
-    # semantic dedup wait for later steps. Participation parties resolve to
-    # EXISTING character rows only; a fact naming nobody who exists is skipped
-    # (logged) and left for the realizer (step 4) — never demoted to knowledge.
+    # every sublocation shares it; "world" scopes to null. Participation parties
+    # resolve to EXISTING character rows only; a fact naming nobody who exists
+    # is skipped (logged) and left for the realizer — never demoted to
+    # knowledge. Speaker attribution is STRUCTURAL: the `speaker` arg overrides
+    # any `by` the model wrote, and a named self-mention is dropped (you cannot
+    # volunteer yourself).
     class Capture
-      PROMPT_PATH       = Rails.root.join("lib/harness/prompts/knowledge_capture.txt")
       MERGE_PROMPT_PATH = Rails.root.join("lib/harness/prompts/knowledge_merge.txt")
 
       # Cosine floor for treating an incoming fact as a REVISION of a standing
-      # row rather than a new one. Deliberately permissive — the merge judge is
-      # the precision gate; this only bounds how often the judge fires. Every
-      # scan logs its scores so this gets tuned on evidence.
-      REVISION_THRESHOLD = 0.55
+      # row rather than a new one. The merge judge is the precision gate; this
+      # bounds how often it fires. Tuned on evidence: these decoder embeddings
+      # live in a compressed band — two UNRELATED facts (player-spellweaver vs
+      # Reeve-timber) scored 0.763, so the original 0.55 floor was below the
+      # noise floor and would fire the judge on everything. Scans log their
+      # scores; keep tuning as data accumulates.
+      REVISION_THRESHOLD = 0.75
 
-      def self.run(**kwargs) = new(**kwargs).run
+      def self.ingest(**kwargs) = new(**kwargs).ingest
 
-      def initialize(llm:, location:, lines:, game_time: 0, context: nil, logger: Rails.logger)
-        @llm       = llm
+      def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, logger: Rails.logger)
+        @payload   = payload    # the speaker's parsed reflection output {facts, people, places}
+        @speaker   = speaker.to_s
+        @llm       = llm        # revision judge + embeddings only (no extraction call)
         @location  = location
-        @lines     = Array(lines)
         @game_time = game_time
         @context   = context   # Turn::Context — needed to REALIZE named people (nil → skip realization)
         @logger    = logger
@@ -51,28 +52,19 @@ module Harness
 
       # Returns the rows written — a mix of Knowledge (attribute-scoped) and
       # Event (participation-scoped) records (may be empty).
-      def run
-        return [] if @lines.empty?
+      def ingest
+        return [] unless @payload.is_a?(::Hash)
 
-        # Log what capture is JUDGING, at info — so a "0 written" turn isn't a
-        # black box (was it fed banter, or did it wrongly reject a real fact?).
-        @logger.info { "[Knowledge::Capture] judging #{@lines.size} line(s): #{@lines.map { |l| "#{l['speaker']}: #{l['says'].to_s[0, 100]}" }.inspect}" }
-
-        raw    = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
-          @llm.complete(system: preamble, user: user_message)
-        end
-        parsed = parse(raw)
-        facts  = extract_facts(parsed)
-        people = extract_people(parsed)
-        places = extract_places(parsed)
+        facts  = extract_facts(@payload)
+        people = attribute_people(extract_people(@payload))
+        places = extract_places(@payload)
         # Show the raw extraction (content + concerns) BEFORE routing/dedup, so
         # calibration is visible: what the razor kept, and where it routed it.
         facts.each { |f| @logger.info { "[Knowledge::Capture]   extracted: concerns=#{Array(f['concerns']).inspect} :: #{f['content'].to_s[0, 120]}" } }
-        # People named in dialogue → the Realizer (the SINGLE entity pipe: this
-        # replaces the old flaky `claims` side-field the voicing model kept
-        # forgetting). Realized FIRST, so a fact about a just-minted person can
-        # attach to their fresh row (find_character consults @minted_people) —
-        # otherwise the participation branch would drop it as "no party". Needs a
+        # People named in dialogue → the Realizer (the SINGLE entity pipe).
+        # Realized FIRST, so a fact about a just-minted person can attach to
+        # their fresh row (find_character consults @minted_people) — otherwise
+        # the participation branch would drop it as "no party". Needs a
         # Turn::Context; a no-op (empty map) without one (unit tests).
         realize_people(people)
         written = facts.filter_map { |f| route(f) }
@@ -81,7 +73,7 @@ module Harness
         # proper-named sublocation of the current town). Independent of fact
         # routing; also a no-op without a context.
         realize_places(places)
-        @logger.info { "[Knowledge::Capture] #{@lines.size} line(s) → #{facts.size} fact(s), #{written.size} written, #{people.size} person-ref(s), #{places.size} place-ref(s)" }
+        @logger.info { "[Knowledge::Capture] #{@speaker}: #{facts.size} fact(s), #{written.size} written, #{people.size} person-ref(s), #{places.size} place-ref(s)" }
         written
       end
 
@@ -113,20 +105,18 @@ module Harness
         parties.any? ? write_event(fact, parties) : write_knowledge(fact)
       end
 
-      def user_message
-        payload = {
-          "location"  => @location&.name,
-          "vocations" => ::Harness::Vocations.all,
-          "lines"     => @lines.map { |l| { "speaker" => l["speaker"], "says" => l["says"] } }
-        }
-        "INPUT:\n#{JSON.pretty_generate(payload)}"
-      end
-
-      def parse(raw)
-        ::Harness::LLM::JsonResponse.parse(raw)
-      rescue StandardError => e
-        @logger.warn { "[Knowledge::Capture] parse failed: #{e.class}: #{e.message}" }
-        nil
+      # Structural attribution: `by` is the speaker whose reflection this is —
+      # never trusted from the model. A NAMED self-mention is dropped (you
+      # cannot volunteer yourself; the nameless variant is prevented upstream
+      # by the first-person reflection framing).
+      def attribute_people(people)
+        people.filter_map do |p|
+          if name_match?(p["name"], @speaker)
+            @logger.info { "[Knowledge::Capture] dropped self-mention #{p['name'].inspect} (speaker #{@speaker.inspect})" }
+            next
+          end
+          p.merge("by" => @speaker)
+        end
       end
 
       def extract_facts(parsed)
@@ -455,10 +445,6 @@ module Harness
         norm = content.downcase
         ::Knowledge.where(subrole: subrole, location_id: location_id)
                    .any? { |k| k.content.to_s.strip.downcase == norm }
-      end
-
-      def preamble
-        @preamble ||= File.read(PROMPT_PATH)
       end
     end
   end

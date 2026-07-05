@@ -130,13 +130,30 @@ module Harness
         @display_model = fetch_loaded_model || @model || "local"
       end
 
+      # Anti-parrot sampling: llama.cpp's DRY sampler penalizes tokens that
+      # would EXTEND a sequence already present in context (prompt +
+      # generation) — the weak model's verbatim copy-from-thread pathology
+      # (NPCs re-reciting a prior turn's line). penalty = multiplier *
+      # base^(match_len - allowed_length): allowed_length 6 leaves character
+      # names (~4-6 tokens, endlessly repeated by design) essentially free
+      # while crushing copied sentences; default sequence breakers
+      # (newline, colon, quote, *) keep JSON scaffolding immune. llama.cpp
+      # accepts these through the OpenAI-compat endpoint; a strict OpenAI
+      # server would 400 on them — this adapter's deployment reality is
+      # llama.cpp (the hosted path is the Anthropic adapter).
+      DRY_SAMPLING = {
+        "dry_multiplier"     => 0.8,
+        "dry_base"           => 1.75,
+        "dry_allowed_length" => 6
+      }.freeze
+
       # Public so OpenAICompatTurn can call back in.
       def post_chat(messages:, tools: nil, enable_thinking: nil)
         payload = {
           "model"      => @model,
           "max_tokens" => @max_tokens,
           "messages"   => messages
-        }
+        }.merge(DRY_SAMPLING)
         payload["tools"] = tools if tools.is_a?(Array) && !tools.empty?
 
         # llama.cpp passes chat_template_kwargs through to the jinja template.

@@ -557,6 +557,29 @@ RSpec.describe Harness::Turn::Loop do
     end
   end
 
+  describe "mid-combat player slot (structured, not agentic)" do
+    it "routes an in-combat input through Combat::PlayerTurn — dispatcher and reasoning loop skipped" do
+      vek = Npc.create!(name: "Vek", location: tavern, current_hp: 5, max_hp: 5)
+      adapter   = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "n")
+      turn_loop = described_class.new(adapter: adapter, context: context)
+      turn_loop.run_turn(input: "look around")   # enter the scene
+
+      active = context.active_scene
+      active.start_combat!
+      active.combat.add_combatant(player.id, side: "player_party")
+      active.combat.add_combatant(vek.id, side: "foes")
+      active.combat.initiative = [ player.id, vek.id ]
+
+      expect(Harness::Combat::PlayerTurn).to receive(:run) do |kwargs|
+        expect(kwargs[:input]).to eq("I attack Vek")
+        expect(kwargs[:player]).to eq(player)
+        nil   # non-action → slot stays fresh; Combat::Loop yields
+      end
+      transcript = turn_loop.run_turn(input: "I attack Vek")
+      expect(transcript.combat.end_reason).to eq(:yielded)
+    end
+  end
+
   describe "combat hand-off" do
     let!(:vek) { Npc.create!(name: "Vek", subrole: "marauder", location: tavern, current_hp: 18, max_hp: 18) }
 
