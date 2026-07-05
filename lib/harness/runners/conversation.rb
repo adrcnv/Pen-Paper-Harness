@@ -57,12 +57,6 @@ module Harness
         # recalls the KNOWLEDGE store (facet-relevant stored facts) and gates
         # them into its voicing. Everyone else banters on their own events only.
         substantive_id = pick_substantive(present, input)
-        # GATE ARMS CAPTURE: if recall grounds the substantive speaker (the gate
-        # finds something relevant), the turn ran on EXISTING knowledge → nothing
-        # new to store, skip capture. A semantic MISS (gate "none", or no
-        # substantive speaker at all — empty store, bootstrap) leaves this false
-        # → capture fires. `recall` sets it true when it grounds.
-        @recall_grounded = false
 
         spoken       = 0
         parsed_any   = false
@@ -171,8 +165,6 @@ module Harness
         return { "knowledge" => [], "events" => [] } if cands.empty?
 
         approved = ::Harness::Knowledge::Gate.run(llm: llm(context), topic: topic, facts: cands, logger: @logger)
-        # The gate grounded this turn iff it approved anything → disarm capture.
-        @recall_grounded = true if approved.any?
         out = { "knowledge" => approved.select { |c| c.src == :knowledge }.map(&:content),
                 "events"    => approved.select { |c| c.src == :event }.map(&:content) }
         @logger.info { "[Runner conversation] recall #{char.name}: #{facts.size} fact + #{Array(own_events).size} memory cand → #{out['knowledge'].size} fact / #{out['events'].size} memory gated-in" }
@@ -429,17 +421,15 @@ module Harness
 
       # Step 2 write path: extract standing world-facts from what was said and
       # persist them (Knowledge::Capture — the single entity pipe: facts + people
-      # → Realizer). ARMED BY RECALL-MISS: when recall grounded the turn's
-      # substantive speaker (@recall_grounded), the exchange ran on existing
-      # knowledge → skip the extra call; only a semantic miss (or no substantive
-      # speaker) captures. This replaces the crude fires-every-spoken-turn
-      # behaviour. Non-fatal.
+      # + places → Realizer). Fires on EVERY spoken turn — grounded turns
+      # included: a speaker looking straight at a recalled fact is the prime
+      # source of REVISIONS (capture's cosine-scan + merge judge ratifies the
+      # elaboration into the standing row), and a grounded turn can still name
+      # a new person/place the realizer must mint. (An earlier recall-miss arm
+      # skipped grounded turns — valid for append-only capture, stale once
+      # revision landed.) Non-fatal.
       def capture_knowledge(context, lines)
         return if lines.empty?
-        if @recall_grounded
-          @logger.info { "[Runner conversation] capture SKIPPED — recall grounded this turn (no semantic miss)" }
-          return
-        end
         ::Harness::Knowledge::Capture.run(
           llm:       llm(context),
           location:  context.player_location,

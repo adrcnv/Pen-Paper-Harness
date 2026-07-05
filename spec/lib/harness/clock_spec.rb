@@ -29,6 +29,29 @@ RSpec.describe Harness::Clock do
     end
   end
 
+  describe ".phase" do
+    it "maps hours to phases across the day (boundaries: 6/11/17/22)" do
+      expect(described_class.phase(0 * 60)).to eq(:night)      # midnight
+      expect(described_class.phase(5 * 60 + 59)).to eq(:night)
+      expect(described_class.phase(6 * 60)).to eq(:morning)
+      expect(described_class.phase(10 * 60 + 59)).to eq(:morning)
+      expect(described_class.phase(11 * 60)).to eq(:day)
+      expect(described_class.phase(16 * 60 + 59)).to eq(:day)
+      expect(described_class.phase(17 * 60)).to eq(:evening)
+      expect(described_class.phase(21 * 60 + 59)).to eq(:evening)
+      expect(described_class.phase(22 * 60)).to eq(:night)
+    end
+
+    it "wraps across days (game_time is absolute minutes)" do
+      expect(described_class.phase(3 * 1440 + 12 * 60)).to eq(:day)
+      expect(described_class.phase(7 * 1440 + 23 * 60)).to eq(:night)
+    end
+
+    it "treats nil as minute zero (night)" do
+      expect(described_class.phase(nil)).to eq(:night)
+    end
+  end
+
   describe "scene_dirty (no accrual-driven rebuild)" do
     let(:active) {
       Harness::Scene::Active.new(

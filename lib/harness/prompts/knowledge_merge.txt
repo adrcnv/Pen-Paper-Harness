@@ -1,0 +1,10 @@
+You compare a STANDING fact against a NEW statement heard in conversation and judge the relation.
+
+- extends: same subject, and the statement adds or refines detail (a name, a place, a cause, an outcome). Produce the revised fact: the standing fact with the new detail folded in. One or two sentences, plain statement form.
+- contradicts: same subject, but the statement denies or conflicts with the standing fact.
+- unrelated: different subject.
+
+A denial or doubt is contradicts, never extends. When unsure whether it is the same subject, answer unrelated.
+
+Output JSON only:
+{"relation": "extends" | "contradicts" | "unrelated", "merged": "<revised fact when extends, else null>"}

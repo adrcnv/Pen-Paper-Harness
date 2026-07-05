@@ -29,6 +29,22 @@ module Harness
   module Clock
     IN_SCENE_THRESHOLD = 60
 
+    # Day-phase from the minute clock (game_time is minutes; 1440/day).
+    # The mechanical primitive for anything time-of-day-aware (draw gating,
+    # future NPC timetables). Boundaries: night 22-6, morning 6-11, day 11-17,
+    # evening 17-22.
+    MINUTES_PER_DAY = 1440
+
+    def self.phase(game_time)
+      hour = ((game_time.to_i % MINUTES_PER_DAY) / 60)
+      case hour
+      when 6...11  then :morning
+      when 11...17 then :day
+      when 17...22 then :evening
+      else              :night
+      end
+    end
+
     def self.advance(context, minutes:, reason:, logger: Rails.logger)
       raise ArgumentError, "minutes must be a non-negative integer (got #{minutes.inspect})" unless minutes.is_a?(Integer) && minutes >= 0
       return context.game_time if minutes.zero?

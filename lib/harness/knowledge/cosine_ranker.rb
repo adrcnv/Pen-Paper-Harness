@@ -75,8 +75,9 @@ module Harness
 
       # True cosine — correct whether or not the server pre-normalizes; cheap
       # over a facet-gated handful. Missing/mismatched/zero vectors → -1 so they
-      # sink below anything comparable.
-      def similarity(a, b)
+      # sink below anything comparable. Class-level so Capture's revision scan
+      # can reuse the same math without instantiating a ranker.
+      def self.similarity(a, b)
         return -1.0 if a.nil? || b.nil? || a.empty? || b.empty? || a.size != b.size
         dot = 0.0
         na  = 0.0
@@ -91,6 +92,8 @@ module Harness
         return -1.0 if na.zero? || nb.zero?
         dot / (Math.sqrt(na) * Math.sqrt(nb))
       end
+
+      def similarity(a, b) = self.class.similarity(a, b)
     end
   end
 end

@@ -99,6 +99,15 @@ module Harness
           logger: logger
         )
 
+        # Remember who was on stage as the player leaves — the next enter's
+        # draws exclude them (anti-cart: the NPC you just talked to must not
+        # be re-drawn into the next scene behind you). Stamped with the clock:
+        # the exclusion only holds within the SAME day-phase (see
+        # cart_exclusions) — once the phase ticks over, people legitimately
+        # relocate (the smith off-shift CAN be at the pub you walked to).
+        @last_cast_ids       = ::Npc.where(location_id: @active.location.id).pluck(:id)
+        @last_exit_game_time = @context.game_time
+
         # Clear non-residents from the scene we're leaving: transients go home,
         # pure-flavor strangers evaporate. Stops the "merchants stranded at the
         # crossing forever" pile-up.
@@ -233,9 +242,28 @@ module Harness
       # assembly steps, so headless/no-LLM contexts stay deterministic.
       def maybe_pull_traveler(loc)
         return unless @context.llm_grunt
-        ::Harness::Scene::TravelerPull.maybe_pull(loc, rng: @rng, logger: logger)
+        ::Harness::Scene::TravelerPull.maybe_pull(
+          loc,
+          exclude_ids: cart_exclusions, game_time: @context.game_time,
+          rng: @rng, logger: logger
+        )
       rescue StandardError => e
         logger.warn { "[Scene::Manager] traveler pull failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # The previous scene's cast, excludable ONLY while it still reads as
+      # "you just left them there": same day-phase and recent. A phase
+      # boundary (or a long absence) clears it — people move between blocks,
+      # and a re-encounter after the shift change is a feature, not the cart.
+      # A flat stand-in for real NPC routines; dies when those land.
+      CART_WINDOW_MINUTES = 360
+
+      def cart_exclusions
+        return [] if Array(@last_cast_ids).empty? || @last_exit_game_time.nil?
+        now = @context.game_time || 0
+        return [] unless ::Harness::Clock.phase(now) == ::Harness::Clock.phase(@last_exit_game_time)
+        return [] unless (now - @last_exit_game_time) < CART_WINDOW_MINUTES
+        @last_cast_ids
       end
 
       # Intra-city draw: at a sublocation, occasionally a same-city resident
@@ -246,7 +274,11 @@ module Harness
       # headless/no-LLM contexts stay deterministic.
       def maybe_draw_local(loc)
         return unless @context.llm_grunt
-        ::Harness::Scene::LocalDraw.maybe_draw(loc, rng: @rng, logger: logger)
+        ::Harness::Scene::LocalDraw.maybe_draw(
+          loc,
+          exclude_ids: cart_exclusions, game_time: @context.game_time,
+          rng: @rng, logger: logger
+        )
       rescue StandardError => e
         logger.warn { "[Scene::Manager] local draw failed for #{loc.name}: #{e.class}: #{e.message}" }
       end

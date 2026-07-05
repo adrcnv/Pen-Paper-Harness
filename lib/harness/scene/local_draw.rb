@@ -18,22 +18,29 @@ module Harness
     # residents are already standing in the scene (home == location == here), so
     # there's nothing to draw. Top-level cities are TravelerPull's domain.
     class LocalDraw
-      CHANCE = 0.25 # per sublocation scene entry; tunable knob
+      CHANCE = 0.25 # flat fallback when no game_time is supplied; tunable knob
 
-      def self.maybe_draw(location, rng: Random.new, logger: Rails.logger)
-        new(location, rng: rng, logger: logger).maybe_draw
+      # Day-phase gating: regulars drift in mostly of an evening, rarely at
+      # dawn, never in the dead of night. The timetable-lite half of "NPCs
+      # have their own hours".
+      PHASE_CHANCE = { morning: 0.15, day: 0.25, evening: 0.4, night: 0.0 }.freeze
+
+      def self.maybe_draw(location, exclude_ids: [], game_time: nil, rng: Random.new, logger: Rails.logger)
+        new(location, exclude_ids: exclude_ids, game_time: game_time, rng: rng, logger: logger).maybe_draw
       end
 
-      def initialize(location, rng: Random.new, logger: Rails.logger)
-        @location = location
-        @rng      = rng
-        @logger   = logger
+      def initialize(location, exclude_ids: [], game_time: nil, rng: Random.new, logger: Rails.logger)
+        @location    = location
+        @exclude_ids = Array(exclude_ids)
+        @game_time   = game_time
+        @rng         = rng
+        @logger      = logger
       end
 
       def maybe_draw
         return nil unless @location&.parent_id   # sublocations only
         return nil unless @location.settlement?   # not a wilderness-leaf sub
-        return nil unless @rng.rand < CHANCE
+        return nil unless @rng.rand < chance
 
         local = candidates.sample(random: @rng)
         return nil unless local
@@ -46,15 +53,23 @@ module Harness
       # Residents of THIS city (home anywhere in the city ancestry) whose home
       # is somewhere OTHER than this exact sublocation, currently resting at
       # home, eligible to drift in. Excludes this sublocation's own residents
-      # (already here) and anyone currently away from home (already out and
-      # about). Public for testability.
+      # (already here), anyone currently away from home (already out and
+      # about), and `exclude_ids` — the cast of the scene the player just left
+      # (the anti-cart rule: the person you were talking to must not trail you
+      # through the next doorway). Public for testability.
       def candidates
         city_ids = Residents.ancestry_ids(@location)
-        ::Npc.where(home_location_id: city_ids)
-             .where.not(home_location_id: @location.id)
-             .where("characters.location_id = characters.home_location_id") # resting at home
-             .to_a
-             .select { |c| Residents.eligible?(c) }
+        scope = ::Npc.where(home_location_id: city_ids)
+                     .where.not(home_location_id: @location.id)
+                     .where("characters.location_id = characters.home_location_id") # resting at home
+        scope = scope.where.not(id: @exclude_ids) if @exclude_ids.any?
+        scope.to_a.select { |c| Residents.eligible?(c) && Routine.free?(c, @game_time) }
+      end
+
+      private
+
+      def chance
+        @game_time.nil? ? CHANCE : PHASE_CHANCE.fetch(::Harness::Clock.phase(@game_time))
       end
     end
   end

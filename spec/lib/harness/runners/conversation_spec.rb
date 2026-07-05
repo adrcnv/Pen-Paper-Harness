@@ -246,6 +246,8 @@ RSpec.describe Harness::Runners::Conversation do
       ctx = context_with do |full|
         if full.include?("filter stored facts")   # the relevance gate (synthetic ids: fact is candidate #1)
           { "relevant" => [ 1 ] }.to_json
+        elsif full.include?("WORLD MEMORY")        # capture (fires on grounded turns too)
+          { "facts" => [] }.to_json
         else                                       # the barkeep's voicing
           voicing_prompt = full
           { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Aye, repealed last winter." } }.to_json
@@ -327,13 +329,13 @@ RSpec.describe Harness::Runners::Conversation do
       expect(Knowledge.last.content).to match(/salt tithe/)
     end
 
-    it "SKIPS capture when recall grounded the substantive speaker (gate arms capture)" do
+    it "captures on a GROUNDED turn too (the speaker elaborating a recalled fact is prime revision material)" do
       Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
       capture_ran = false
       ctx = context_with do |full|
-        if full.include?("filter stored facts")   # gate grounds (candidate #1 relevant) → disarms capture
+        if full.include?("filter stored facts")   # gate grounds (candidate #1 relevant)
           { "relevant" => [ 1 ] }.to_json
-        elsif full.include?("WORLD MEMORY")        # capture — must NOT run
+        elsif full.include?("WORLD MEMORY")        # capture — must STILL run
           capture_ran = true
           { "facts" => [] }.to_json
         else
@@ -342,14 +344,14 @@ RSpec.describe Harness::Runners::Conversation do
       end
       scene = Harness::Tools::QueryScene.build(ctx)
       described_class.new.run(context: ctx, scene: scene, input: "is there still a tithe?", step: step)
-      expect(capture_ran).to be(false)
+      expect(capture_ran).to be(true)
     end
 
-    it "still captures on a recall MISS (gate returns none)" do
+    it "captures on a recall MISS (gate returns none)" do
       Knowledge.create!(content: "An unrelated fact about the docks.", location_id: tavern.id, current: true, game_time: 0)
       ctx = context_with do |full|
         if full.include?("filter stored facts")
-          { "relevant" => [] }.to_json           # MISS → arms capture
+          { "relevant" => [] }.to_json           # MISS
         elsif full.include?("WORLD MEMORY")
           { "facts" => [ { "content" => "The bridge toll doubled at midsummer.", "subrole" => nil, "scope" => "local", "min_int" => nil } ] }.to_json
         else

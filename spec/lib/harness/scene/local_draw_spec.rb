@@ -53,6 +53,15 @@ RSpec.describe Harness::Scene::LocalDraw do
       cands = described_class.new(tavern).candidates
       expect(cands).not_to include(homeless, dormant, follower, corpse)
     end
+
+    it "excludes exclude_ids (anti-cart: the previous scene's cast can't be re-drawn)" do
+      just_left = npc(location_id: mirehold.id, home_location_id: mirehold.id)
+      other     = npc(location_id: smithy.id,   home_location_id: smithy.id)
+
+      cands = described_class.new(tavern, exclude_ids: [ just_left.id ]).candidates
+      expect(cands).not_to include(just_left)
+      expect(cands).to include(other)
+    end
   end
 
   describe "maybe_draw" do
@@ -83,6 +92,35 @@ RSpec.describe Harness::Scene::LocalDraw do
 
     it "is a no-op when there are no eligible locals" do
       expect(described_class.new(tavern, rng: fires).maybe_draw).to be_nil
+    end
+  end
+
+  describe "day-phase gating" do
+    it "never draws at NIGHT even when the roll would fire" do
+      npc(location_id: mirehold.id, home_location_id: mirehold.id)
+      midnight = 0
+      expect(described_class.new(tavern, game_time: midnight, rng: fires).maybe_draw).to be_nil
+    end
+
+    it "draws in the EVENING (regulars' hour)" do
+      local   = npc(location_id: mirehold.id, home_location_id: mirehold.id)
+      evening = 19 * 60
+      expect(described_class.new(tavern, game_time: evening, rng: fires).maybe_draw).to eq(local)
+    end
+
+    it "falls back to the flat CHANCE when no game_time is supplied" do
+      local = npc(location_id: mirehold.id, home_location_id: mirehold.id)
+      expect(described_class.new(tavern, rng: fires).maybe_draw).to eq(local)
+    end
+
+    it "never draws an ON-SHIFT NPC (the smith stays at his forge at noon); off-shift are fair game" do
+      on_shift  = npc(location_id: mirehold.id, home_location_id: mirehold.id, subrole: "smith")
+      off_shift = npc(location_id: mirehold.id, home_location_id: mirehold.id, subrole: "minstrel")
+      noon      = 12 * 60
+
+      cands = described_class.new(tavern, game_time: noon).candidates
+      expect(cands).not_to include(on_shift)
+      expect(cands).to include(off_shift)
     end
   end
 end

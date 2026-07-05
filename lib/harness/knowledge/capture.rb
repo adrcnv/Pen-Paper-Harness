@@ -29,7 +29,14 @@ module Harness
     # EXISTING character rows only; a fact naming nobody who exists is skipped
     # (logged) and left for the realizer (step 4) — never demoted to knowledge.
     class Capture
-      PROMPT_PATH = Rails.root.join("lib/harness/prompts/knowledge_capture.txt")
+      PROMPT_PATH       = Rails.root.join("lib/harness/prompts/knowledge_capture.txt")
+      MERGE_PROMPT_PATH = Rails.root.join("lib/harness/prompts/knowledge_merge.txt")
+
+      # Cosine floor for treating an incoming fact as a REVISION of a standing
+      # row rather than a new one. Deliberately permissive — the merge judge is
+      # the precision gate; this only bounds how often the judge fires. Every
+      # scan logs its scores so this gets tuned on evidence.
+      REVISION_THRESHOLD = 0.55
 
       def self.run(**kwargs) = new(**kwargs).run
 
@@ -163,7 +170,8 @@ module Harness
             status = if res.nil? then "declined"
             elsif res["minted"] then "MINTED ##{res['character_id']} #{res['name'].inspect}"
             elsif res["linked"] then "LINKED ##{res['character_id']} #{res['name'].inspect}"
-            else res.inspect end
+            else res.inspect
+            end
             "[Knowledge::Capture] realize person by=#{p['by'].inspect} name=#{p['name'].inspect} → #{status}"
           end
         end
@@ -184,7 +192,8 @@ module Harness
             status = if res.nil? then "declined"
             elsif res["minted"] then "MINTED loc##{res['location_id']} #{res['name'].inspect}"
             elsif res["linked"] then "LINKED loc##{res['location_id']} #{res['name'].inspect}"
-            else res.inspect end
+            else res.inspect
+            end
             "[Knowledge::Capture] realize place name=#{pl['name'].inspect} → #{status}"
           end
         end
@@ -193,7 +202,11 @@ module Harness
       end
 
       # ATTRIBUTE branch — a faceted Knowledge row: resolve facets mechanically,
-      # dedup, write. Returns the row, or nil if it was a duplicate.
+      # dedup, then check whether this is a REVISION of a standing fact (the
+      # modification plumbing — conversation elaborating a stored tale must
+      # enrich the row recall reads, not strand a nameless sibling). Otherwise
+      # write fresh. Returns the row written, or nil (duplicate / contradiction
+      # / nothing-new revision).
       def write_knowledge(fact)
         content     = fact["content"].strip
         subrole     = canonical_subrole(fact["subrole"])
@@ -202,6 +215,24 @@ module Harness
 
         return nil if duplicate?(content, subrole, location_id)
 
+        old, vec = revision_target(content)
+        if old
+          verdict = judge_revision(old, content)
+          case verdict["relation"]
+          when "extends"
+            merged = verdict["merged"].to_s.strip
+            if merged.downcase == old.content.to_s.strip.downcase || merged.empty?
+              @logger.info { "[Knowledge::Capture] revision of knowledge ##{old.id} added nothing — skipped as semantic duplicate :: #{content}" }
+              return nil
+            end
+            return supersede(old, merged)
+          when "contradicts"
+            @logger.info { "[Knowledge::Capture] CONTRADICTS knowledge ##{old.id} — standing fact kept (stance, not fact-edit) :: #{content}" }
+            return nil
+          end
+          # unrelated / unparseable verdict → cosine false positive; write fresh.
+        end
+
         row = ::Knowledge.create!(
           content:     content,
           subrole:     subrole,
@@ -209,10 +240,102 @@ module Harness
           min_int:     min_int,
           current:     true,
           source_kind: "conversation",
-          game_time:   @game_time
+          game_time:   @game_time,
+          embedding:   (JSON.generate(vec) if vec.present?)
         )
         @logger.info { "[Knowledge::Capture] knowledge ##{row.id} subrole=#{subrole.inspect} loc=#{location_id.inspect} min_int=#{min_int.inspect} :: #{content}" }
         row
+      end
+
+      # REVISION SCAN — is this fact plausibly about the same subject as a
+      # standing row? Candidates are current rows visible from the scene (the
+      # place up-chain, same gate recall uses); cosine against the incoming
+      # content; best score over the floor goes to the merge judge. Returns
+      # [row_or_nil, incoming_vector_or_nil] — the vector is reused when the
+      # fresh-write path runs, so nothing is embedded twice.
+      def revision_target(content)
+        return [ nil, nil ] unless @llm.respond_to?(:embed)
+        candidates = revision_candidates
+        return [ nil, nil ] if candidates.empty?
+
+        vec = Array(@llm.embed([ content ])).first
+        return [ nil, nil ] if vec.nil? || vec.empty?
+
+        scored = candidates.filter_map do |row|
+          rv = stored_embedding(row)
+          next if rv.nil?
+          [ row, CosineRanker.similarity(vec, rv) ]
+        end.sort_by { |_, s| -s }
+
+        @logger.info do
+          shown = scored.first(3).map { |row, s| "##{row.id}=#{s.round(3)}" }.join(" ")
+          "[Knowledge::Capture] revision scan: #{scored.size}/#{candidates.size} scorable, top [#{shown}] (floor #{REVISION_THRESHOLD}) :: #{content[0, 80]}"
+        end
+
+        best, score = scored.first
+        [ (best if score && score >= REVISION_THRESHOLD), vec ]
+      end
+
+      # Standing rows this scene could be elaborating: current, anchored
+      # anywhere on the scene's place up-chain or world-general.
+      def revision_candidates
+        ancestry = Query.ancestor_location_ids(@location)
+        scope = ::Knowledge.current
+        if ancestry.any?
+          scope.where("location_id IS NULL OR location_id IN (?)", ancestry).to_a
+        else
+          scope.where(location_id: nil).to_a
+        end
+      end
+
+      def stored_embedding(row)
+        raw = row.embedding
+        return nil if raw.to_s.strip.empty?
+        JSON.parse(raw)
+      rescue JSON::ParserError
+        nil
+      end
+
+      # One grunt call: extends / contradicts / unrelated (+ merged text).
+      # Any failure degrades to "unrelated" — the fact writes fresh rather
+      # than being lost.
+      def judge_revision(old, content)
+        payload = { "standing_fact" => old.content, "new_statement" => content }
+        raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
+          @llm.complete(system: merge_preamble, user: "INPUT:\n#{JSON.pretty_generate(payload)}")
+        end
+        parsed = ::Harness::LLM::JsonResponse.parse(raw)
+        parsed.is_a?(::Hash) ? parsed : {}
+      rescue StandardError => e
+        @logger.warn { "[Knowledge::Capture] revision judge failed (writing fresh): #{e.class}: #{e.message}" }
+        {}
+      end
+
+      # Replace a standing row with the merged revision. Facets inherit
+      # VERBATIM — elaboration must never broaden scope. The old row drops out
+      # of recall via `current: false`; supersedes_id is the audit link. The
+      # new row's embedding is left nil for persist_embeddings to fill (the
+      # merged text differs from what the scan embedded).
+      def supersede(old, merged)
+        row = ::Knowledge.create!(
+          content:       merged,
+          subrole:       old.subrole,
+          location_id:   old.location_id,
+          min_int:       old.min_int,
+          social_class:  old.social_class,
+          faction:       old.faction,
+          current:       true,
+          source_kind:   "conversation",
+          game_time:     @game_time,
+          supersedes_id: old.id
+        )
+        old.update!(current: false)
+        @logger.info { "[Knowledge::Capture] SUPERSEDE knowledge ##{old.id} → ##{row.id} :: #{merged}" }
+        row
+      end
+
+      def merge_preamble
+        @merge_preamble ||= File.read(MERGE_PROMPT_PATH)
       end
 
       # PARTICIPATION branch — one `personal`-scope event owned by the named

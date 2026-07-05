@@ -158,6 +158,99 @@ RSpec.describe Harness::Knowledge::Capture do
     end
   end
 
+  describe "revision (modification plumbing)" do
+    # A standing town fact the conversation keeps elaborating. Embedded so the
+    # cosine scan can score it.
+    let!(:standing) do
+      Knowledge.create!(
+        content: "The town's founder drowned in the fog near an abandoned hut.",
+        location_id: city.id, min_int: 9, current: true,
+        source_kind: "conversation", game_time: 50,
+        embedding: JSON.generate([ 1.0, 0.0 ])
+      )
+    end
+
+    # Extraction call returns one local fact; the merge-judge call (recognized
+    # by its distinct prompt) returns `verdict`. Embeds map any text to the
+    # same vector as the standing row → cosine 1.0 → the judge always fires.
+    def capture_revision(verdict, fact_content: "The founder was named Elara.", embed_vec: [ 1.0, 0.0 ])
+      llm = StubLLM.new do |p|
+        if p.include?("STANDING fact")
+          verdict.to_json
+        else
+          { "facts" => [ { "content" => fact_content, "scope" => "local" } ] }.to_json
+        end
+      end
+      llm.define_singleton_method(:embed) { |texts| Array(texts).map { embed_vec } }
+      described_class.run(llm: llm, location: tavern, lines: default_lines, game_time: 100)
+    end
+
+    it "EXTENDS: supersedes the standing row with the merged fact, facets inherited verbatim" do
+      merged = "The town's founder, Elara, drowned in the fog near her abandoned hut."
+      out = capture_revision({ "relation" => "extends", "merged" => merged })
+
+      expect(standing.reload.current).to be(false)
+      row = Knowledge.find_by(content: merged)
+      expect(row.current).to be(true)
+      expect(row.supersedes_id).to eq(standing.id)
+      expect(row.location_id).to eq(standing.location_id)
+      expect(row.min_int).to eq(9)
+      expect(row.game_time).to eq(100)
+      expect(out).to eq([ row ])
+    end
+
+    it "EXTENDS with nothing new (merged == standing) skips as semantic duplicate" do
+      expect {
+        capture_revision({ "relation" => "extends", "merged" => standing.content.upcase })
+      }.not_to change(Knowledge, :count)
+      expect(standing.reload.current).to be(true)
+    end
+
+    it "CONTRADICTS: keeps the standing fact and writes nothing (denial is stance)" do
+      expect {
+        capture_revision({ "relation" => "contradicts" }, fact_content: "There was never any founder.")
+      }.not_to change(Knowledge, :count)
+      expect(standing.reload.current).to be(true)
+    end
+
+    it "UNRELATED: writes fresh (cosine false positive, judge is the precision gate)" do
+      out = capture_revision({ "relation" => "unrelated" }, fact_content: "The harbor closes at dusk.")
+      expect(standing.reload.current).to be(true)
+      row = Knowledge.find_by(content: "The harbor closes at dusk.")
+      expect(row.supersedes_id).to be_nil
+      expect(out).to eq([ row ])
+    end
+
+    it "below the cosine floor: no judge call, writes fresh" do
+      llm = StubLLM.new do |p|
+        raise "judge must not fire" if p.include?("STANDING fact")
+        { "facts" => [ { "content" => "The harbor closes at dusk.", "scope" => "local" } ] }.to_json
+      end
+      llm.define_singleton_method(:embed) { |texts| Array(texts).map { [ 0.0, 1.0 ] } } # orthogonal to standing
+      described_class.run(llm: llm, location: tavern, lines: default_lines, game_time: 100)
+
+      expect(standing.reload.current).to be(true)
+      expect(Knowledge.find_by(content: "The harbor closes at dusk.")).to be_present
+    end
+
+    it "without an embed-capable client the scan is skipped entirely (writes fresh)" do
+      out = capture(facts("content" => "The founder was named Elara.", "scope" => "local"))
+      expect(standing.reload.current).to be(true)
+      expect(out.size).to eq(1)
+      expect(out.first.supersedes_id).to be_nil
+    end
+
+    it "a superseded row drops out of the recall gate; the merged row surfaces" do
+      merged = "The town's founder, Elara, drowned in the fog near her abandoned hut."
+      capture_revision({ "relation" => "extends", "merged" => merged })
+
+      npc = Npc.create!(name: "Velora", location: tavern, intelligence: 10)
+      contents = Harness::Knowledge::Query.for(character: npc).map(&:content)
+      expect(contents).to include(merged)
+      expect(contents).not_to include(standing.content)
+    end
+  end
+
   describe "non-facts" do
     it "writes nothing for an empty facts list (banter)" do
       expect { capture(facts) }.not_to change(Knowledge, :count)

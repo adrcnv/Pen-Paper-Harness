@@ -102,6 +102,60 @@ RSpec.describe Harness::Scene::Manager do
     end
   end
 
+  describe "anti-cart draw exclusion" do
+    let(:present_npc_names) { [ "Maren" ] }
+
+    it "excludes the previous scene's cast within the same day-phase (the cart case)" do
+      maren
+      context.game_time = 12 * 60        # noon
+      manager.ensure_entered
+      manager.exit                       # stashes tavern's cast (Maren) + the clock
+      context.game_time = 12 * 60 + 10   # ten minutes later, still :day
+      context.player_location = warehouse
+
+      expect(::Harness::Scene::TravelerPull).to receive(:maybe_pull)
+        .with(warehouse, hash_including(exclude_ids: array_including(maren.id)))
+      expect(::Harness::Scene::LocalDraw).to receive(:maybe_draw)
+        .with(warehouse, hash_including(exclude_ids: array_including(maren.id)))
+
+      manager.ensure_entered
+    end
+
+    it "clears the exclusion once the phase ticks over (the 6:59 smith is drawable at 7:04)" do
+      maren
+      context.game_time = 16 * 60 + 55   # 16:55, :day
+      manager.ensure_entered
+      manager.exit
+      context.game_time = 17 * 60 + 4    # 17:04, :evening — shift changed
+      context.player_location = warehouse
+
+      expect(::Harness::Scene::LocalDraw).to receive(:maybe_draw)
+        .with(warehouse, hash_including(exclude_ids: []))
+      manager.ensure_entered
+    end
+
+    it "clears the exclusion after a long same-phase absence (freshness window)" do
+      maren
+      context.game_time = 12 * 60        # noon, :day
+      manager.ensure_entered
+      manager.exit
+      context.game_time = 12 * 60 + 1440 # noon next day — same phase, stale
+      context.player_location = warehouse
+
+      expect(::Harness::Scene::LocalDraw).to receive(:maybe_draw)
+        .with(warehouse, hash_including(exclude_ids: []))
+      manager.ensure_entered
+    end
+
+    it "passes no exclusions on a first enter (nothing left yet)" do
+      maren
+      context.game_time = 12 * 60
+      expect(::Harness::Scene::LocalDraw).to receive(:maybe_draw)
+        .with(tavern, hash_including(exclude_ids: []))
+      manager.ensure_entered
+    end
+  end
+
   describe "auto-materialize at scene entry" do
     # Pin the rng so target_count and Array#sample are deterministic. seed=1
     # picks 3 (which is the modal value of TARGET_COUNT_DISTRIBUTION anyway).

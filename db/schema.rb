@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_05_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_05_130000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -116,6 +116,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_05_120000) do
     t.integer "source_id"
     t.string "source_kind"
     t.string "subrole"
+    t.integer "supersedes_id"
     t.datetime "updated_at", null: false
     t.index ["current"], name: "index_knowledge_on_current"
     t.index ["location_id"], name: "index_knowledge_on_location_id"

@@ -45,6 +45,15 @@ RSpec.describe Harness::Scene::TravelerPull do
       cands = described_class.new(mirehold).candidates
       expect(cands).not_to include(homeless, bandit, dormant, follower, corpse)
     end
+
+    it "excludes exclude_ids (anti-cart: nobody tails the player across cities)" do
+      just_left = npc(location_id: osmere.id, home_location_id: osmere.id)
+      other     = npc(location_id: osmere.id, home_location_id: osmere.id)
+
+      cands = described_class.new(mirehold, exclude_ids: [ just_left.id ]).candidates
+      expect(cands).not_to include(just_left)
+      expect(cands).to include(other)
+    end
   end
 
   describe "maybe_pull" do
@@ -69,6 +78,25 @@ RSpec.describe Harness::Scene::TravelerPull do
 
     it "is a no-op when there are no eligible travelers" do
       expect(described_class.new(mirehold, rng: fires).maybe_pull).to be_nil
+    end
+  end
+
+  describe "day-phase gating" do
+    it "never pulls at NIGHT even when the roll would fire" do
+      npc(location_id: osmere.id, home_location_id: osmere.id)
+      midnight = 0
+      expect(described_class.new(mirehold, game_time: midnight, rng: fires).maybe_pull).to be_nil
+    end
+
+    it "pulls by DAY (the road is busy)" do
+      visitor = npc(location_id: osmere.id, home_location_id: osmere.id)
+      noon    = 12 * 60
+      expect(described_class.new(mirehold, game_time: noon, rng: fires).maybe_pull).to eq(visitor)
+    end
+
+    it "falls back to the flat CHANCE when no game_time is supplied" do
+      visitor = npc(location_id: osmere.id, home_location_id: osmere.id)
+      expect(described_class.new(mirehold, rng: fires).maybe_pull).to eq(visitor)
     end
   end
 end
