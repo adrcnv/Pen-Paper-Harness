@@ -29,6 +29,7 @@ module Harness
         action   = "acts on something in the scene" if action.empty?
 
         roll_ok = true
+        botched = false
         roll    = spec["roll"]
         if roll.is_a?(Hash) && (roll["stat"] || roll["ability_name"])
           res, _ = execute_tool(resolver, "resolve", {
@@ -39,12 +40,20 @@ module Harness
             "difficulty"   => roll["difficulty"],
             "time_minutes" => spec["time_minutes"] || 2
           }, into: tcs)
-          roll_ok = !(res.is_a?(Hash) && res["outcome"].to_s.downcase.include?("fail"))
+          outcome = res.is_a?(Hash) ? res["outcome"].to_s.downcase : ""
+          roll_ok = !outcome.include?("fail")
+          botched = outcome == "critical_failure"
         end
 
         if roll_ok
           spawn_item(resolver, spec["yields_item"], action, context, tcs)
           alter_location(resolver, spec["location_change"], context, tcs)
+        elsif botched
+          # The emit is declared BEFORE the roll, so location_change is the
+          # success-shaped alteration — never commit it on a failure. A
+          # critical failure commits the pre-declared botch mark instead, so
+          # the damage narration renders is real world-state, not prose-only.
+          alter_location(resolver, spec["location_change_on_botch"], context, tcs)
         end
 
         Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)

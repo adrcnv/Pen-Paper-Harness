@@ -202,6 +202,68 @@ RSpec.describe Harness::Character::Hatchery do
       expect(seen_scenarios).not_to be_empty,
         "30 seeded spawns produced 0 outlier scenarios — Roller may not be wired into Hatchery.spawn"
     end
+
+    it "passes the character's gender into the scenario roll context (for requires: { gender: ... } gating)" do
+      llm = StubLLM.new { |prompt|
+        if prompt.include?("LEVEL and six ability scores") then good_stats else good_description end
+      }
+      seen_context = nil
+      allow(Harness::Scenarios::Roller).to receive(:roll).and_wrap_original do |orig, **kwargs|
+        seen_context = kwargs[:context]
+        orig.call(**kwargs)
+      end
+
+      described_class.spawn(
+        llm_grunt:  llm,
+        name:       "Marek",
+        subrole:    "barkeep",
+        location:   city,
+        properties: { "gender" => "male" }
+      )
+
+      expect(seen_context).to eq({ gender: "male" })
+    end
+
+    it "end-to-end: a gender-gated scenario NEVER reaches the other gender and DOES reach its own" do
+      table_path = Harness::Scenarios::Roller::TABLES_DIR.join("test_gender_gate.yml")
+      File.write(table_path, <<~YAML)
+        - id: nothing_interesting
+          weight: 1
+          prompt_seed: null
+        - id: female_only
+          weight: 99
+          requires: { gender: female }
+          prompt_seed: "SCENARIO: FEMALE_ONLY_MARKER"
+      YAML
+      Harness::Scenarios::Roller.reload!
+      stub_const("Harness::Character::Hatchery::SCENARIO_TABLE", "test_gender_gate")
+
+      spawn_and_collect = lambda do |gender, i|
+        prompts = []
+        llm = StubLLM.new { |prompt|
+          prompts << prompt
+          if prompt.include?("LEVEL and six ability scores") then good_stats else good_description end
+        }
+        described_class.spawn(
+          llm_grunt:  llm,
+          name:       "NPC-#{gender}-#{i}",
+          subrole:    "barkeep",
+          location:   city,
+          properties: { "gender" => gender },
+          rng:        Random.new(i)
+        )
+        prompts
+      end
+
+      male_prompts   = 20.times.flat_map { |i| spawn_and_collect.call("male", i) }
+      female_prompts = 20.times.flat_map { |i| spawn_and_collect.call("female", i) }
+
+      expect(male_prompts).not_to include(a_string_including("FEMALE_ONLY_MARKER"))
+      expect(female_prompts.count { |p| p.include?("FEMALE_ONLY_MARKER") }).to be > 0
+    ensure
+      File.delete(table_path) if File.exist?(table_path)
+      Harness::Scenarios::Roller.reload!
+    end
   end
 
   describe ".find_or_spawn" do

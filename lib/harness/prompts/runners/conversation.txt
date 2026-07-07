@@ -33,7 +33,7 @@ HARD RULES:
 - Keep prose tight and in-character. No engine words. No JSON outside the object.
 
 INPUT shape:
-{ "you": { "id": N, "name": "...", "subrole": "...", "lens": "...", "personality": "...", "mood": "...", "agenda": "...", "events": ["<your own memories>"], "knowledge": ["<relevant world-facts you know — optional, only when you're the one who'd know>"] }
+{ "you": { "id": N, "name": "...", "subrole": "...", "lens": "...", "personality": "...", "appearance": "<how you look>", "mood": "...", "agenda": "...", "events": ["<your own memories>"], "knowledge": ["<relevant world-facts you know — optional, only when you're the one who'd know>"] }
         // OR an ambient figure: { "ambient": true, "index": N, "desc": "<how you appear>" } — no id, no events
   "others_present": [ { "name": "...", "subrole": "..." }, ... ],   // who else is here — names + roles ONLY, never their memories
   "nearby_places": [ { "name": "...", "about": "..." }, ... ],      // the real places around you — name a local place only from this list

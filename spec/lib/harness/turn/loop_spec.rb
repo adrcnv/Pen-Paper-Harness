@@ -162,6 +162,18 @@ RSpec.describe Harness::Turn::Loop do
       expect(char).not_to have_key("agenda")
     end
 
+    it "blanks the staged event's result summary so the narrator never sees the debug bracket" do
+      tcs = [ {
+        "name" => "propose_event",
+        "args" => { "details" => "Rhys wipes the bar. 'Paranoia, mostly.'" },
+        "result" => { "staged" => true, "summary" => "[dialogue — rendered, not persisted]" }
+      } ]
+      out = loop_obj.send(:sanitize_tool_calls_for_narration, tcs)
+      expect(out.first["result"]).to eq({ "staged" => true })
+      expect(out.first.to_json).not_to include("not persisted")
+      expect(out.first.to_json).not_to include("Paranoia")  # details swapped for the marker
+    end
+
     it "leaves non-query_scene tool_calls untouched" do
       tcs = [ {
         "name" => "resolve", "args" => { "actor_id" => 1 },
@@ -465,6 +477,20 @@ RSpec.describe Harness::Turn::Loop do
         "present_corpses"    => [],
         "present_extras"     => []
       })
+    end
+
+    it "carries character appearance in the scene payload on establishing AND later turns" do
+      Npc.create!(name: "Maren", subrole: "barkeep", location: tavern,
+                  properties: { "appearance" => "broad-shouldered, burn-scarred forearms" })
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
+      loop_inst = described_class.new(adapter: adapter, context: context)
+      loop_inst.run_turn(input: "look around")
+
+      [ true, false ].each do |establishing|
+        payload = loop_inst.send(:current_scene_payload, include_extras: establishing)
+        maren = payload["present_characters"].find { |c| c["name"] == "Maren" }
+        expect(maren["appearance"]).to include("burn-scarred")
+      end
     end
   end
 

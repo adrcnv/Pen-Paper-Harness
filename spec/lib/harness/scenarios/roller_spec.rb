@@ -111,6 +111,12 @@ RSpec.describe Harness::Scenarios::Roller do
       expect(results.uniq).to eq([ "bar" ])
     end
 
+    it "rejects unknown row keys (e.g. a bare gender: gate outside requires:)" do
+      File.write(table_path, "- id: foo\n  weight: 1\n  gender: female\n  prompt_seed: x\n")
+      described_class.reload!
+      expect { described_class.load("test_invalid") }.to raise_error(described_class::TableMissing, /unknown key.*gender/)
+    end
+
     it "rejects duplicate ids" do
       File.write(table_path, "- id: foo\n  weight: 1\n  prompt_seed: a\n- id: foo\n  weight: 1\n  prompt_seed: b\n")
       described_class.reload!

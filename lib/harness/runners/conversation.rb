@@ -80,7 +80,8 @@ module Harness
 
         spoken     = 0
         parsed_any = false
-        poll_order(present, extras, input, step).each do |v|
+        speakers   = []
+        poll_order(present, extras, input, step, active).each do |v|
           break if spoken >= MAX_SPEAKERS
           substantive = v[:kind] == :npc && substantive_ids.include?(v[:char]["id"])
           emit, voicing_user = voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, substantive)
@@ -88,6 +89,7 @@ module Harness
           parsed_any = true
           if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
             spoken += 1
+            speakers << v[:char]["id"] if v[:kind] == :npc
             # First speaking turn consumed the seeded mood/agenda; from now on the
             # thread carries this NPC (npc_knowledge drops the frozen self-state).
             active&.mark_spoken!(v[:char]["id"]) if v[:kind] == :npc
@@ -98,6 +100,7 @@ module Harness
         end
 
         return redispatch("conversation emit unparseable", tcs) unless parsed_any
+        active&.record_speakers!(speakers)
         Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
       end
 
@@ -110,10 +113,20 @@ module Harness
       # last: ambient figures only get drawn in if the named cast didn't already
       # answer the room. This is poll ORDER, not a speech ruling — each character
       # still self-decides whether it speaks.
-      def poll_order(present, extras, input, step)
+      def poll_order(present, extras, input, step, active = nil)
         hay = "#{input} #{step&.intent}".downcase
         npcs = present.map { |c| { kind: :npc, char: c } }
         named, rest = npcs.partition { |v| addressed_by_name?(v[:char], hay) }
+        # Bystander cooldown: an unaddressed NPC who chimed in on the PREVIOUS
+        # conversation turn sits this one out — not even polled, the call is
+        # saved. No one can nag the player every single turn. Addressed NPCs
+        # are exempt by the named partition; an NPC another character's last
+        # line spoke to is exempt too (NPC↔NPC exchanges survive, at half
+        # cadence). If the cooldown would leave nobody to poll (sole-NPC
+        # scenes, "go on" inputs), it yields — a dead turn is worse than a
+        # repeat chime-in.
+        fresh, cooled = rest.partition { |v| !cooled_bystander?(v[:char], active) }
+        rest = (named.empty? && fresh.empty?) ? cooled : fresh
         # Extras are ambient narration FLAVOR, not filler speakers. Poll one ONLY
         # when the player's input actually ENGAGES it ("talk to the recruit") —
         # engagement is what promotes an unnamed figure into a character. NEVER
@@ -124,6 +137,13 @@ module Harness
           .select { |desc, _| addressed_extra?(desc, hay) }
           .map { |desc, i| { kind: :extra, index: i, desc: desc } }
         named + engaged + rest
+      end
+
+      def cooled_bystander?(char, active)
+        return false unless active&.spoke_last_turn?(char["id"])
+        (active.last_lines || {}).none? do |id, line|
+          id != char["id"] && addressed_by_name?(char, line.to_s.downcase)
+        end
       end
 
       def addressed_by_name?(char, hay)
@@ -352,6 +372,7 @@ module Harness
           "subrole"     => char["subrole"],
           "lens"        => char["lens"],
           "personality" => (props["personality"] if props.is_a?(::Hash)),
+          "appearance"  => ((props["appearance"] || props["physical"]) if props.is_a?(::Hash)),
           "mood"        => (active&.state_for(char["id"]) if fresh),
           "agenda"      => (active&.agenda_for(char["id"]) if fresh),
           "events"      => events
@@ -535,7 +556,6 @@ module Harness
       # namespace (its integration spec rejects unexpanded {{ in prompt files).
       def reflection_tail(prose)
         @reflection_template ||= File.read(REFLECTION_PROMPT_PATH)
-                                     .sub("<<VOCATIONS>>") { ::Harness::Vocations.all.join(", ") }
         @reflection_template.sub("<<SAID>>") { prose }
       end
 

@@ -99,7 +99,7 @@ module Harness
             return character
           end
 
-          scenario_seed = roll_scenario(rng: rng)
+          scenario_seed = roll_scenario(character, rng: rng)
 
           begin
             ::Harness::Stats::Materializer
@@ -230,8 +230,11 @@ module Harness
           character
         end
 
-        def roll_scenario(rng:)
-          ::Harness::Scenarios::Roller.roll(table: SCENARIO_TABLE, context: {}, rng: rng).prompt_seed
+        # Gender is guaranteed set by ensure_gender! before this runs, so
+        # table rows can gate on it via `requires: { gender: male }`.
+        def roll_scenario(character, rng:)
+          context = { gender: (character.properties || {})["gender"] }
+          ::Harness::Scenarios::Roller.roll(table: SCENARIO_TABLE, context: context, rng: rng).prompt_seed
         end
       end
     end

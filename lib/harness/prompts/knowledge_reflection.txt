@@ -4,11 +4,11 @@ The dialogue turn is over. You are still the same character. You just said:
 "<<SAID>>"
 
 Now judge YOUR OWN words for the world's records. Ignore the dialogue output format — output ONLY this JSON:
-{"facts": [ {"content": "...", "concerns": ["Name"], "scope": "local"|"world", "subrole": null, "min_int": null} ],
+{"facts": [ {"content": "...", "concerns": ["Name"], "scope": "local"|"world", "min_int": null} ],
  "people": [ {"name": "...", "subrole": "...", "gist": "...", "at_location": "..."} ],
  "places": [ {"name": "...", "about": "..."} ]}
 
-facts — a HARD CLAIM you just made about the world: a specific, durable truth (who holds a post, a fee, what became of a place). NOT something already in your `knowledge`, your `events`, or said earlier in exchange_so_far — restating what you already knew is not a new fact. NOT opinions, moods, banter, threats, or common know-how. NOT anything about the player or this conversation itself. Write each as one clean self-contained sentence. "concerns": ONLY when the fact is a private matter of specific named people (a debt, a deed, ownership) — list their names; a general truth about the town or a trade → []. "scope": "local" for this settlement, "world" beyond it. "subrole": only if the fact belongs to one trade, exactly from: <<VOCATIONS>>. "min_int": an integer only for learned lore.
+facts — a HARD CLAIM you just made about the world: a specific, durable truth (who holds a post, a fee, what became of a place). NOT something already in your `knowledge`, your `events`, or said earlier in exchange_so_far — restating what you already knew is not a new fact. NOT opinions, moods, banter, threats, or common know-how. NOT anything about the player or this conversation itself. Write each as one clean self-contained sentence. "concerns": ONLY when the fact is a private matter of specific named people (a debt, a deed, ownership) — list their names; a general truth about the town or a trade → []. "scope": "local" for this settlement, "world" beyond it. "min_int": an integer only for learned lore.
 
 people — a living, findable individual you VOLUNTEERED, who is NOT you and NOT in the room (you and others_present already exist). Someone the player could go find: give the spoken name, or for a serious role-reference ("my brother in the hills") the role and a gist. Describe them as the world would, not as "my brother". Never: the dead, historical figures, someone you denied knowing, a brush-off ("go ask the elder"), or anyone the player themselves brought up.
 

@@ -786,6 +786,15 @@ module Harness
             # feminine-stored "Dushka" to "he". Not a reasoning failure; the model
             # was never told. Now it is.
             entry["gender"] = c.properties["gender"] if c.properties.is_a?(Hash) && c.properties["gender"]
+            # Appearance rides EVERY turn (unlike location description/extras,
+            # which are establishing-only) so a "look at her" turn mid-scene
+            # has something to render. Known risk: static prose re-fed each
+            # turn is the repeated-narration driver — if the model starts
+            # reprinting these verbatim, scale back to establishing-only.
+            if c.properties.is_a?(Hash)
+              look = c.properties["appearance"] || c.properties["physical"]
+              entry["appearance"] = look if look.is_a?(String) && !look.strip.empty?
+            end
             entry
           },
           "present_items"      => active.present_items.map { |i| { "id" => i.id, "name" => i.name } },
@@ -818,7 +827,10 @@ module Harness
         tool_calls.map { |tc|
           if tc["name"] == "propose_event" && tc.dig("result", "staged")
             args = (tc["args"] || {}).merge("details" => STAGED_DIALOGUE_MARKER)
-            next tc.merge("args" => args)
+            # Drop the result's debug summary ("[dialogue — rendered, not
+            # persisted]") too: shaped like a game bracket line, the model
+            # echoes it verbatim into prose. It never sees it, it can't leak.
+            next tc.merge("args" => args, "result" => { "staged" => true })
           end
           next tc unless tc["name"] == "query_scene"
           chars = tc.dig("result", "present_characters")

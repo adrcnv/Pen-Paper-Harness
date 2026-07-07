@@ -199,7 +199,12 @@ module Harness
       # / nothing-new revision).
       def write_knowledge(fact)
         content     = fact["content"].strip
-        subrole     = canonical_subrole(fact["subrole"])
+        # Trade facet CUT for conversation-sourced facts (2026-07-07): the
+        # speaker-POV reflection stamped the speaker's OWN trade on every
+        # fact (3/3 in play), starving recall for everyone else — and a
+        # claim voiced aloud to the player was never trade-gated anyway.
+        # Re-facet from a neutral vantage if real trade-lore capture shows up.
+        subrole     = nil
         location_id = local_scope?(fact["scope"]) ? root_settlement_id : nil
         min_int     = fact["min_int"].is_a?(Integer) ? fact["min_int"] : nil
 
@@ -420,12 +425,6 @@ module Harness
           e.details.is_a?(::Hash) &&
             e.details.dig("narrative", "details").to_s.strip.downcase == norm
         end
-      end
-
-      # Only an exact vocabulary member survives; anything else (null, "none", a
-      # free-texted trade) becomes world-general on the trade axis.
-      def canonical_subrole(v)
-        ::Harness::Vocations.valid?(v) ? v : nil
       end
 
       def local_scope?(scope) = scope.to_s.downcase == "local"

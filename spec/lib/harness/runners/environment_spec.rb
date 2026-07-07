@@ -62,6 +62,37 @@ RSpec.describe Harness::Runners::Environment do
     expect(names(out)).not_to include("propose_item", "mutate_location")
   end
 
+  it "commits the pre-declared BOTCH mark (and only that) on a critical failure" do
+    allow(Harness::Dice).to receive(:check).and_return(
+      Harness::Dice::Outcome.new(result: "critical_failure", margin: "decisive", critical: true)
+    )
+    out = run(ctx_emitting(
+      "action" => "force the mill mechanism",
+      "roll" => { "ability_name" => "Wild Surge", "difficulty" => "moderate" },
+      "yields_item" => { "name" => "loose gear", "subrole" => "salvage" },
+      "location_change" => "the mechanism is realigned and the wheel turns freely",
+      "location_change_on_botch" => "the gear assembly is jammed deeper into its housing"
+    ), "force the mechanism")
+    expect(names(out)).to include("resolve", "mutate_location")
+    expect(names(out)).not_to include("propose_item")
+    expect(loc.reload.properties["alterations"].join).to include("jammed deeper")
+    expect(loc.properties["alterations"].join).not_to include("realigned")
+  end
+
+  it "a plain failure with a declared botch mark still commits nothing" do
+    allow(Harness::Dice).to receive(:check).and_return(
+      Harness::Dice::Outcome.new(result: "failure", margin: "narrow", critical: false)
+    )
+    out = run(ctx_emitting(
+      "action" => "force the mill mechanism",
+      "roll" => { "ability_name" => "Wild Surge", "difficulty" => "moderate" },
+      "location_change" => "the mechanism is realigned",
+      "location_change_on_botch" => "the gear assembly is jammed deeper"
+    ), "force the mechanism")
+    expect(names(out)).to include("resolve")
+    expect(names(out)).not_to include("mutate_location")
+  end
+
   it "records a persistent location change via mutate_location" do
     out = run(ctx_emitting(
       "action" => "barricade the door", "roll" => nil, "yields_item" => nil,

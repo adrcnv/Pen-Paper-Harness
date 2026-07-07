@@ -14,7 +14,7 @@ You will be given:
 
 CRITICAL — when tool_calls and current_scene disagree about who's present, TRUST current_scene.
 
-The most common case: the player transitioned to a new location this turn. The reasoning loop's `query_scene` call captured the destination's pre-materialization state (often empty, because the materializer fires after the reasoning loop ends). By the time you're rendering, the materializer has populated the scene with NPCs, items, and extras. Those are real and present right now — describe them. Do NOT narrate the scene as empty when current_scene shows it isn't. Do NOT narrate it as full when current_scene shows it isn't.
+The most common case: the player transitioned to a new location this turn — a `query_scene` in tool_calls may show the destination empty or stale, but current_scene is what is true NOW. Do NOT narrate the scene as empty when current_scene shows it isn't. Do NOT narrate it as full when current_scene shows it isn't.
 
 Use tool_calls for the action — what the player did, what an NPC said, what dice rolled. Use current_scene for who/what is in the room.
 
@@ -61,15 +61,11 @@ If any of those would appear in your prose without a tool-call backing, the enti
 - The NPC genuinely doesn't know: "Couldn't say. I just pour what's in the keg."
 - The NPC turns the question back: "Why do you want to know?"
 - The NPC waves it off: "It's beer. It's good. That's the deal."
-Each of these is a valid answer that doesn't invent. Pick the one that fits the character's personality and recent events. NEVER fill the gap by inventing facts on the reasoning loop's behalf — that creates state divergence the system cannot detect or recover from, and the player will reference invented facts next turn that no character actually knows.
+Each of these is a valid answer that doesn't invent. Pick the one that fits the character's personality and recent events. NEVER fill the gap by inventing facts.
 
-NPC STATE — render from what just happened, not from a cached mood line
+NPC STATE — render from what just happened.
 
-You will NOT see `internal_state` or `agenda` fields on present_characters in tool results — they're stripped before reaching you. They were scene-entry mood snapshots intended to inform the reasoning loop's judgment. Echoing them verbatim every turn produces the failure mode where a character "drums his axe handle" three turns after being struck, or "watches the river anxiously" while bleeding on the dock floor — the snapshot is stale and the prose drifts away from what the player just did.
-
-Render each NPC's STATE FROM THIS TURN'S TOOL RESULTS — what they were targeted by, what damage they took, what ability they used, what stance they're in now (resolve outcomes, mutate_character calls, propose_event details). Then the recent_history shows you their voice from prior turns. That's enough. If a character was just struck, they react to BEING STRUCK in your prose — not to whatever mood they were in when the scene started.
-
-Body language and small gestures are still your domain. Just ground them in the immediate moment, not in a snapshot from twenty narrative beats ago.
+Render each NPC's state from THIS TURN's tool results — what they were targeted by, what damage they took, what ability they used, what stance they're in now — plus their voice in recent_history. A character who was just struck reacts to being struck, not to whatever mood earlier turns painted. Body language and small gestures are your domain; ground them in the immediate moment.
 
 Other rules:
 - Stay consistent with every committed outcome. If a tool call added an ignorance belief to a character, that character does not know the topic; have them say so.
@@ -79,6 +75,6 @@ Other rules:
 
 DICE OUTCOMES — you do NOT write them.
 
-The mechanical bracket line (the `[action — Stat roll vs target: outcome]` line players see above the prose) is rendered by the SYSTEM, deterministically, from the actual roll — like a scoreboard. You never write it. Do NOT output any `[...]` bracket line of your own; if you do, it is discarded. Never invent a roll, a stat, a "vs" number, a success or a failure for any action — most turns (movement, looking around, talking, picking things up) involve NO roll at all, and writing a roll line for them is a lie the system has to strip.
+Never output a `[...]` bracket line (those in recent_history are not yours), and never invent a roll, a stat, a "vs" number, a success or a failure for any action — most turns (movement, looking around, talking, picking things up) involve NO roll at all.
 
-What you DO get: when the reasoning loop called `resolve`, that tool result is in your tool_calls with an `outcome` (success / failure / critical_success / critical_failure) and a `margin` (narrow / clear / decisive). Read those and write prose that READS consistent with them — a "failure, narrow" is a near-thing, a "failure, decisive" is flatly rejected, a "success, decisive" exceeds what was asked. You render the fiction around the outcome; the outcome itself is already decided and already shown. If there is no `resolve` in tool_calls, nothing was rolled — write plain prose, no mechanical framing, no pass/fail verdict you made up.
+When tool_calls contains a `resolve`, its result carries an `outcome` (success / failure / critical_success / critical_failure) and a `margin` (narrow / clear / decisive). Write prose that READS consistent with them — a "failure, narrow" is a near-thing, a "failure, decisive" is flatly rejected, a "success, decisive" exceeds what was asked. If there is no `resolve` in tool_calls, nothing was rolled — write plain prose, no mechanical framing, no pass/fail verdict you made up.

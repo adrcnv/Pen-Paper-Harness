@@ -67,6 +67,8 @@ module Harness
         rows
       end
 
+      ALLOWED_ROW_KEYS = %w[id weight requires prompt_seed].freeze
+
       def self.validate!(rows, table)
         raise TableMissing, "scenario table empty: #{table}" if rows.nil? || rows.empty?
         rows.each_with_index do |row, i|
@@ -74,6 +76,11 @@ module Harness
           # weight=0 is allowed: entry kept around but never selected (handy for
           # disabling a scenario without deleting it). Negative is still invalid.
           raise TableMissing, "scenario table=#{table} row=#{i} missing weight" unless row["weight"].is_a?(Integer) && row["weight"] >= 0
+          # Unknown keys are almost certainly a mis-authored gate (e.g. a bare
+          # `gender: female` instead of `requires: { gender: female }`), which
+          # would otherwise be silently ignored and leave the row open to all.
+          unknown = row.keys - ALLOWED_ROW_KEYS
+          raise TableMissing, "scenario table=#{table} row=#{row["id"]} unknown key(s): #{unknown.join(", ")} — gating conditions go under requires:" if unknown.any?
         end
         ids = rows.map { |r| r["id"] }
         dup = ids.detect { |id| ids.count(id) > 1 }

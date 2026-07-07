@@ -36,15 +36,10 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Knowledge.last.location_id).to be_nil
     end
 
-    it "keeps an exact-vocabulary subrole" do
+    it "nulls the trade facet even when the model supplies one (speaker-POV stamps its own trade)" do
       capture(facts("content" => "clerk lore", "subrole" => "clerk"))
-      expect(Knowledge.last.subrole).to eq("clerk")
-    end
-
-    it "nulls a non-vocabulary subrole but still writes the fact" do
-      capture(facts("content" => "some fact", "subrole" => "patron"))
       k = Knowledge.last
-      expect(k.content).to eq("some fact")
+      expect(k.content).to eq("clerk lore")
       expect(k.subrole).to be_nil
     end
 

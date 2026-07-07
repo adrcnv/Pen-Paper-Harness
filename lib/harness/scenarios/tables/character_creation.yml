@@ -15,10 +15,22 @@
 # all outliers. Adjust weights here without touching code. The cruel-world
 # philosophy says high-level outliers are permitted — there is no level cap;
 # the player may walk into a tavern they cannot survive.
+#
+# Gender gating: the roll context carries the character's gender (set at
+# spawn, before the roll). Gate an entry with:
+#   requires: { gender: male }    # or female
+# Omit `requires` for both. Values are exactly "male" / "female".
 
 - id: nothing_interesting
-  weight: 87
+  weight: 50
   prompt_seed: null
+
+- id: cutthroat
+  weight: 1
+  requires: { gender: male }
+  prompt_seed: |
+    SCENARIO: A skillful cut throat looking to take advantage of people. Masterful manipulator,
+    one with shadows.
 
 - id: retired_adept
   weight: 1
