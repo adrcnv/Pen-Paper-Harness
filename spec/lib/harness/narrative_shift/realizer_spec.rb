@@ -48,6 +48,33 @@ RSpec.describe Harness::NarrativeShift::Realizer do
     expect(Harness::Character::Hatchery).not_to have_received(:spawn)
   end
 
+  describe "role-reference resolution (the two-Guard-Captains bug)" do
+    it "an article-less role mention LINKS to the row a role-mint already realized (via stored role_reference)" do
+      first = run({ "name" => "The Guard-Captain", "subrole" => "guard" })
+      expect(first["minted"]).to be(true)
+      mereth = Npc.find(first["character_id"])
+      expect(mereth.properties["role_reference"]).to eq("The Guard-Captain")
+
+      second = run({ "name" => "Guard-Captain", "subrole" => "authority", "gist" => "busy with a ledger dispute" })
+      expect(second).to include("linked" => true, "character_id" => mereth.id)
+      expect(Npc.where("LOWER(name) = ?", "guard-captain")).to be_empty
+    end
+
+    it "a repeated role-reference LINKS instead of minting a twin" do
+      first  = run({ "name" => "the guard-captain", "subrole" => "guard" })
+      second = run({ "name" => "The Guard-Captain", "subrole" => "guard" })
+      expect(second).to include("linked" => true, "character_id" => first["character_id"])
+    end
+
+    it "a later role-reference resolves to a role-SHAPED literal name that slipped the proper-name gate" do
+      first = run({ "name" => "Guard-Captain", "subrole" => "guard" }) # proper-shaped → literal name
+      expect(Npc.find(first["character_id"]).name).to eq("Guard-Captain")
+
+      second = run({ "name" => "the Guard-Captain", "subrole" => "guard" })
+      expect(second).to include("linked" => true, "character_id" => first["character_id"])
+    end
+  end
+
   it "homes a person at a named destination that resolves to a real Location (present, findable)" do
     relay = Location.create!(name: "Blackwood Relay")
     run({ "name" => "Harek", "at_location" => "blackwood relay" })
@@ -61,11 +88,29 @@ RSpec.describe Harness::NarrativeShift::Realizer do
       .with(hash_including(home_location_id: tavern.id, location: tavern, dormant: true))
   end
 
-  it "parks a clean place name for later relocation, but not prose" do
-    run({ "name" => "Harek", "at_location" => "Blackwood Relay" })
-    run({ "name" => "Doran", "at_location" => "the highest pile of the first crossing point in the marsh" })
-    expect(Npc.find_by(name: "Harek").properties["pending_location_name"]).to eq("Blackwood Relay")
-    expect(Npc.find_by(name: "Doran").properties).not_to have_key("pending_location_name")
+  it "MINTS a clean anchor place with the claim (no parking) and homes the person there, active" do
+    run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
+    mill = Location.find_by(name: "the Mill")
+    expect(mill).to be_present
+    expect(mill.parent).to eq(city) # sublocation of the enclosing settlement
+    expect(Harness::Character::Hatchery).to have_received(:spawn)
+      .with(hash_including(location: mill, home_location_id: mill.id, dormant: false))
+  end
+
+  it "REUSES an existing sublocation whose head noun matches instead of minting a twin place" do
+    tide_mill = Location.create!(name: "the Tide Mill", parent: city)
+    run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
+    expect(Location.where("LOWER(name) = ?", "the mill")).to be_empty
+    expect(Harness::Character::Hatchery).to have_received(:spawn)
+      .with(hash_including(location: tide_mill, dormant: false))
+  end
+
+  it "mints nothing for a prose anchor (person stays dormant local)" do
+    expect {
+      run({ "name" => "Doran", "at_location" => "the highest pile of the first crossing point in the marsh" })
+    }.not_to change(Location, :count)
+    expect(Harness::Character::Hatchery).to have_received(:spawn)
+      .with(hash_including(location: tavern, dormant: true))
   end
 
   it "commits a shared grounding event that recalls the picked name from the role" do

@@ -122,6 +122,46 @@ RSpec.describe Harness::Knowledge::Capture do
     end
   end
 
+  describe "name backflow (the claim learns the minted name)" do
+    def stub_realize(name:, id: 999)
+      row = Npc.create!(name: name, subrole: "guard", location: tavern)
+      allow(Harness::NarrativeShift::Realizer).to receive(:run)
+        .and_return({ "character_id" => row.id, "name" => name, "minted" => true })
+      row
+    end
+
+    it "appends the binding to a fact that mentions the role-reference (the two-Guard-Captains seam)" do
+      stub_realize(name: "Mereth Hexham")
+      payload = {
+        "people" => [ { "name" => "The Guard-Captain", "subrole" => "guard", "gist" => "runs the watch" } ],
+        "facts"  => [ { "content" => "The Guard-Captain is occupied with a dispute over a missing ledger.", "concerns" => [] } ]
+      }
+      capture(payload, context: ctx)
+      expect(Knowledge.last.content)
+        .to eq("The Guard-Captain is occupied with a dispute over a missing ledger. (The Guard-Captain is Mereth Hexham)")
+    end
+
+    it "leaves facts that never mention the reference untouched" do
+      stub_realize(name: "Mereth Hexham")
+      payload = {
+        "people" => [ { "name" => "the harbormaster", "subrole" => "harbormaster", "gist" => "runs the docks" } ],
+        "facts"  => [ { "content" => "The salt tithe was repealed last winter.", "concerns" => [] } ]
+      }
+      capture(payload, context: ctx)
+      expect(Knowledge.last.content).to eq("The salt tithe was repealed last winter.")
+    end
+
+    it "does not annotate when the realized name matches the spoken reference (proper-name link)" do
+      stub_realize(name: "Harek")
+      payload = {
+        "people" => [ { "name" => "Harek", "subrole" => "contact", "gist" => "the relay man" } ],
+        "facts"  => [ { "content" => "Harek runs messages past the toll bridge.", "concerns" => [] } ]
+      }
+      capture(payload, context: ctx)
+      expect(Knowledge.last.content).to eq("Harek runs messages past the toll bridge.")
+    end
+  end
+
   describe "place realization (wiring)" do
     it "mints a proper-named place named in dialogue" do
       payload = { "facts" => [], "places" => [ { "name" => "The Salt Wharf", "about" => "the loading docks" } ] }

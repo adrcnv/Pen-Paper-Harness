@@ -21,7 +21,7 @@ module Harness
     # rotates. Both die with the scene.
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
-      :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines, :last_speaker_ids,
+      :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines,
       keyword_init: true
     ) do
       # Has this character already taken a speaking turn in THIS scene? Seeded
@@ -37,17 +37,6 @@ module Harness
       def mark_spoken!(character_id)
         self.spoken_ids ||= []
         spoken_ids << character_id unless spoken_ids.include?(character_id)
-      end
-
-      # Who spoke on the PREVIOUS conversation turn — the bystander-cooldown's
-      # memory (conversation runner: an unaddressed NPC that chimed in last
-      # turn is not polled again this turn, so nobody nags every single turn).
-      def spoke_last_turn?(character_id)
-        (last_speaker_ids || []).include?(character_id)
-      end
-
-      def record_speakers!(ids)
-        self.last_speaker_ids = ids
       end
 
       # Each character's most recent staged dialogue line this scene — the

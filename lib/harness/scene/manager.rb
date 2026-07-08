@@ -56,7 +56,6 @@ module Harness
 
         maybe_run_genesis(loc)
         maybe_lay_out_settlement(loc)
-        maybe_place_claims(loc)
         maybe_run_catch_up(loc)
         maybe_run_materialize(loc, materialize_target)
         maybe_pull_traveler(loc)
@@ -123,16 +122,6 @@ module Harness
       end
 
       private
-
-      # Increment-2 placement: stage any claimed person parked for THIS place
-      # (an NPC named them at a destination that wasn't a row yet; now the player
-      # has walked into it). Runs before the snapshot so they're present this
-      # entry. Pure SQL + an UPDATE; non-fatal.
-      def maybe_place_claims(loc)
-        ::Harness::NarrativeShift::ClaimPlacer.place!(loc, logger: logger)
-      rescue StandardError => e
-        logger.warn { "[Scene::Manager] claim placement failed for #{loc.name}: #{e.class}: #{e.message}" }
-      end
 
       # Increment-2 social web: a claimed person present here (just placed, or
       # active since claim time) gets a few local NPCs who KNOW them, so asking

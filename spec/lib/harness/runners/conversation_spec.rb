@@ -312,77 +312,26 @@ RSpec.describe Harness::Runners::Conversation do
     end
   end
 
-  describe "bystander cooldown (the every-turn chime-in nagger)" do
-    def active_for(ctx)
-      Harness::Scene::Active.new(
-        location: tavern, snapshot: nil, narrations: [], internal_state: {}, agendas: {},
-        extras: [], entered_at_game_time: 0
-      ).tap { |a| ctx.active_scene = a }
-    end
-
-    def voicings_of(seen)
-      seen.reject { |p| p.include?("WORLD MEMORY") }
-    end
-
-    it "does not even poll an unaddressed NPC who chimed in on the previous turn" do
-      reeve = Npc.create!(name: "Lorimar", subrole: "reeve", location: tavern)
-      seen = []
-      n = 0
-      ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
-        seen << full
-        n += 1
-        { "speak" => true, "dialogue" => { "summary" => "s", "prose" => "line #{n}." } }.to_json
-      end
-      active_for(ctx)
+  describe "silent conversation turn (the narrator-vacuum marker)" do
+    it "appends a conversation_silence marker when every polled character declines" do
+      ctx = context_with { { "speak" => false }.to_json }
       scene = Harness::Tools::QueryScene.build(ctx)
 
-      described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step("chat"))
-      expect(voicings_of(seen).size).to eq(2) # both polled, both chimed in
-
-      seen.clear
-      described_class.new.run(context: ctx, scene: scene, input: "tell me more, Tomas", step: step("chat"))
-      turn2 = voicings_of(seen)
-      expect(turn2.any? { |p| p.include?(%("id": #{barkeep.id},)) }).to be(true)   # addressed → polled
-      expect(turn2.any? { |p| p.include?(%("id": #{reeve.id},)) }).to be(false)    # unaddressed chimer → skipped
+      out = described_class.new.run(context: ctx, scene: scene, input: "anything to say?", step: step("chat"))
+      silence = out.tool_calls.find { |t| t["name"] == "conversation_silence" }
+      expect(silence).to be_present
+      expect(silence.dig("result", "nobody_spoke")).to be(true)
     end
 
-    it "keeps polling an NPC that another character's last line addressed (NPC-to-NPC survives)" do
-      reeve = Npc.create!(name: "Lorimar", subrole: "reeve", location: tavern)
-      seen = []
+    it "appends NO marker when someone actually spoke" do
       ctx = context_with do |full|
         next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
-        seen << full
-        prose = full.include?(%("id": #{barkeep.id},)) ? "Ask Lorimar, he counts everything." : "I only count the ledgers."
-        { "speak" => true, "dialogue" => { "summary" => "s", "prose" => prose } }.to_json
+        { "speak" => true, "dialogue" => { "summary" => "s", "prose" => "Aye, what'll it be?" } }.to_json
       end
-      active_for(ctx)
       scene = Harness::Tools::QueryScene.build(ctx)
 
-      described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step("chat"))
-      seen.clear
-      described_class.new.run(context: ctx, scene: scene, input: "go on", step: step("chat"))
-      turn2 = voicings_of(seen)
-      expect(turn2.any? { |p| p.include?(%("id": #{reeve.id},)) }).to be(true)     # Tomas's line named him
-      expect(turn2.any? { |p| p.include?(%("id": #{barkeep.id},)) }).to be(false)  # nobody addressed Tomas
-    end
-
-    it "sole NPC: the fallback ignores the cooldown rather than leaving a dead turn" do
-      seen = []
-      n = 0
-      ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
-        seen << full
-        n += 1
-        { "speak" => true, "dialogue" => { "summary" => "s", "prose" => "line #{n}." } }.to_json
-      end
-      active_for(ctx)
-      scene = Harness::Tools::QueryScene.build(ctx)
-
-      described_class.new.run(context: ctx, scene: scene, input: "hello", step: step("chat"))
-      seen.clear
-      described_class.new.run(context: ctx, scene: scene, input: "go on", step: step("chat"))
-      expect(voicings_of(seen).size).to eq(1)
+      out = described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+      expect(out.tool_calls.map { |t| t["name"] }).not_to include("conversation_silence")
     end
   end
 

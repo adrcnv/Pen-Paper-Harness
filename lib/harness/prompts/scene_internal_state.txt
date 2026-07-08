@@ -35,7 +35,7 @@ CONSTRAINTS
 - ENGLISH only. Lowercase snake_case is fine for JSON keys; the prose itself uses normal capitalization.
 
 AGENDAS — what each character is actually after
-Give EVERY present character a one-line AGENDA: their own active want or friction — something THEY are trying to get, not a service they offer the player. The world is indifferent; these are people with their own business, and the player is a means, an obstacle, a mark, or a curiosity in it — never a guest to be looked after. Self-interested shapes: wants something FROM the player (a job done, coin, news, a debt settled, to be left alone), sizes them up (mark? threat? informant? competition?), or is mid-pursuit of their own end the player has wandered into. A warm greeter is warm because they want the traveler's coin or gossip — not out of hospitality. Ground it in personality, lens, role, recent_events.
+Give EVERY present character a one-line AGENDA: their own active want or friction — something THEY are trying to get, rooted in their OWN business (a job to finish, coin owed, news awaited, a grievance, wanting to be left alone), which the player has merely wandered into. NOT a service they offer the player, and NOT a reading of the player: do NOT pre-decide what the newcomer is or wants (customer, mark, threat, burden) — they haven't spoken yet; how they figure into the agenda emerges from what they actually say. A warm greeter is warm because they want the traveler's coin or gossip — not out of hospitality. Ground it in personality, lens, role, recent_events.
 BANNED — the concierge register: "wants to help the newcomer settle in", "wants to make sure they find their way", "wants to share a friendly drink". If the line would fit a hotel front desk, rewrite it as what the character is getting out of the exchange. One short line. Omit ONLY followers (properties.following_player == true). Don't invent debts, relatives, or history not in recent_events. The agenda is the standing want; a SEPARATE step decides if and when they act on it.
 
 EXTRAS — ambient nameless figures
@@ -74,8 +74,8 @@ OUTPUT format (agendas keyed by character name, one per present character minus 
     "a young courier woman finishing a meal, satchel still slung across her chest"
   ],
   "agendas": {
-    "Person A": "<one short line: what Person A is after right now and how the player figures into it, grounded in their data — do NOT copy this wording>",
-    "Person B": "<what Person B is after; self-interested, not a service to the player>"
+    "Person A": "<one short line: what Person A is after right now, rooted in their own business, grounded in their data — do NOT copy this wording>",
+    "Person B": "<what Person B is after; self-interested, not a service to the player, not a judgment of the player>"
   }
 }
 
@@ -85,5 +85,5 @@ HARD RULES
 - EVERY character in INPUT.characters MUST appear as a key in internal_states.
 - Each internal_states value is a non-empty string between 10 and 400 characters.
 - "extras" is a top-level array of 0–4 strings, each 10–200 characters. Empty array is fine for genuinely-empty places. For populated-place-with-no-named-characters, lean toward 2–4.
-- "agendas" is an object keyed by character name, one player-targeted line (up to 250 chars) per present character. Followers and anyone with a clear reason to ignore the player may be omitted; otherwise cover everyone.
+- "agendas" is an object keyed by character name, one line (up to 250 chars) per present character. Followers and anyone with a clear reason to ignore the player may be omitted; otherwise cover everyone.
 - No extra fields in the output beyond internal_states, extras, and (optional) agendas.

@@ -67,6 +67,7 @@ module Harness
         # the participation branch would drop it as "no party". Needs a
         # Turn::Context; a no-op (empty map) without one (unit tests).
         realize_people(people)
+        bake_bindings!(facts)
         written = facts.filter_map { |f| route(f) }
         persist_embeddings(written)
         # Places named in dialogue → the PlaceRealizer (the buildings twin: mint a
@@ -148,6 +149,7 @@ module Harness
       # map) without a context (the Realizer needs llm_grunt / player_location / game_time).
       def realize_people(people)
         @minted_people = []
+        @realized_bindings = []
         return @minted_people if @context.nil? || people.empty?
         people.each do |p|
           speaker = find_character(p["by"].to_s)
@@ -155,6 +157,10 @@ module Harness
           res = ::Harness::NarrativeShift::Realizer.run(claim: claim, speaker: speaker, context: @context, logger: @logger)
           if res && (c = ::Character.find_by(id: res["character_id"]))
             @minted_people << c unless @minted_people.include?(c)
+            # A role-reference that realized to a differently-named row is a
+            # binding the pass's own facts still don't know about.
+            ref = p["name"].to_s.strip
+            @realized_bindings << [ ref, res["name"] ] if !ref.empty? && !name_match?(res["name"], ref)
           end
           @logger.info do
             status = if res.nil? then "declined"
@@ -169,6 +175,28 @@ module Harness
       rescue StandardError => e
         @logger.warn { "[Knowledge::Capture] person realize failed (non-fatal): #{e.class}: #{e.message}" }
         @minted_people
+      end
+
+      # Teach the pass's OWN facts a name assigned during realization, BEFORE
+      # they're written: a role-worded fact ("the Guard-Captain is…") whose
+      # person just minted as "Mereth Hexham" would otherwise enter the store
+      # permanently orphaned from the row it's about (the two-Guard-Captains
+      # seam — recall then serves roles no dialogue can resolve). APPEND, never
+      # substitute: the speaker's wording stays verbatim and an appended clause
+      # can't corrupt overlapping references. `concerns` is deliberately left
+      # alone — adding a name there would REROUTE an attribute fact into a
+      # participation event.
+      def bake_bindings!(facts)
+        Array(@realized_bindings).each do |ref, name|
+          key = ::Harness::NarrativeShift::Realizer.reference_key(ref)
+          next if key.empty?
+          facts.each do |f|
+            content = f["content"].to_s
+            next unless content.downcase.include?(key)
+            next if content.downcase.include?(name.to_s.downcase) # already named
+            f["content"] = "#{content.strip} (#{ref} is #{name})"
+          end
+        end
       end
 
       # Hand each named place to the PlaceRealizer (mint a proper-named

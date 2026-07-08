@@ -54,25 +54,33 @@ module Harness
         role_ref = nil
         if proper_name?(spoken)
           name = spoken
-          if (existing = find_existing(name))
+          if (existing = find_existing(name) || find_by_reference(spoken))
             logger.info { "[NarrativeShift] claim #{name.inspect} LINKS to existing character_id=#{existing.id}" }
             return { "character_id" => existing.id, "name" => existing.name, "linked" => true }
           end
         else
+          # A repeated role-reference must resolve to the row it already
+          # realized to — the picker-assigned name is a pool string dialogue
+          # will never say again, so the referring EXPRESSION is the only
+          # stable key (the two-Guard-Captains bug).
+          if (existing = find_by_reference(spoken))
+            logger.info { "[NarrativeShift] role ref #{spoken.inspect} LINKS to existing character_id=#{existing.id} #{existing.name.inspect}" }
+            return { "character_id" => existing.id, "name" => existing.name, "linked" => true }
+          end
           role_ref = spoken.presence
           name = ::Harness::Naming.unique_for(location: context.player_location)
           logger.info { "[NarrativeShift] claim by role #{spoken.inspect} → picker named #{name.inspect}" }
         end
 
         at_name = claim["at_location"].to_s.strip
-        place   = resolve_location(at_name)
-        # Every claimed person is a located individual, never a floating name: the
-        # named destination if it's a real row, else a HOME in the current
-        # settlement (dormant — exists, recallable, off the current stage). If a
-        # clean place name was given but isn't a row yet, park it so ClaimPlacer
-        # relocates them there once it materialises.
+        # The claim's anchor place is realized WITH the claim (no parking, no
+        # lazy placement): reuse an existing row when one matches, else mint
+        # the sublocation NOW so the person is home and findable the moment
+        # they're spoken of — and so a later "go to the mill" is plain
+        # movement instead of the worldbuilder inventing a second mill with
+        # a second miller.
+        place   = resolve_or_mint_location(at_name, context, logger)
         home    = place || settlement_for(context.player_location)
-        pending_name = (place.nil? && looks_like_place?(at_name)) ? at_name : nil
 
         npc = ::Harness::Character::Hatchery.spawn(
           llm_grunt:        context.llm_grunt,
@@ -80,13 +88,12 @@ module Harness
           subrole:          subrole,
           location:         (place || home),
           home_location_id: home&.id,
-          dormant:          place.nil?, # no resolved destination → off the current stage, still homed
+          dormant:          place.nil?, # no place anchor → off the current stage, still homed
           properties:       {
-            "claimed_by"            => speaker_label(speaker),
-            "claim_gist"            => gist.presence,
-            "role_reference"        => role_ref,
-            "pending_location_name" => pending_name,
-            "claim_pending_web"     => true
+            "claimed_by"        => speaker_label(speaker),
+            "claim_gist"        => gist.presence,
+            "role_reference"    => role_ref,
+            "claim_pending_web" => true
           }.compact,
           prose_context:    gist.presence || "named by #{speaker_label(speaker)} in conversation with the player"
         )
@@ -115,6 +122,28 @@ module Harness
         return exact if exact
         ::Npc.where("LOWER(name) LIKE ?", "#{name.downcase.split(/\s+/).first} %").find { |c| name_match?(c.name, name) } ||
           ::Npc.where("LOWER(name) LIKE ?", "% #{name.downcase}").find { |c| name_match?(c.name, name) }
+      end
+
+      # Resolve a referring expression against rows it may have already
+      # realized to: the stored `role_reference` of a past role-mint, or a
+      # role-shaped NAME (a first mention like "Guard-Captain" that slipped
+      # the proper_name? gate and became the row's literal name). Leading
+      # articles stripped on both sides, so "the Guard-Captain" ==
+      # "Guard-Captain" == role_reference "The Guard-Captain". Exact after
+      # normalization — deliberately NOT fuzzy, same policy as find_existing.
+      def find_by_reference(ref)
+        key = reference_key(ref)
+        return nil if key.empty?
+        ::Npc.find_each.find do |c|
+          stored = c.properties.is_a?(Hash) ? c.properties["role_reference"] : nil
+          reference_key(stored) == key || reference_key(c.name) == key
+        end
+      end
+
+      def reference_key(s)
+        tokens = s.to_s.strip.downcase.split(/\s+/)
+        tokens.shift while tokens.first && ARTICLES.include?(tokens.first)
+        tokens.join(" ")
       end
 
       # Did the NPC actually NAME this person, or refer to them by role? Decides
@@ -162,12 +191,59 @@ module Harness
         false
       end
 
-      # Resolve a place name the NPC echoed from its own reply to a real
-      # Location, exact (case-insensitive) only. No match → nil → unplaced.
-      def resolve_location(at_location)
+      # Resolve the claim's anchor place, EAGERLY (no parking): exact name
+      # match anywhere → reuse; a head-noun match among the current
+      # settlement's sublocations → reuse ("the mill" IS the existing Tide
+      # Mill — one mill per town); else, if it reads as a clean place name,
+      # MINT it now as a sublocation of the current settlement. Prose
+      # descriptions ("the highest pile of the first crossing…") mint nothing.
+      def resolve_or_mint_location(at_location, context, logger)
         nm = at_location.to_s.strip
         return nil if nm.empty?
-        ::Location.where("LOWER(name) = ?", nm.downcase).first
+        exact = ::Location.where("LOWER(name) = ?", nm.downcase).first
+        return exact if exact
+
+        settlement = root_settlement(context.player_location)
+        return nil unless settlement
+        if (existing = head_noun_match(nm, settlement))
+          logger.info { "[NarrativeShift] anchor #{nm.inspect} matches existing #{existing.name.inspect} — reusing" }
+          return existing
+        end
+        return nil unless looks_like_place?(nm)
+
+        loc = ::Location.create!(
+          name:        titleize_place(nm),
+          description: "A place in #{settlement.name}, spoken of in passing.",
+          parent:      settlement
+        )
+        logger.info { "[NarrativeShift] anchor MINTED location_id=#{loc.id} #{loc.name.inspect} under #{settlement.name}" }
+        loc
+      end
+
+      # Anchors parent at the ROOT settlement (the town), matching the
+      # PlaceRealizer's convention — settlement_for (person homing) can stop
+      # at a residence like a tavern, which is no parent for a mill.
+      def root_settlement(location)
+        return nil unless location
+        loc = location
+        loc = loc.parent while loc.parent
+        loc
+      end
+
+      # "the mill" ~ "the Tide Mill": both head nouns are "mill". Token-exact
+      # on the final word (articles stripped) — deliberately not fuzzy, so
+      # "the sawmill" never collapses into "the mill".
+      def head_noun_match(nm, settlement)
+        key = reference_key(nm).split(" ").last.to_s
+        return nil if key.empty?
+        ::Location.where(parent_id: settlement.id).to_a
+                  .find { |l| reference_key(l.name).split(" ").last == key }
+      end
+
+      def titleize_place(nm)
+        nm.split(/\s+/).map.with_index { |w, i|
+          i.zero? && ARTICLES.include?(w.downcase) ? w.downcase : w.capitalize
+        }.join(" ")
       end
 
       # The SHARED event tying the speaker to the new person — the "tangent" that
