@@ -29,6 +29,37 @@ RSpec.describe Harness::Runners::Conversation do
     expect(say.dig("result", "staged")).to be(true)
   end
 
+  it "retries a malformed emit once with the defect named and stages the corrected line" do
+    calls = 0
+    ctx = context_with do |full|
+      calls += 1
+      if full.include?("--- RETRY ---")
+        expect(full).to include('"speak" is true but dialogue.prose is missing', '"pro"')
+        { "speak" => true, "dialogue" => { "summary" => "greets", "prose" => "Aye, what'll it be?" } }.to_json
+      else
+        { "speak" => true, "dialogue" => { "summary" => "greets", "pro" => "Aye, what'll it be?" } }.to_json
+      end
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+    say = outcome.tool_calls.find { |t| t["name"] == "propose_event" }
+    expect(say.dig("args", "details")).to eq("Aye, what'll it be?")
+  end
+
+  it "drops the line when the retry is also malformed (no infinite bounce)" do
+    voicing_calls = 0
+    ctx = context_with do |full|
+      voicing_calls += 1 unless full.include?("WORLD MEMORY")
+      "not json at all"
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+    expect(outcome.tool_calls.find { |t| t["name"] == "propose_event" }).to be_nil
+    expect(voicing_calls).to eq(2) # original + exactly one retry
+  end
+
   it "persists a durable event only when the exchange is flagged memorable" do
     ctx = context_with do
       { "speak" => true,
@@ -464,6 +495,23 @@ RSpec.describe Harness::Runners::Conversation do
         described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
       }.to change(Knowledge, :count).by(1)
       expect(Knowledge.last.content).to match(/salt tithe/)
+    end
+
+    it "drops a reflection that answered in the DIALOGUE schema instead of ingesting it" do
+      ctx = context_with do |full|
+        if full.include?("SECOND PASS: WORLD MEMORY")   # schema collision: model re-voiced
+          { "thought" => "…", "speak" => true, "dialogue" => { "summary" => "repeats", "prose" => "As I said." } }.to_json
+        elsif full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "There's a lad named Eli by the shed." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      allow(Harness::Knowledge::Capture).to receive(:ingest)
+      described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
+      expect(Harness::Knowledge::Capture).not_to have_received(:ingest)
     end
 
     it "extends the speaker's OWN voicing context: the reflection prompt carries the payload plus the spoken line" do

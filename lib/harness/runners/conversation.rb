@@ -235,16 +235,46 @@ module Harness
           "you"             => you
         )
         sent_user = "INPUT:\n#{user}"
-        raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
-          llm(context).complete(system: preamble, user: sent_user)
+        who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
+        emit = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
+          raw = llm(context).complete(system: preamble, user: sent_user)
+          e1  = parse_emit(raw)
+          # One correction bounce: a malformed emit (bad JSON, or a speaker with
+          # no line — the "pro"-for-"prose" class) goes back to the model with
+          # the defect named. Same prefix, so the retry is KV-cache-hot.
+          if (defect = emit_defect(e1))
+            @logger.warn { "[Runner conversation] #{who} emit malformed (#{defect}) — retrying once" }
+            raw = llm(context).complete(system: preamble, user: "#{sent_user}\n\n#{retry_tail(defect, raw)}")
+            e1  = parse_emit(raw)
+            if (still = emit_defect(e1))
+              @logger.warn { "[Runner conversation] #{who} emit still malformed (#{still}) — dropped" }
+            end
+          end
+          e1
         end
-        emit = parse_emit(raw)
         # The exact user string is returned alongside the emit so reflection
         # can extend it byte-identically (KV-cache prefix reuse).
         emit ? [ emit, sent_user ] : nil
       rescue StandardError => e
         @logger.warn { "[Runner conversation] voice failed: #{e.class}: #{e.message}" }
         nil
+      end
+
+      # A defect worth a retry: unparseable output, or a declared speaker whose
+      # emit carries nothing committable (no prose, no consequential field).
+      def emit_defect(emit)
+        return "not valid JSON" unless emit.is_a?(::Hash)
+        dlg   = emit["dialogue"]
+        prose = dlg.is_a?(::Hash) ? dlg["prose"].to_s.strip : ""
+        if emit["speak"] && prose.empty? && !emit["resolve_call"] && !emit["ignorance"] && !emit["memorable"]
+          return "\"speak\" is true but dialogue.prose is missing"
+        end
+        nil
+      end
+
+      def retry_tail(defect, raw)
+        "--- RETRY ---\nYour previous output was rejected: #{defect}.\n" \
+        "Previous output:\n#{raw}\n\nRe-emit the ENTIRE corrected JSON object now."
       end
 
       # WHERE the conversation is happening. Without this the voicing model
@@ -522,6 +552,12 @@ module Harness
         payload = ::Harness::LLM::JsonResponse.parse(raw)
         unless payload.is_a?(::Hash)
           @logger.warn { "[Runner conversation] reflection unparseable for #{speaker} — nothing captured" }
+          return
+        end
+        # The tail overrides the voicing prompt's output schema; when the model
+        # answers in the dialogue shape anyway, the claims are lost — say so.
+        if payload.key?("speak") && !(payload.key?("facts") || payload.key?("people") || payload.key?("places"))
+          @logger.warn { "[Runner conversation] reflection for #{speaker} answered in DIALOGUE schema — claims dropped" }
           return
         end
         ::Harness::Knowledge::Capture.ingest(
