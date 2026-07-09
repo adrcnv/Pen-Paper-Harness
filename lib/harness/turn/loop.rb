@@ -102,10 +102,19 @@ module Harness
       end
 
       # Returns the Transcript for the turn (already persisted).
-      def run_turn(input:)
+      # `seed:` forces this turn's sampler/dice seed (replay-rig retry);
+      # normally one is rolled fresh and stamped onto the TurnLog.
+      def run_turn(input:, seed: nil)
         ::Harness::CostTracker.reset_turn!
         ::Harness::Timing.reset_turn!
         @context.reset_per_turn_counters!
+
+        # Pin this turn's randomness: the LLM sampler seed (adapter sends it
+        # per request) and the dice RNG. Same seed on a rewound retry = same
+        # rolls, same sampling — the fix under test is the only delta.
+        turn_seed = seed || (Random.new_seed % 2_147_483_647)
+        ::Harness::LLM::Seed.current = turn_seed
+        ::Harness::RNG.reset!(turn_seed)
 
         # Tools reach the LLM via context.llm_grunt (small-model, hot path
         # for materialization) or context.llm_nuance (reasoning loop).
@@ -126,6 +135,7 @@ module Harness
         @context.clear_scene_dirty!
 
         transcript = Transcript.new(input: input, location_id: @context.player_location.id)
+        transcript.llm_seed = turn_seed
         logger.info { "[Turn::Loop] input=#{input.inspect} location=#{@context.player_location.name}" }
 
         begin
@@ -238,11 +248,23 @@ module Harness
           logger.error { "[Turn::Loop] turn failed: #{transcript.error}" }
           raise
         ensure
+          # Flush order matters: the scene buffer must be IN the DB before the
+          # file snapshot runs, or the snapshot is a save-state with amnesia.
+          persist_session_state!
           transcript.persist!
           snapshot_db(transcript.turn_log) if transcript.turn_log
         end
 
         transcript
+      end
+
+      # Snapshot the CURRENT state as the floor below the next turn — called
+      # once at session start (debug mode) so `/debug rewind` after the very
+      # first turn of a session has somewhere to land.
+      def baseline_snapshot!
+        persist_session_state!
+        last = ::TurnLog.maximum(:turn_number) || 0
+        snapshot_db(::TurnLog.new(turn_number: last))
       end
 
       private
@@ -871,6 +893,37 @@ module Harness
         @context.history.shift(overflow)
       end
 
+      # Flush cross-turn in-memory state to the singleton session_states row:
+      # the active scene buffer (nil between scenes — the row always mirrors
+      # the CURRENT scene, so a scene change wipes the old buffer at the next
+      # boundary), the conversation history, and the game clock. Stamped with
+      # git SHA + prompt-file hash so a restore can detect wiring drift.
+      # Non-fatal: a failed flush must never kill the turn.
+      def persist_session_state!
+        row = ::SessionState.first_or_initialize
+        row.update!(
+          location_id: @context.player_location&.id,
+          scene:       ::Harness::Scene::Serializer.dump(@scene_manager.active, logger: logger),
+          history:     @context.history,
+          game_time:   @context.game_time,
+          git_sha:     wiring_stamp[:git_sha],
+          prompt_hash: wiring_stamp[:prompt_hash]
+        )
+      rescue StandardError => e
+        logger.warn { "[Turn::Loop] session-state flush failed: #{e.class}: #{e.message}" }
+      end
+
+      # Computed once per session — the stamps written into session_states
+      # (and thus into every snapshot). A restore compares against the live
+      # process's values and warns on drift.
+      def wiring_stamp
+        @wiring_stamp ||= ::Harness::Debug::Replay.wiring_stamp
+      end
+
+      # Per-turn save-state: VACUUM INTO writes a complete, WAL-independent
+      # copy of the SQLite file (FileUtils.cp could miss un-checkpointed WAL
+      # frames). The session_states flush above already put the scene buffer
+      # and stamps inside, so the file is the whole truth.
       def snapshot_db(turn_log)
         return unless @snapshot_dir
         db_path = ActiveRecord::Base.connection_db_config.database
@@ -878,11 +931,15 @@ module Harness
 
         FileUtils.mkdir_p(@snapshot_dir)
         target = File.join(@snapshot_dir, "turn_#{turn_log.turn_number}.sqlite")
-        FileUtils.cp(db_path, target)
+        File.delete(target) if File.exist?(target) # VACUUM INTO refuses to overwrite
+        ActiveRecord::Base.connection.execute(
+          "VACUUM INTO #{ActiveRecord::Base.connection.quote(target)}"
+        )
         logger.debug { "[Turn::Loop] snapshot -> #{target}" }
       rescue StandardError => e
         logger.warn { "[Turn::Loop] snapshot failed: #{e.message}" }
       end
+
 
       def reasoning_preamble
         @reasoning_preamble ||= File.read(REASONING_PREAMBLE_PATH)

@@ -43,3 +43,6 @@ tests/test_*
 
 # Shadow-planner diagnostic corpus (derived from gitignored research notes)
 /shadow_corpus.jsonl
+
+# Replay-rig save-states (per-turn snapshots + scenario shelf)
+/snapshots/

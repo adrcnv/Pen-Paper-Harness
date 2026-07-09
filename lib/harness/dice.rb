@@ -20,7 +20,9 @@ module Harness
 
     Outcome = Struct.new(:result, :margin, :critical, :roll, :against, keyword_init: true)
 
-    def self.check(actor_stat:, target_stat: nil, difficulty: "moderate", roll_modifier: 0, rng: Random.new)
+    # rng defaults to the session RNG (reseeded per turn by Turn::Loop) so a
+    # rewound turn replays the same rolls; still injectable for tests.
+    def self.check(actor_stat:, target_stat: nil, difficulty: "moderate", roll_modifier: 0, rng: ::Harness::RNG.current)
       actor_roll  = rng.rand(1..20)
       actor_total = actor_roll + stat_mod(actor_stat) + roll_modifier.to_i
 

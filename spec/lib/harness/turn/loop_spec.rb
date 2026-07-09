@@ -1,4 +1,5 @@
 require "rails_helper"
+require "tmpdir"
 
 RSpec.describe Harness::Turn::Loop do
   let(:city)   { Location.create!(name: "Saltmere") }
@@ -51,6 +52,77 @@ RSpec.describe Harness::Turn::Loop do
     it "appends input/narration to the context history" do
       run(reasoning: [], narration: "the tavern is dim")
       expect(context.history).to eq([ { "input" => "player input", "narration" => "the tavern is dim" } ])
+    end
+  end
+
+  describe "replay rig (session state, snapshots, seeds)" do
+    it "flushes the scene buffer + history to the session_states singleton at the turn boundary" do
+      run(reasoning: [], narration: "the tavern is dim")
+      row = SessionState.current
+      expect(row).to be_present
+      expect(row.location_id).to eq(tavern.id)
+      expect(row.scene["location_id"]).to eq(tavern.id)
+      expect(row.scene["narrations"].last["narration"]).to eq("the tavern is dim")
+      expect(row.history.size).to eq(1)
+      expect(row.prompt_hash).to be_present
+    end
+
+    it "overwrites the singleton each turn (the buffer mirrors the CURRENT scene only)" do
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "turn two")
+      loop_obj = described_class.new(adapter: adapter, context: context)
+      loop_obj.run_turn(input: "one")
+      loop_obj.run_turn(input: "two")
+      expect(SessionState.count).to eq(1)
+      expect(SessionState.current.scene["narrations"].size).to eq(2)
+    end
+
+    it "stamps the turn's seed onto the TurnLog and honors a forced seed (retry)" do
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "seeded")
+      described_class.new(adapter: adapter, context: context).run_turn(input: "hi", seed: 424_242)
+      expect(TurnLog.last.llm_seed).to eq(424_242)
+      expect(Harness::LLM::Seed.current).to eq(424_242)
+
+      described_class.new(adapter: adapter, context: context).run_turn(input: "again")
+      expect(TurnLog.last.llm_seed).to be_present
+    end
+
+    it "reseeds the dice RNG per turn: a forced seed replays the same rolls" do
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "x")
+      loop_obj = described_class.new(adapter: adapter, context: context)
+
+      loop_obj.run_turn(input: "hi", seed: 7)
+      first = Array.new(5) { Harness::Dice.check(actor_stat: 10).roll }
+      loop_obj.run_turn(input: "hi", seed: 7)
+      second = Array.new(5) { Harness::Dice.check(actor_stat: 10).roll }
+      expect(first).to eq(second)
+    end
+  end
+
+  # VACUUM INTO cannot run inside a transaction, so this group opts out of
+  # transactional fixtures and cleans up after itself.
+  describe "per-turn snapshot (VACUUM INTO)" do
+    self.use_transactional_tests = false
+
+    after do
+      [ TurnLog, SessionState, EventParticipant, Event, Character, Item, Location ].each(&:delete_all)
+    end
+
+    it "writes a complete per-turn save-state file when snapshot_dir is set" do
+      loc = Location.create!(name: "Snapville")
+      Player.create!(name: "Hero", location: loc)
+      ctx = Harness::Turn::Context.new(player_location: loc)
+      Dir.mktmpdir do |dir|
+        adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "snap")
+        described_class.new(adapter: adapter, context: ctx, snapshot_dir: dir).run_turn(input: "hi")
+        snap = File.join(dir, "turn_#{TurnLog.maximum(:turn_number)}.sqlite")
+        expect(File.exist?(snap)).to be(true)
+        # The snapshot is a full save-state: the session_states row (scene
+        # buffer + stamps) is INSIDE the file.
+        db = SQLite3::Database.new(snap)
+        count = db.execute("SELECT COUNT(*) FROM session_states").first.first
+        db.close
+        expect(count).to eq(1)
+      end
     end
   end
 

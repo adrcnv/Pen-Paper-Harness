@@ -40,6 +40,11 @@ RSpec.configure do |config|
     Rails.root.join('spec/fixtures')
   ]
 
+  # The per-turn LLM sampler seed is process-global (set by Turn::Loop); a
+  # spec that runs a turn must not leak its seed into later examples'
+  # adapter payloads.
+  config.before(:each) { Harness::LLM::Seed.current = nil }
+
   # If you're not using ActiveRecord, or you'd prefer not to run each of your
   # examples within a transaction, remove the following line or assign false
   # instead of true.

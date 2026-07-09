@@ -155,6 +155,17 @@ module Harness
           "messages"   => messages
         }.merge(DRY_SAMPLING)
         payload["tools"] = tools if tools.is_a?(Array) && !tools.empty?
+        # Per-turn sampler seed (replay rig). llama.cpp honors it; servers
+        # that don't just ignore the field.
+        payload["seed"] = ::Harness::LLM::Seed.current if ::Harness::LLM::Seed.current
+        # Strict replay: a pinned seed fixes the SAMPLER, but llama.cpp's
+        # logits aren't bit-stable across KV-cache states (cache warmth
+        # changes batch splits changes float rounding). Disabling prompt
+        # caching forces a full re-prefill every call — identical batch
+        # splits, reproducible logits — at the cost of ALL cache reuse
+        # (expect several extra seconds per call). Debug-session lever;
+        # both runs being compared must use it.
+        payload["cache_prompt"] = false if ENV["HARNESS_STRICT_REPLAY"] == "1"
 
         # llama.cpp passes chat_template_kwargs through to the jinja template.
         # Qwen 3.6's template reads `enable_thinking` to gate the <think> block.

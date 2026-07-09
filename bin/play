@@ -224,7 +224,37 @@ def prompt_existing_save(player)
   end
 end
 
-mode = if options[:reset]
+# Debug scenario shelf: offer to paste a shelved scenario over the live DB
+# instead of continuing the current save. Wholesale file replacement — the
+# scenario's world (turn logs, knowledge, buffer) lands intact; the session
+# then runs INSIDE the scenario's folder so rewind reaches its shelved turns.
+loaded_scenario = nil
+if debug_log_path
+  scenario_names = Harness::Debug::Scenarios.list
+  if scenario_names.any?
+    puts "Debug scenarios on the shelf: #{scenario_names.join(', ')}"
+    print "Load one? (name, or enter to continue as normal) > "
+    $stdout.flush
+    choice = $stdin.gets.to_s.strip
+    unless choice.empty?
+      if scenario_names.include?(choice)
+        Harness::Debug::Scenarios.load!(name: choice)
+        options[:snapshot_dir] = Harness::Debug::Scenarios.dir_for(choice)
+        loaded_scenario = choice
+        puts "  scenario '#{choice}' loaded — world state pasted over the live DB"
+        Harness::Debug::Replay.stamp_drift_notices.each { |n| puts "  #{n}" }
+        puts
+      else
+        puts "  no scenario named #{choice.inspect}; continuing as normal"
+        puts
+      end
+    end
+  end
+end
+
+mode = if loaded_scenario
+  :continue
+elsif options[:reset]
   :new_game
 else
   existing = Player.first
@@ -347,6 +377,35 @@ context = Harness::Turn::Context.new(
   game_time:       initial_game_time
 )
 
+scene_manager = Harness::Scene::Manager.new(context: context, logger: logger)
+
+# Resume the scene buffer persisted at the last turn boundary (session_states
+# singleton) — the conversation thread, agendas, and moods survive a quit
+# instead of the scene rebuilding cold. Only when the save's buffer matches
+# where the player actually stands; otherwise the normal enter chain runs.
+resumed = SessionState.current
+if resumed&.scene && resumed.location_id == player.location_id
+  restored = Harness::Scene::Serializer.load(resumed.scene)
+  if restored
+    scene_manager.restore(restored)
+    context.game_time = [ context.game_time, resumed.game_time.to_i ].max
+    context.history.replace(Array(resumed.history))
+    puts "  (scene buffer restored — #{restored.narrations.size} narration(s) in progress at #{restored.location.name})"
+    # Re-print where the scene left off so a resumed (or scenario-loaded)
+    # session doesn't start blind. Reads the buffer, not the snapshots —
+    # works on non-debug runs too.
+    if (last = restored.narrations.last)
+      color = $stdout.tty?
+      puts
+      puts "── where you left off ──"
+      puts "> #{last['input']}"
+      puts
+      puts Harness::Render.narration(last["narration"], known_names: Harness::Render.entity_names, color: color)
+    end
+    puts
+  end
+end
+
 # Mechanical gate before the engine walks the player out of a scene. The
 # planner (a small local model) sometimes reads a mid-conversation question as
 # a movement command; rather than keep hardening its judgment, we confirm the
@@ -361,12 +420,23 @@ rescue Interrupt, StandardError
   false # Ctrl-C or a read error at the gate → treat as "no, don't move"
 end
 
+# Debug mode gets the replay rig: per-turn snapshots on by default (a
+# timestamped session folder unless --snapshot-dir names a scenario), plus
+# a baseline snapshot NOW so `/debug rewind` after the first turn of this
+# session has somewhere to land.
+if debug_log_path && options[:snapshot_dir].to_s.empty?
+  options[:snapshot_dir] = Rails.root.join("snapshots", Time.now.strftime("session-%Y%m%d-%H%M%S")).to_s
+end
+
 loop_obj = Harness::Turn::Loop.new(
-  adapter:      nuance_adapter,
-  context:      context,
-  snapshot_dir: options[:snapshot_dir],
-  logger:       logger
+  adapter:       nuance_adapter,
+  context:       context,
+  snapshot_dir:  options[:snapshot_dir],
+  scene_manager: scene_manager,
+  logger:        logger
 )
+
+loop_obj.baseline_snapshot! if options[:snapshot_dir]
 
 puts "─" * 72
 puts "Harness — solo play"
@@ -378,6 +448,7 @@ puts "  grunt:     #{grunt_adapter.display_model}"
 puts "  log level: #{options[:log_level]}"
 puts "  mode:      #{loop_obj.mode}  (HARNESS_MODE=agentic for the legacy loop)"
 puts "  debug log: #{debug_log_path}  (tail -f #{debug_log_path} to follow live)" if debug_log_path
+puts "  snapshots: #{options[:snapshot_dir]}  (per-turn save-states — /debug retry, /debug rewind)" if options[:snapshot_dir]
 puts "─" * 72
 puts
 puts "Slash commands:"
@@ -387,6 +458,10 @@ puts "  /history                    dump conversation turns"
 puts "  /cost                       per-turn LLM cost breakdown (auto-shown after each turn)"
 puts "  /map                        render the world map (worldgen-rooted saves only)"
 if debug_log_path
+  puts "  /debug retry                rewind one turn and re-run it verbatim (same input + seed)"
+  puts "  /debug rewind               rewind one turn, then type a different input yourself"
+  puts "  /debug dump <name>          shelve this world as a named scenario (offered at next debug launch)"
+  puts "  /debug dump delete <name>   remove a shelved scenario"
   puts "  /debug scene                engine view of scene (internal_state, agendas, extras)"
   puts "  /debug travel               active travel journey state (cursor, remaining distance)"
   puts "  /debug character=<id>       dump character + beliefs as JSON"
@@ -405,6 +480,44 @@ if $stdout.tty?
   puts
 end
 
+# Post-turn rendering, shared by the main input path and /debug retry.
+render_turn = lambda do |transcript|
+  color = $stdout.tty?
+  puts
+  puts Harness::Render.rule(color: color)
+  puts
+  puts Harness::Render.narration(transcript.narration, known_names: Harness::Render.entity_names, color: color)
+  if transcript.notice
+    puts
+    puts transcript.notice
+  end
+
+  # Combat status banner. The turn loop swaps to the combat tool surface
+  # silently; surface it mechanically so the player knows a fight is on (and
+  # who's in it) rather than mistaking it for ongoing dialogue.
+  active = context.active_scene
+  if active&.in_combat?
+    state    = active.combat
+    player_c = Player.first
+    my_side  = state.side_of(player_c.id)
+    rows     = state.all_combatant_ids.filter_map do |cid|
+      c = Character.find_by(id: cid)
+      next unless c
+      [ state.side_of(cid), [ c.name, c.current_hp, c.max_hp ] ]
+    end
+    allies, foes = rows.partition { |side, _| side == my_side }.map { |grp| grp.map(&:last) }
+    puts
+    puts Harness::Render.combat_banner(round: state.round, allies: allies, foes: foes, color: color)
+  end
+
+  puts
+  turn_cost = Harness::CostTracker.turn_total
+  if turn_cost > 0
+    puts "  [turn cost: $#{format('%.4f', turn_cost)}  session: $#{format('%.4f', Harness::CostTracker.session_total)}]"
+    puts
+  end
+end
+
 loop do
   # Drain any pending ability picks (level-ups from the previous turn).
   # Player chooses interactively; no LLM. Fires AT MOST once per turn cycle
@@ -420,8 +533,11 @@ loop do
   # entered line to history. Returns nil on EOF (Ctrl-D), raises on Ctrl-C.
   begin
     # Combat-aware prompt: a persistent ⚔ marker at the input line so the
-    # player can't mistake a running fight for ongoing dialogue.
-    prompt = context.active_scene&.in_combat? ? "⚔ > " : "> "
+    # player can't mistake a running fight for ongoing dialogue. Debug mode
+    # numbers the upcoming turn — the replay rig's coordinate system
+    # (`/debug rewind` steps back exactly one of these).
+    marker = context.active_scene&.in_combat? ? "⚔ " : ""
+    prompt = debug_log_path ? "#{marker}[t#{TurnLog.next_turn_number}] > " : "#{marker}> "
     input = Reline.readline(prompt, true)
   rescue Interrupt
     puts
@@ -574,6 +690,66 @@ loop do
       next
     end
     case input
+    when %r{\A/debug\s+dump\s+delete\s+(\S+)\s*\z}
+      # Must precede the plain dump match ("delete" would parse as a name).
+      # A session running INSIDE the scenario folder keeps its rewind floors.
+      name = $1
+      if options[:snapshot_dir] && File.expand_path(options[:snapshot_dir]) == File.expand_path(Harness::Debug::Scenarios.dir_for(name))
+        puts "refusing: this session is running inside scenario '#{name}' — its snapshots are your rewind floors"
+      else
+        begin
+          Harness::Debug::Scenarios.delete!(name: name)
+          puts "── scenario '#{name}' deleted ──"
+        rescue Harness::Debug::Scenarios::Error => e
+          puts "delete failed: #{e.message}"
+        end
+      end
+    when %r{\A/debug\s+dump\s+(\S+)\s*\z}
+      begin
+        dir = Harness::Debug::Scenarios.dump!(
+          name:         $1,
+          snapshot_dir: options[:snapshot_dir],
+          flush:        -> { loop_obj.baseline_snapshot! }
+        )
+        puts "── scenario shelved → #{dir} ──"
+        puts "  (a debug launch will offer to load it; the dump is a copy, this session continues untouched)"
+      rescue Harness::Debug::Scenarios::Error => e
+        puts "dump failed: #{e.message}"
+      end
+    when %r{\A/debug\s+(retry|rewind)\s*\z}
+      # Replay rig: restore the previous turn's snapshot and rehydrate the
+      # session inertly. `retry` re-runs the rewound turn's input with its
+      # original seed (same rolls, same sampling — a code/prompt fix is the
+      # only delta); `rewind` stops after restoring so you can type a
+      # different input (upstream-behavior probes).
+      action = $1
+      begin
+        res = Harness::Debug::Replay.rewind!(
+          context: context, scene_manager: scene_manager,
+          snapshot_dir: options[:snapshot_dir], logger: logger
+        )
+      rescue Harness::Debug::Replay::Error => e
+        puts "#{action} failed: #{e.message}"
+        puts
+        next
+      end
+      res[:notices].each { |n| puts "  #{n}" }
+      puts "── rewound: turn #{res[:turn]} undone, world is as it was before it ──"
+      if action == "retry"
+        puts "  retrying [t#{res[:turn]}] > #{res[:input]}"
+        begin
+          transcript = loop_obj.run_turn(input: res[:input], seed: res[:seed])
+        rescue StandardError => e
+          puts
+          puts "!! retry failed: #{e.class}: #{e.message}"
+          puts
+          next
+        end
+        render_turn.call(transcript)
+      else
+        puts "  original input was: #{res[:input]}"
+        puts "  (type a new input to take the turn differently, or /debug retry to re-run it verbatim)"
+      end
     when %r{\A/debug\s+location\s*\z}, %r{\A/debug\s+location\s*=\s*(\d+)\s*\z}
       target_id = $1&.to_i
       target = if target_id
@@ -778,6 +954,10 @@ loop do
       end
     else
       puts "usage:"
+      puts "  /debug retry              rewind one turn and re-run it verbatim (same input + seed)"
+      puts "  /debug rewind             rewind one turn; you type the next input yourself"
+      puts "  /debug dump <name>        shelve this world as a named scenario (offered at next debug launch)"
+      puts "  /debug dump delete <name> remove a shelved scenario"
       puts "  /debug scene              engine view of active scene (internal_state, agendas, extras flagged)"
       puts "  /debug travel             active travel journey state (cursor, remaining distance, cooldown)"
       puts "  /debug character=<id>     dump character + properties + beliefs"
@@ -839,38 +1019,5 @@ loop do
     next
   end
 
-  color = $stdout.tty?
-  puts
-  puts Harness::Render.rule(color: color)
-  puts
-  puts Harness::Render.narration(transcript.narration, known_names: Harness::Render.entity_names, color: color)
-  if transcript.notice
-    puts
-    puts transcript.notice
-  end
-
-  # Combat status banner. The turn loop swaps to the combat tool surface
-  # silently; surface it mechanically so the player knows a fight is on (and
-  # who's in it) rather than mistaking it for ongoing dialogue.
-  active = context.active_scene
-  if active&.in_combat?
-    state    = active.combat
-    player   = Player.first
-    my_side  = state.side_of(player.id)
-    rows     = state.all_combatant_ids.filter_map do |cid|
-      c = Character.find_by(id: cid)
-      next unless c
-      [ state.side_of(cid), [ c.name, c.current_hp, c.max_hp ] ]
-    end
-    allies, foes = rows.partition { |side, _| side == my_side }.map { |grp| grp.map(&:last) }
-    puts
-    puts Harness::Render.combat_banner(round: state.round, allies: allies, foes: foes, color: color)
-  end
-
-  puts
-  turn_cost = Harness::CostTracker.turn_total
-  if turn_cost > 0
-    puts "  [turn cost: $#{format('%.4f', turn_cost)}  session: $#{format('%.4f', Harness::CostTracker.session_total)}]"
-    puts
-  end
+  render_turn.call(transcript)
 end

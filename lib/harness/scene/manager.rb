@@ -121,6 +121,15 @@ module Harness
         @active&.append_narration(input, narration)
       end
 
+      # Adopt an externally rebuilt Active (session-state resume, replay-rig
+      # rewind) WITHOUT running the enter chain — no genesis, no draws, no
+      # internal-state calls. Pass nil to clear (restored between scenes).
+      def restore(active)
+        @active = active
+        @context.active_scene = active
+        active
+      end
+
       private
 
       # Increment-2 social web: a claimed person present here (just placed, or

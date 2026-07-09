@@ -5,7 +5,8 @@ module Harness
     # a bad turn later = loading this row, reading tool_calls in order.
     class Transcript
       attr_accessor :input, :reasoning_prompt, :narration, :narration_prompt,
-                    :location_id, :error, :combat, :unresolved, :notice, :halted
+                    :location_id, :error, :combat, :unresolved, :notice, :halted,
+                    :llm_seed
       attr_reader :tool_calls
       # Names of the runners that executed this turn (state-machine path), in
       # order. Lets post-turn consumers know what kind of turn this was — e.g.
@@ -56,6 +57,7 @@ module Harness
           turn_number:          ::TurnLog.next_turn_number,
           location_id:          @location_id,
           input:                @input,
+          llm_seed:             @llm_seed,
           reasoning_prompt:     @reasoning_prompt,
           reasoning_tool_calls: @tool_calls,
           narration_prompt:     @narration_prompt,

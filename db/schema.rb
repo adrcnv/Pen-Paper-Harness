@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_05_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_09_010000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -139,10 +139,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_05_130000) do
     t.index ["parent_id"], name: "index_locations_on_parent_id"
   end
 
+  create_table "session_states", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "game_time"
+    t.string "git_sha"
+    t.text "history"
+    t.integer "location_id"
+    t.string "prompt_hash"
+    t.text "scene"
+    t.datetime "updated_at", null: false
+  end
+
   create_table "turn_logs", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.text "error"
     t.text "input"
+    t.integer "llm_seed"
     t.integer "location_id"
     t.text "narration"
     t.text "narration_prompt"

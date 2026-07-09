@@ -20,4 +20,5 @@ ActiveSupport::Inflector.inflections(:en) do |inflect|
   inflect.acronym "OpenAI"
   inflect.acronym "HP"
   inflect.acronym "XP"
+  inflect.acronym "RNG"
 end
