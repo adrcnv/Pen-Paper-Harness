@@ -1,6 +1,6 @@
 You compare a STANDING fact against a NEW statement heard in conversation and judge the relation.
 
-- extends: same subject, and the statement adds or refines detail (a name, a place, a cause, an outcome). Produce the revised fact: the standing fact with the new detail folded in. One or two sentences, plain statement form.
+- extends: same subject, and the statement adds or refines detail (a name, a place, a cause, an outcome). Produce the revised fact: the standing fact with the new detail folded in. One or two sentences, plain statement form. An extension must PRESERVE every claim of the standing fact — if folding the statement in would drop, soften, or replace any part of it, that is contradicts, not extends.
 - contradicts: same subject, but the statement denies or conflicts with the standing fact.
 - unrelated: different subject.
 

@@ -453,7 +453,7 @@ puts "─" * 72
 puts
 puts "Slash commands:"
 puts "  /scene                      inspect the active scene"
-puts "  /abilities                  show your character sheet (class, level, HP, abilities)"
+puts "  /sheet                      show your character sheet (class, level, HP, abilities)"
 puts "  /history                    dump conversation turns"
 puts "  /cost                       per-turn LLM cost breakdown (auto-shown after each turn)"
 puts "  /map                        render the world map (worldgen-rooted saves only)"
@@ -464,10 +464,12 @@ if debug_log_path
   puts "  /debug dump delete <name>   remove a shelved scenario"
   puts "  /debug scene                engine view of scene (internal_state, agendas, extras)"
   puts "  /debug travel               active travel journey state (cursor, remaining distance)"
-  puts "  /debug character=<id>       dump character + beliefs as JSON"
+  puts "  /debug character=<id>       dump character as JSON (stats, properties, abilities, inventory)"
   puts "  /debug location[=<id>]      dump location + parent/siblings/children (no id = current)"
   puts "  /debug eventlog [>N]        dump event log (newest first; optional id floor)"
   puts "  /debug eventlog character=<id>  events involving that character"
+  puts "  /debug knowledge[=<id>]     dump knowledge store (newest first; =id adds facets + supersession chain)"
+  puts "  /debug knowledge character=<id>  rows the facet gate serves that character (pre-ranking, pre-gate)"
   puts "  /debug elapsed              per-call timings from the most recent turn"
   puts "  /debug levelup              level up the player one rank (fires picker inline)"
 end
@@ -689,6 +691,7 @@ loop do
       puts
       next
     end
+    begin
     case input
     when %r{\A/debug\s+dump\s+delete\s+(\S+)\s*\z}
       # Must precede the plain dump match ("delete" would parse as a name).
@@ -828,12 +831,7 @@ loop do
       if char.nil?
         puts "no character id=#{char_id}"
       else
-        # Match by character_id (post-promotion) OR by actor_name == this
-        # character's name (catches class-2 stragglers if any). Both ORed
-        # via subquery so event_participants doesn't need a join twice.
-        ev_ids = EventParticipant.where(character_id: char_id)
-                                 .or(EventParticipant.where(actor_name: char.name))
-                                 .pluck(:event_id).uniq
+        ev_ids = EventParticipant.where(character_id: char_id).pluck(:event_id).uniq
         events = Event.where(id: ev_ids).order(id: :desc).limit(100).map do |e|
           {
             id:           e.id,
@@ -842,7 +840,7 @@ loop do
             location_id:  e.location_id,
             details:      e.details,
             participants: e.event_participants.map { |ep|
-              { character_id: ep.character_id, actor_name: ep.actor_name, role: ep.role }
+              { character_id: ep.character_id, role: ep.role }
             }
           }
         end
@@ -866,6 +864,48 @@ loop do
       end
       puts "(#{events.size} events#{$1 ? ", id > #{$1}" : ""}, newest first)"
       puts JSON.pretty_generate(events)
+    when %r{\A/debug\s+knowledge\s+character\s*=\s*(\d+)\s*\z}
+      char = Character.find_by(id: $1.to_i)
+      if char.nil?
+        puts "no character id=#{$1}"
+      else
+        # The exact facet wall recall uses (Query.candidates_for): what this
+        # character COULD know, before cosine ranking and the relevance gate.
+        rows = Harness::Knowledge::Query.candidates_for(char)
+        puts "(#{rows.size} current row(s) the facet gate serves character_id=#{char.id} '#{char.name}' — pre-ranking, pre-gate)"
+        puts JSON.pretty_generate(rows.map { |k|
+          { id: k.id, content: k.content, location_id: k.location_id, subrole: k.subrole,
+            min_int: k.min_int, speaker: k.speaker, source_kind: k.source_kind }
+        })
+      end
+    when %r{\A/debug\s+knowledge\s*=\s*(\d+)\s*\z}
+      k = Knowledge.find_by(id: $1.to_i)
+      if k.nil?
+        puts "no knowledge id=#{$1}"
+      else
+        chain = []
+        cur = k
+        while (prev = Knowledge.find_by(id: cur.supersedes_id))
+          chain << { id: prev.id, content: prev.content, speaker: prev.speaker, current: prev.current }
+          cur = prev
+        end
+        puts JSON.pretty_generate({
+          id: k.id, content: k.content, current: k.current,
+          location_id: k.location_id, subrole: k.subrole, min_int: k.min_int,
+          social_class: k.social_class, faction: k.faction,
+          speaker: k.speaker, source_kind: k.source_kind, game_time: k.game_time,
+          embedding: k.embedding.present? ? "cached" : nil,
+          superseded_by: Knowledge.find_by(supersedes_id: k.id)&.id,
+          supersedes_chain: chain
+        })
+      end
+    when %r{\A/debug\s+knowledge\s*\z}
+      rows = Knowledge.order(id: :desc).limit(100)
+      puts "(#{rows.size} knowledge row(s), newest first; current=false = superseded)"
+      puts JSON.pretty_generate(rows.map { |k|
+        { id: k.id, content: k.content, current: k.current, location_id: k.location_id,
+          speaker: k.speaker, source_kind: k.source_kind, supersedes_id: k.supersedes_id }
+      })
     when %r{\A/debug\s+elapsed\s*\z}
       ledger = Harness::Timing.turn_ledger
       if ledger.empty?
@@ -965,9 +1005,15 @@ loop do
       puts "  /debug location=<id>      dump that specific location with the same context"
       puts "  /debug eventlog           dump last 100 events, newest first"
       puts "  /debug eventlog >N        dump events with id > N, newest first"
-      puts "  /debug eventlog character=<id>  events involving that character (by character_id or actor_name)"
+      puts "  /debug eventlog character=<id>  events involving that character"
       puts "  /debug elapsed            per-call timings (adapter + subsystem + ms) from the most recent turn"
       puts "  /debug levelup            level up the player one rank (fires picker inline)"
+    end
+    rescue StandardError => e
+      # A debug dump must never kill a live session (the eventlog actor_name
+      # fossil took a whole playthrough down with it).
+      puts "debug command failed: #{e.class}: #{e.message}"
+      puts "  #{e.backtrace&.first}"
     end
     puts
     next

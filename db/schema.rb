@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_09_010000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_09_030000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -54,6 +54,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_010000) do
   create_table "events", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.json "details", default: {}
+    t.text "embedding"
     t.integer "game_time", null: false
     t.integer "location_id"
     t.integer "references_event_id"
@@ -115,6 +116,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_010000) do
     t.string "social_class"
     t.integer "source_id"
     t.string "source_kind"
+    t.string "speaker"
     t.string "subrole"
     t.integer "supersedes_id"
     t.datetime "updated_at", null: false

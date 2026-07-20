@@ -105,6 +105,31 @@ given_male:
   - Tomis
   - Wystan
   - Wilmer
+  - Aldhelm
+  - Aldous
+  - Beorn
+  - Bertram
+  - Cuthbert
+  - Denholm
+  - Deorwin
+  - Eadmer
+  - Ealdred
+  - Eastmund
+  - Godwin
+  - Grimbald
+  - Hengist
+  - Herewald
+  - Hubert
+  - Leofstan
+  - Offa
+  - Osbert
+  - Osric
+  - Sigebert
+  - Swithun
+  - Thurstan
+  - Wilfred
+  - Wulfric
+  - Wyot
 
 given_female:
   - Bess
@@ -123,6 +148,24 @@ given_female:
   - Leofgyth
   - Saewara
   - Cwenild
+  - Aebbe
+  - Aldith
+  - Beornwyn
+  - Bertha
+  - Ceolwyn
+  - Cyneburg
+  - Eanfled
+  - Elfleda
+  - Frideswide
+  - Godgifu
+  - Hereswith
+  - Mildryth
+  - Osgyth
+  - Sigewyn
+  - Sunngifu
+  - Tofa
+  - Winifred
+  - Wulfwyn
 
 family:
   - Ashford

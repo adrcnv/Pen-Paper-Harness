@@ -101,6 +101,7 @@ module Harness
             # any character rows created.
             ::ActiveRecord::Base.transaction do
               character_by_actor_id = materialize_characters(characters_payload, events_payload, location)
+              bake_names!(events_payload, character_by_actor_id)
               event_kwargs          = events_payload.map { |e| to_event_kwargs(e, location, character_by_actor_id) }
               result = ::Harness::Event::BackwardAppender.append(
                 events:     event_kwargs,
@@ -108,6 +109,7 @@ module Harness
                 logger:     logger
               )
             end
+            mirror_into_knowledge(result.events, location, current_game_time)
             return result.events
           rescue ::Harness::Event::BackwardAppender::Rejected => e
             logger.warn { "[Genesis::Generator] cluster rejected for #{location.name}: #{e.reasons.join('; ')}" }
@@ -161,6 +163,32 @@ module Harness
         end
       end
 
+      # GENESIS→KNOWLEDGE MIRROR: founding history is standing communal lore —
+      # the rare instance where an actual event is knowledge too. The event
+      # rows stay participation-gated (their dormant participants recall
+      # them); the town at large knows the STORY via knowledge rows anchored
+      # at the location (Query's up-chain serves every sublocation), which
+      # closes the founding-history-invisible-to-everyone hole without
+      # widening the event gate. game_time is the capture stamp (knowledge is
+      # never temporal). Non-fatal — the events stand alone if this fails.
+      def mirror_into_knowledge(events, location, current_game_time)
+        mirrored = events.count do |ev|
+          content = ev.details.is_a?(::Hash) ? ev.details["summary"].to_s.strip : ""
+          next false if content.empty?
+          ::Knowledge.create!(
+            content:     content,
+            location_id: location.id,
+            current:     true,
+            source_kind: "genesis",
+            game_time:   current_game_time
+          )
+          true
+        end
+        logger.info { "[Genesis::Generator] mirrored #{mirrored}/#{events.size} genesis event(s) into town knowledge for #{location.name}" }
+      rescue StandardError => e
+        logger.warn { "[Genesis::Generator] knowledge mirror failed (events stand alone): #{e.class}: #{e.message}" }
+      end
+
       # Surface a thin slice of regional+ events as flavor context (NOT the
       # validator's after-set — that's BackwardAppender's job). Capped to the
       # tail; this is for the generator's prompt budget, not for correctness.
@@ -212,6 +240,33 @@ module Harness
           )
         end
         out
+      end
+
+      # Bake minted names into the cluster's prose BEFORE commit. The LLM
+      # writes actor-id slugs ("the storm_captain guided…"); participants get
+      # real rows but the slugs stayed in summary/narrative text, making the
+      # lore unattributable downstream — no consumer could connect
+      # "storm_captain" to the minted row, so speakers invented names and the
+      # realizer minted duplicates (the Kaelen cascade). "the <slug>" collapses
+      # to the bare name so the article doesn't strand ("The storm_captain
+      # guided" → "Aelorin Greymantle guided"). The knowledge mirror runs
+      # after commit and inherits the fix.
+      def bake_names!(events_payload, character_by_actor_id)
+        events_payload.each do |e|
+          details = e["details"]
+          next unless details.is_a?(::Hash)
+          %w[summary narrative].each do |key|
+            text = details[key]
+            next unless text.is_a?(String)
+            character_by_actor_id.each do |actor_id, char|
+              slug = actor_id.to_s.strip
+              next if slug.empty? || char.nil?
+              text = text.gsub(/\b[Tt]he\s+#{Regexp.escape(slug)}\b/, char.name)
+                         .gsub(/\b#{Regexp.escape(slug)}\b/, char.name)
+            end
+            details[key] = text
+          end
+        end
       end
 
       def prose_context_for(actor_id, events_payload)

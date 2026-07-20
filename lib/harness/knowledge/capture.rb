@@ -6,17 +6,18 @@ module Harness
     # so the what-did-I-claim judgment is made with the speaker's recall,
     # roster, and thread in view. This class takes that parsed payload and
     # persists it to the RIGHT store:
-    #   - ATTRIBUTE-scoped fact (true of a CLASS or PLACE — "the salt tithe was
-    #     repealed", "form 4-B goes to the strongroom") → the KNOWLEDGE store,
-    #     faceted, read by every matching NPC.
-    #   - PARTICIPATION-scoped fact (a private matter between SPECIFIC named
-    #     parties — "Ingvar owes the counting house") → the EVENTS store, a
-    #     single `personal`-scope event with those parties as participants. Only
-    #     they recall it; `ids_for_holder` never projects a personal event to
-    #     co-locators or the public, so it does NOT leak to the whole town.
-    # The reflection tags each fact with `concerns` (the named parties);
-    # non-empty → events, empty → knowledge. This is what keeps one person's
-    # claim from becoming town doctrine.
+    #   - TEMPORALLY UNBOUND fact (true of a CLASS or PLACE — "the salt tithe
+    #     was repealed", "form 4-B goes to the strongroom") → the KNOWLEDGE
+    #     store, faceted, read by every matching NPC.
+    #   - DATED HAPPENING (a parseable `when` — "the mill burned two winters
+    #     ago") or a private matter between SPECIFIC named parties ("Ingvar
+    #     owes the counting house") → the EVENTS store, a single
+    #     `personal`-scope event owned by the speaker + the named parties.
+    #     Only they recall it; `ids_for_holder` never projects a personal
+    #     event to co-locators or the public, so it does NOT leak town-wide.
+    # `when` decides the temporal axis (dated → event, backdated game_time);
+    # `concerns` decides privacy (named parties → event even undated). This is
+    # what keeps one person's claim from becoming town doctrine.
     #
     # Place granularity is mechanical for now: a "local" fact scopes to the
     # scene's ROOT settlement (town-wide), matching Query's ancestry up-chain so
@@ -60,7 +61,7 @@ module Harness
         places = extract_places(@payload)
         # Show the raw extraction (content + concerns) BEFORE routing/dedup, so
         # calibration is visible: what the razor kept, and where it routed it.
-        facts.each { |f| @logger.info { "[Knowledge::Capture]   extracted: concerns=#{Array(f['concerns']).inspect} :: #{f['content'].to_s[0, 120]}" } }
+        facts.each { |f| @logger.info { "[Knowledge::Capture]   extracted: concerns=#{Array(f['concerns']).inspect} when=#{f['when'].inspect} :: #{f['content'].to_s[0, 120]}" } }
         # People named in dialogue → the Realizer (the SINGLE entity pipe).
         # Realized FIRST, so a fact about a just-minted person can attach to
         # their fresh row (find_character consults @minted_people) — otherwise
@@ -97,13 +98,57 @@ module Harness
 
       private
 
-      # The fork: a fact naming specific parties is participation-scoped (→ an
-      # event those parties own); everything else is attribute-scoped (→ faceted
-      # knowledge). `concerns` is the LLM's entity-extraction — the one judgment
-      # that keeps a private claim out of town-wide knowledge.
+      # The fork, two independent axes:
+      #   TEMPORAL — a parseable `when` means the claim is a dated HAPPENING →
+      #     the events store, game_time backdated. Anything undated or vague
+      #     ("many moons ago") is temporally unbound → knowledge, with the
+      #     vagueness kept in the wording.
+      #   PRIVACY — `concerns` (named parties) keeps a private matter out of
+      #     town-wide knowledge: undated + parties → a personal event at
+      #     current time (a standing private matter).
+      # Events are participation-gated only (they happen to people, not
+      # places); knowledge carries the place/facet levers.
       def route(fact)
         parties = Array(fact["concerns"]).select { |n| n.is_a?(String) && !n.strip.empty? }
-        parties.any? ? write_event(fact, parties) : write_knowledge(fact)
+        happened_at = backdated_time(fact["when"])
+        if happened_at
+          write_event(fact, parties, at: happened_at)
+        elsif parties.any?
+          write_event(fact, parties)
+        else
+          write_knowledge(fact)
+        end
+      end
+
+      # "3 days ago" / "two winters past" / "yesterday" / "last winter" →
+      # absolute game_time (minutes), clamped at 0. Unparseable → nil (the
+      # fact stays temporally unbound and routes to knowledge).
+      UNIT_MINUTES = {
+        "day" => 1_440, "week" => 10_080, "moon" => 43_200, "month" => 43_200,
+        "season" => 129_600, "winter" => 518_400, "summer" => 518_400, "year" => 518_400
+      }.freeze
+      WORD_NUMBERS = {
+        "a" => 1, "an" => 1, "one" => 1, "two" => 2, "three" => 3, "four" => 4, "five" => 5,
+        "six" => 6, "seven" => 7, "eight" => 8, "nine" => 9, "ten" => 10, "twelve" => 12
+      }.freeze
+      WHEN_RE = /\A(?:about\s+|some\s+|nearly\s+|over\s+)?(\d+|#{WORD_NUMBERS.keys.join('|')})\s+(#{UNIT_MINUTES.keys.join('|')})s?\s+(?:ago|past|back)\z/i
+
+      def backdated_time(raw)
+        minutes = when_offset_minutes(raw)
+        return nil unless minutes&.positive?
+        [ @game_time.to_i - minutes, 0 ].max
+      end
+
+      def when_offset_minutes(raw)
+        s = raw.to_s.strip.downcase
+        return nil if s.empty?
+        return UNIT_MINUTES["day"] if s == "yesterday"
+        if (m = s.match(/\Alast\s+(#{UNIT_MINUTES.keys.join('|')})\z/))
+          return UNIT_MINUTES[m[1]]
+        end
+        return nil unless (m = s.match(WHEN_RE))
+        n = WORD_NUMBERS[m[1]] || m[1].to_i
+        n * UNIT_MINUTES[m[2].downcase]
       end
 
       # Structural attribution: `by` is the speaker whose reflection this is —
@@ -263,6 +308,7 @@ module Harness
           min_int:     min_int,
           current:     true,
           source_kind: "conversation",
+          speaker:     @speaker.presence,
           game_time:   @game_time,
           embedding:   (JSON.generate(vec) if vec.present?)
         )
@@ -349,6 +395,10 @@ module Harness
           faction:       old.faction,
           current:       true,
           source_kind:   "conversation",
+          # The REVISER's identity, not the original speaker's — the merged
+          # wording is theirs. The old row keeps its own speaker; the
+          # supersedes_id chain preserves the full provenance trail.
+          speaker:       @speaker.presence,
           game_time:     @game_time,
           supersedes_id: old.id
         )
@@ -361,33 +411,41 @@ module Harness
         @merge_preamble ||= File.read(MERGE_PROMPT_PATH)
       end
 
-      # PARTICIPATION branch — one `personal`-scope event owned by the named
-      # parties. Resolve each name to an EXISTING character in the scene's
-      # settlement; if none resolve, skip (the realizer will handle
-      # nonexistent people in step 4). Unresolved names are kept as prose so
-      # the fact stays legible. Returns the Event, or nil (skipped/duplicate).
-      def write_event(fact, parties)
+      # EVENT branch — one `personal`-scope event, participation-gated only.
+      # Participants: the SPEAKER (the teller owns the memory of what they told
+      # — also what lets the reflection razor see prior tellings) + each
+      # `concerns` name resolved to an EXISTING character in the scene's
+      # settlement. Unresolved names are kept as prose so the fact stays
+      # legible. A dated fact (`at`) is the happening itself, backdated, no
+      # trigger; an undated one is a standing private matter recorded at
+      # current time. Returns the Event, or nil (skipped/duplicate).
+      def write_event(fact, parties, at: nil)
         content = fact["content"].strip
         chars, unresolved = resolve_parties(parties)
+        teller = find_character(@speaker)
+        participants = ([ teller ] + chars).compact.uniq
 
-        if chars.empty?
-          @logger.info { "[Knowledge::Capture] SKIP participation fact — no party resolved #{parties.inspect} (deferred to realizer) :: #{content}" }
+        if participants.empty?
+          @logger.info { "[Knowledge::Capture] SKIP event fact — teller #{@speaker.inspect} unknown, no party resolved #{parties.inspect} :: #{content}" }
           return nil
         end
 
-        return nil if duplicate_event?(content, chars)
+        return nil if duplicate_event?(content, participants)
 
-        details = { "narrative" => { "trigger" => "overheard", "details" => content } }
+        narrative = at ? { "details" => content } : { "trigger" => "overheard", "details" => content }
+        details = { "narrative" => narrative }
         details["concerns_unresolved"] = unresolved if unresolved.any?
 
         event = ::Harness::Event::ForwardAppender.append(
-          game_time:    @game_time,
+          game_time:    at || @game_time,
           scope:        "personal",
           location:     @location,
           details:      details,
-          participants: chars.map { |c| { character: c, role: "subject" } }
+          participants: participants.map { |c|
+            { character: c, role: (c == teller && !chars.include?(c) ? "teller" : "subject") }
+          }
         )
-        @logger.info { "[Knowledge::Capture] event ##{event.id} parties=#{chars.map(&:name).inspect} unresolved=#{unresolved.inspect} :: #{content}" }
+        @logger.info { "[Knowledge::Capture] event ##{event.id}#{at ? " backdated t=#{at}" : ""} parties=#{participants.map(&:name).inspect} unresolved=#{unresolved.inspect} :: #{content}" }
         event
       end
 

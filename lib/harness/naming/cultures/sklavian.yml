@@ -83,6 +83,31 @@ given_male:
   - Borys
   - Cyril
   - Olek
+  - Aleksy
+  - Bogumil
+  - Casimir
+  - Damek
+  - Dobrin
+  - Fyodor
+  - Havel
+  - Janusz
+  - Jarek
+  - Kolya
+  - Krystof
+  - Lubomir
+  - Miron
+  - Mstislav
+  - Pavel
+  - Radek
+  - Rostik
+  - Slavko
+  - Stanek
+  - Svetozar
+  - Tadek
+  - Vseslav
+  - Zbignev
+  - Zdenek
+  - Zoran
 
 given_female:
   - Anya
@@ -101,6 +126,33 @@ given_female:
   - Zora
   - Vesna
   - Danika
+  - Agneska
+  - Bozena
+  - Branka
+  - Darya
+  - Dobrila
+  - Elzbeta
+  - Galina
+  - Hanka
+  - Irenka
+  - Jadwiga
+  - Jarmila
+  - Katya
+  - Magda
+  - Marzena
+  - Milena
+  - Nadya
+  - Oksana
+  - Olga
+  - Radka
+  - Sofya
+  - Svetlana
+  - Sylva
+  - Vanda
+  - Varya
+  - Yelena
+  - Zlata
+  - Zhenya
 
 family:
   - Borescu

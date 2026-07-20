@@ -4,14 +4,16 @@ The dialogue turn is over. You are still the same character. You just said:
 "<<SAID>>"
 
 Now judge YOUR OWN words for the world's records. The dialogue format above no longer applies — no "thought", no "speak". Output ONLY this JSON, beginning with {"facts":
-{"facts": [ {"content": "...", "concerns": ["Name"], "scope": "local"|"world", "min_int": null} ],
+{"facts": [ {"content": "...", "concerns": ["Name"], "scope": "local"|"world", "min_int": null, "when": null} ],
  "people": [ {"name": "...", "subrole": "...", "gist": "...", "at_location": "..."} ],
  "places": [ {"name": "...", "about": "..."} ]}
 
-facts — a HARD CLAIM you just made about the world: a specific, durable truth (who holds a post, a fee, what became of a place). NOT something already in your `knowledge`, your `events`, or said earlier in exchange_so_far — restating what you already knew is not a new fact. NOT opinions, moods, banter, threats, or common know-how. NOT anything about the player or this conversation itself. Write each as one clean self-contained sentence. "concerns": ONLY when the fact is a private matter of specific named people (a debt, a deed, ownership) — list their names; a general truth about the town or a trade → []. "scope": "local" for this settlement, "world" beyond it. "min_int": an integer only for learned lore.
+facts — a HARD CLAIM you just made about the world: a specific, durable truth (who holds a post, a fee, what became of a place). NOT something already in your `knowledge`, your `events`, or said earlier in exchange_so_far — restating what you already knew is not a new fact. NOT opinions, moods, banter, threats, or common know-how. NOT anything about the player or this conversation itself. Write each as one clean self-contained sentence. "concerns": ONLY when the fact is a private matter between the named people (a debt, a deed, ownership) — list their names; a general truth, or the public doings of a known figure → []. "scope": "local" for this settlement, "world" beyond it. "min_int": an integer only for learned lore. "when": only for a happening you dated — how long ago, as "3 days ago" / "2 winters ago"; null for anything undated or vague. With "when" set, leave the time out of the content sentence.
 
 people — a living individual you pointed the player toward or hung a story on — NOT you, NOT in the room (you and others_present already exist). They need an identity — a spoken name or a specific role ("the miller", "my brother in the hills") — plus one concrete thing you attached: where they are, what they did, what they want. A referral with substance is a person; an empty wave at nobody in particular ("go ask around") is not. Missing or sought people count. Describe them as the world would, not as "my brother". Never: the dead, historical figures, gods or crowds, someone you denied knowing, or someone the player invented and you merely echoed — the player asking about a person a speaker introduced does NOT exclude them.
 
 places — a specific place you named that has its own identity or history. Coin a short Capitalized name if you left it unnamed. "about": one or two clauses of what you said about it. Bare generics ("the mill") only if you gave them a name or a history.
+
+Keep the speaker's certainty in everything you record: a hedged, conditional, or accused claim ("maybe", "potentially", "if he accepts", "they say") stays hedged in the fact and in the gist — never harden rumor into fact.
 
 Most lines contain nothing worth recording — empty lists are the normal answer. A person or place given a name and a story is the exception worth catching.

@@ -33,7 +33,9 @@ RSpec.describe Harness::Runners::Conversation do
     calls = 0
     ctx = context_with do |full|
       calls += 1
-      if full.include?("--- RETRY ---")
+      if full.include?("SECOND PASS: WORLD MEMORY")    # post-turn reflection — not under test here
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      elsif full.include?("--- RETRY ---")
         expect(full).to include('"speak" is true but dialogue.prose is missing', '"pro"')
         { "speak" => true, "dialogue" => { "summary" => "greets", "prose" => "Aye, what'll it be?" } }.to_json
       else
@@ -270,8 +272,8 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicing.size).to eq(2)
   end
 
-  describe "knowledge recall (substantive speaker)" do
-    it "recalls a gate-approved fact into the substantive speaker's voicing context" do
+  describe "knowledge recall" do
+    it "recalls a gate-approved fact into the speaker's voicing context" do
       Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
       voicing_prompt = nil
       ctx = context_with do |full|
@@ -330,7 +332,7 @@ RSpec.describe Harness::Runners::Conversation do
       expect(voicing_prompt).not_to include("The salt tithe was repealed")
     end
 
-    it "does not recall (no gate call) when the NPC has no matching knowledge" do
+    it "does not recall (no gate call) when the NPC has no candidates at all" do
       gate_called = false
       ctx = context_with do |full|
         gate_called = true if full.include?("filter stored facts")
@@ -478,6 +480,56 @@ RSpec.describe Harness::Runners::Conversation do
     end
   end
 
+  describe "semantic event recall (both stores ranked by topic)" do
+    # StubLLM + a deterministic embedder: anything mentioning "mill" points
+    # one way, everything else points the other.
+    class EmbeddingStubLLM < StubLLM
+      def embed(input)
+        texts = input.is_a?(Array) ? input : [ input ]
+        vecs  = texts.map { |t| t.to_s.downcase.include?("mill") ? [ 1.0, 0.0 ] : [ 0.0, 1.0 ] }
+        input.is_a?(Array) ? vecs : vecs.first
+      end
+    end
+
+    def event_for(char, text, at:)
+      ev = Event.create!(game_time: at, scope: "personal", location: tavern,
+                         details: { "narrative" => { "trigger" => "memory", "details" => text } })
+      EventParticipant.create!(event: ev, character: char, role: "actor")
+      ev
+    end
+
+    it "surfaces an on-topic memory from beyond the recency window and backfills its embedding" do
+      Knowledge.create!(content: "The town mill ground to a halt years ago.", location_id: tavern.id, current: true, game_time: 0)
+      old_mill = event_for(barkeep, "The mill wheel shattered in the spring flood.", at: 50)
+      10.times { |i| event_for(barkeep, "Uneventful shift number #{i}.", at: 1_000 + i) }
+
+      voicing_prompt = nil
+      llm = EmbeddingStubLLM.new do |full|
+        if full.include?("SECOND PASS: WORLD MEMORY")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        elsif full.include?("filter stored facts")
+          # ONE ranked pool: the mill fact and mill memory tie at the top in
+          # either order — approve both
+          { "relevant" => [ 1, 2 ] }.to_json
+        else
+          voicing_prompt = full
+          { "speak" => true, "dialogue" => { "summary" => "recalls", "prose" => "Tomas sighs." } }.to_json
+        end
+      end
+      ctx = Harness::Turn::Context.new(player_location: tavern, llm_nuance: llm, game_time: 2_000)
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "what happened to the mill?", step: step)
+
+      # The old memory beat 10 newer noise events into the voicing payload…
+      expect(voicing_prompt).to include("The mill wheel shattered in the spring flood.")
+      # …stamped with relative time computed from game_time (50 → 2000 ≈ a day)…
+      expect(voicing_prompt).to include("(yesterday)")
+      # …and its vector was persisted for next time.
+      expect(old_mill.reload.embedding).to be_present
+    end
+  end
+
   describe "knowledge reflection (per-speaker capture)" do
     it "writes a fact the speaker's reflection reports" do
       ctx = context_with do |full|
@@ -497,9 +549,33 @@ RSpec.describe Harness::Runners::Conversation do
       expect(Knowledge.last.content).to match(/salt tithe/)
     end
 
-    it "drops a reflection that answered in the DIALOGUE schema instead of ingesting it" do
+    it "bounces a DIALOGUE-schema reflection once and ingests the corrected answer" do
+      reflection_calls = 0
       ctx = context_with do |full|
-        if full.include?("SECOND PASS: WORLD MEMORY")   # schema collision: model re-voiced
+        if full.include?("--- RETRY ---")               # the correction bounce
+          expect(full).to include("answered in DIALOGUE schema")
+          { "facts" => [ { "content" => "Eli works the crab pots by the shed.", "concerns" => [], "scope" => "local" } ] }.to_json
+        elsif full.include?("SECOND PASS: WORLD MEMORY") # schema collision: model re-voiced
+          reflection_calls += 1
+          { "thought" => "…", "speak" => true, "dialogue" => { "summary" => "repeats", "prose" => "As I said." } }.to_json
+        elsif full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "There's a lad named Eli by the shed." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      expect {
+        described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
+      }.to change(Knowledge, :count).by(1)
+      expect(Knowledge.last.content).to match(/crab pots/)
+      expect(reflection_calls).to eq(1)
+    end
+
+    it "drops the claims when the reflection bounce also fails (no infinite loop)" do
+      ctx = context_with do |full|
+        if full.include?("SECOND PASS: WORLD MEMORY")   # collision on BOTH attempts (retry contains this too)
           { "thought" => "…", "speak" => true, "dialogue" => { "summary" => "repeats", "prose" => "As I said." } }.to_json
         elsif full.include?("filter stored facts")
           { "relevant" => [] }.to_json
@@ -623,6 +699,34 @@ RSpec.describe Harness::Runners::Conversation do
       say = @outcome.tool_calls.find { |t| t["name"] == "propose_event" && t.dig("result", "staged") }
       actor_ids = say.dig("args", "participants").select { |p| p["role"] == "actor" }.map { |p| p["character_id"] }
       expect(actor_ids).to eq([ new_id ]) # the recruit speaks, not the barkeep
+    end
+
+    it "reflects the debut line under the minted identity (no intake hole on promotion)" do
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+        llm_nuance: StubLLM.new { |full|
+          if full.include?("SECOND PASS: WORLD MEMORY")
+            { "facts" => [ { "content" => "The garrison marches at dawn.", "concerns" => [] } ],
+              "people" => [], "places" => [] }.to_json
+          elsif full.include?(recruit_desc)
+            { "speak" => true, "subrole" => "recruit",
+              "dialogue" => { "summary" => "blurts it out", "prose" => "We march at dawn, all of us." } }.to_json
+          else
+            { "speak" => false }.to_json
+          end
+        })
+      ctx.active_scene = Harness::Scene::Active.new(
+        location: tavern,
+        snapshot: Harness::Scene::Assembler.for(location: tavern),
+        extras: [ recruit_desc ]
+      )
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      expect {
+        described_class.new.run(context: ctx, scene: scene, input: "talk to the recruit", step: step("address the recruit"))
+      }.to change(Knowledge, :count).by(1)
+
+      minted = Npc.order(:id).last
+      expect(Knowledge.last.speaker).to eq(minted.name) # attributed to the promoted row, not "extra#0"
     end
 
     it "never polls an UNADDRESSED ambient extra (a horse doesn't fill a speaker slot or get minted)" do

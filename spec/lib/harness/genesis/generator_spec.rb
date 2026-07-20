@@ -74,6 +74,42 @@ RSpec.describe Harness::Genesis::Generator do
     }.to change(Event, :count).by(2)
   end
 
+  it "bakes minted names over actor-id slugs in event prose AND the mirrored knowledge (the Kaelen cascade)" do
+    cluster = {
+      "characters" => [ { "id" => "storm_captain", "subrole" => "captain" } ],
+      "events" => [
+        { "game_time" => 100, "scope" => "local",
+          "details" => { "summary" => "The storm_captain negotiates a trade pact.",
+                         "narrative" => "A squall stranded a vessel; the storm_captain guided it to safe mooring." },
+          "participants" => [ { "actor_id" => "storm_captain", "role" => "benefactor" } ] }
+      ]
+    }.to_json
+    llm = stub_call_returning(cluster, consistent_validator_json)
+
+    out = described_class.new(llm_client: llm, logger: logger).generate(location: hollowmere, anchor: saltmere, current_game_time: 1000)
+
+    captain = Character.find_by(subrole: "captain")
+    expect(captain).to be_present
+    ev = out.first
+    expect(ev.details["summary"]).to eq("#{captain.name} negotiates a trade pact.")
+    expect(ev.details["narrative"]).to eq("A squall stranded a vessel; #{captain.name} guided it to safe mooring.")
+    expect(Knowledge.last.content).to eq("#{captain.name} negotiates a trade pact.")
+  end
+
+  it "mirrors each committed event's summary into town-anchored knowledge (founding lore)" do
+    llm = stub_call_returning(well_formed_cluster_json, consistent_validator_json)
+
+    expect {
+      described_class.new(llm_client: llm, logger: logger).generate(location: hollowmere, anchor: saltmere, current_game_time: 1000)
+    }.to change(Knowledge, :count).by(2)
+
+    k = Knowledge.order(:id).last(2)
+    expect(k.map(&:content)).to contain_exactly("founded", "shrine raised")
+    expect(k.map(&:location_id)).to all(eq(hollowmere.id)) # town-wide via the up-chain
+    expect(k.map(&:source_kind)).to all(eq("genesis"))
+    expect(k.map(&:game_time)).to all(eq(1000)) # capture stamp, not the event's past date
+  end
+
   it "eager-spawns one dormant class-4 row per characters[] entry, with a mechanical name" do
     llm = stub_call_returning(well_formed_cluster_json, consistent_validator_json)
 

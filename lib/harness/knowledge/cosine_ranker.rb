@@ -57,7 +57,7 @@ module Harness
         missing.zip(Array(vecs)).each do |row, vec|
           next if vec.nil? || vec.empty?
           row.update_column(:embedding, JSON.generate(vec)) # cache write: skip callbacks/timestamps
-          @cache[row.id] = vec
+          @cache[cache_key(row)] = vec
         end
       end
 
@@ -65,12 +65,20 @@ module Harness
         stored_vector(row) || []
       end
 
+      # Cache key carries the model class: one ranker instance now ranks BOTH
+      # stores (knowledge rows and event rows), and bare ids collide across
+      # tables (Knowledge#1 vs Event#1 — the mill-memory bug).
+      def cache_key(row)
+        [ row.class.name, row.id ]
+      end
+
       def stored_vector(row)
-        return @cache[row.id] if @cache.key?(row.id)
+        key = cache_key(row)
+        return @cache[key] if @cache.key?(key)
         raw = row.embedding
-        @cache[row.id] = (raw.nil? || raw.to_s.strip.empty? ? nil : JSON.parse(raw))
+        @cache[key] = (raw.nil? || raw.to_s.strip.empty? ? nil : JSON.parse(raw))
       rescue JSON::ParserError
-        @cache[row.id] = nil
+        @cache[key] = nil
       end
 
       # True cosine — correct whether or not the server pre-normalizes; cheap

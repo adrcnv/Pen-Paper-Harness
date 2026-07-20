@@ -32,4 +32,38 @@ class Event < ApplicationRecord
   scope :queryable, -> {
     where("json_extract(details, '$.mutation') IS NULL AND json_extract(details, '$.award_xp') IS NULL")
   }
+
+  # Flattened human-readable line for semantic recall — the same flattening
+  # Runners::Conversation#event_text applies to a query_events row, computed
+  # from the row itself.
+  def recall_text
+    d = details.is_a?(Hash) ? details : {}
+    narr = d["narrative"]
+    text =
+      if narr.is_a?(Hash)
+        [ narr["trigger"], narr["details"] ].compact.reject { |s| s.to_s.empty? }.join(" — ")
+      else
+        d["summary"] || d["details"] || d["trigger"] || ""
+      end
+    text.to_s
+  end
+
+  # The ranker contract (#content), so Knowledge::CosineRanker can
+  # rank/backfill events exactly like knowledge rows (the `embedding` column
+  # caches the vector). Substance WITHOUT the trigger framing: knowledge
+  # embeds as clean declaratives, and a systematic "overheard — " prefix on
+  # every event is a format offset the compressed cosine band can't afford —
+  # both stores must embed in the same register.
+  def embed_text
+    d = details.is_a?(Hash) ? details : {}
+    narr = d["narrative"]
+    text =
+      if narr.is_a?(Hash)
+        narr["details"].to_s.strip.empty? ? narr["trigger"] : narr["details"]
+      else
+        d["summary"] || d["details"] || d["trigger"] || ""
+      end
+    text.to_s
+  end
+  alias_method :content, :embed_text
 end

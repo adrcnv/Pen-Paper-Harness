@@ -85,6 +85,26 @@ given_male:
   - Yorvel
   - Zarvian
   - Cael
+  - Aldaren
+  - Berion
+  - Corvael
+  - Daelor
+  - Eryndel
+  - Galathil
+  - Haelon
+  - Ithrel
+  - Kaelen
+  - Lethor
+  - Maeron
+  - Nyvar
+  - Orist
+  - Peryndor
+  - Ravael
+  - Sylvaren
+  - Taeral
+  - Vaeron
+  - Yathil
+  - Zorvath
 
 given_female:
   - Maerith
@@ -103,6 +123,22 @@ given_female:
   - Vaela
   - Elaeth
   - Maelyn
+  - Amriel
+  - Delyth
+  - Elenwe
+  - Elowen
+  - Faelith
+  - Ilyrra
+  - Lunareth
+  - Mirelle
+  - Naevys
+  - Nesryn
+  - Orithel
+  - Riavel
+  - Thalindra
+  - Wenriel
+  - Ysolde
+  - Zephira
 
 family:
   - Aurinvale

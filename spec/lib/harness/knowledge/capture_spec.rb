@@ -22,6 +22,7 @@ RSpec.describe Harness::Knowledge::Capture do
       k = Knowledge.last
       expect(k.content).to eq("The salt tithe was repealed last winter.")
       expect(k.source_kind).to eq("conversation")
+      expect(k.speaker).to eq("Tomas") # provenance — which mouth this came out of
       expect(k.game_time).to eq(100)
       expect(k.current).to be(true)
     end
@@ -91,6 +92,65 @@ RSpec.describe Harness::Knowledge::Capture do
       expect {
         capture(facts("content" => "ingvar owes forty marks.", "concerns" => [ "Ingvar Ingvarson" ]))
       }.not_to change(Event, :count)
+    end
+
+    it "adds the speaker as teller when their row exists" do
+      tomas  = Npc.create!(name: "Tomas", location: tavern)
+      ingvar = Npc.create!(name: "Ingvar Ingvarson", location: city)
+      capture(facts("content" => "Ingvar owes forty marks.", "concerns" => [ "Ingvar Ingvarson" ]))
+      ev = Event.last
+      expect(ev.participants).to contain_exactly(tomas, ingvar)
+      expect(ev.event_participants.find_by(character: tomas).role).to eq("teller")
+      expect(ev.event_participants.find_by(character: ingvar).role).to eq("subject")
+    end
+  end
+
+  describe "temporal routing (when)" do
+    it "routes a dated happening to a backdated event owned by the teller, no trigger" do
+      tomas = Npc.create!(name: "Tomas", location: tavern)
+      expect {
+        capture(facts("content" => "The mill wheel shattered in the spring flood.", "when" => "3 days ago"),
+                game_time: 20_000)
+      }.to change(Event, :count).by(1)
+      expect(Knowledge.count).to eq(0)
+
+      ev = Event.last
+      expect(ev.scope).to eq("personal")
+      expect(ev.game_time).to eq(20_000 - 3 * 1_440)
+      expect(ev.participants).to eq([ tomas ])
+      expect(ev.details.dig("narrative", "trigger")).to be_nil
+      expect(ev.details.dig("narrative", "details")).to match(/mill wheel/)
+    end
+
+    it "parses word numbers and year-units, clamping at time zero" do
+      Npc.create!(name: "Tomas", location: tavern)
+      capture(facts("content" => "The old granary burned down.", "when" => "two winters ago"), game_time: 100)
+      expect(Event.last.game_time).to eq(0) # 100 - 2 years clamps
+    end
+
+    it "routes a vague past ('many moons ago') to knowledge, wording intact" do
+      Npc.create!(name: "Tomas", location: tavern)
+      expect {
+        capture(facts("content" => "The river shifted its course many moons ago.", "when" => "many moons ago"))
+      }.to change(Knowledge, :count).by(1)
+      expect(Event.count).to eq(0)
+    end
+
+    it "combines when + concerns: teller and party both own the backdated event" do
+      tomas  = Npc.create!(name: "Tomas", location: tavern)
+      ingvar = Npc.create!(name: "Ingvar Ingvarson", location: city)
+      capture(facts("content" => "Ingvar lost his boat in the storm.",
+                    "concerns" => [ "Ingvar" ], "when" => "yesterday"), game_time: 20_000)
+      ev = Event.last
+      expect(ev.game_time).to eq(20_000 - 1_440)
+      expect(ev.participants).to contain_exactly(tomas, ingvar)
+    end
+
+    it "skips a dated fact when neither teller nor any party resolves" do
+      expect {
+        capture(facts("content" => "The bridge collapsed.", "when" => "4 days ago"))
+      }.not_to change(Event, :count)
+      expect(Knowledge.count).to eq(0)
     end
   end
 

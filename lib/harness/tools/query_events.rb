@@ -82,30 +82,24 @@ module Harness
       # The "what could this character plausibly know" filter — direct
       # participation + scope projection. Mirrors what the deprecated
       # Belief::PreFilter did, surfaced as a tool argument now that there's
-      # no separate belief read path.
-      def ids_for_holder(holder)
+      # no separate belief read path. Class-level so the conversation
+      # runner's semantic event recall can reuse the exact same knowability
+      # rule without constructing the tool.
+      def self.knowable_ids(holder)
         participant_ids = ::EventParticipant.where(character_id: holder.id).pluck(:event_id)
         scope_ids       = ::Event.where(scope: PROJECTING_SCOPES).pluck(:id)
-        local_ids       = local_knowledge_ids(holder)
+        local_ids       = holder.location_id ? ::Event.where(scope: "local", location_id: holder.location_id).pluck(:id) : []
         participant_ids | scope_ids | local_ids
       end
 
-      # SHARE — widen "knowing": a `local`-scope event at a place is, by the
-      # meaning of the scope, known to people THERE, not only its direct
-      # participants. So a holder also knows local events at their current
-      # location. This is the discovery-surface engine — ask around at the
-      # destination and the locals know what happened there (including a claimed
-      # person's arrival, which SocialWeb writes as local awareness events).
-      #
-      # Widens KNOWING only. Whether the NPC DIVULGES stays gated by the
-      # conversation prompt (public history shared freely, sensitive behind a
-      # resolve check) — knowing is not telling. Newest-first + the query limit
-      # bound the volume; nothing is pushed or stored.
-      def local_knowledge_ids(holder)
-        loc_id = holder.location_id
-        return [] unless loc_id
-        ::Event.where(scope: "local", location_id: loc_id).pluck(:id)
+      def ids_for_holder(holder)
+        self.class.knowable_ids(holder)
       end
+
+      # (local-event widening notes live on knowable_ids above: a `local`-scope
+      # event at a place is known to people THERE — the SHARE discovery engine.
+      # Widens KNOWING only; divulging stays gated in the conversation prompt.
+      # EXACT location match on purpose — venue events must not leak town-wide.)
 
       def event_hash(e)
         {
