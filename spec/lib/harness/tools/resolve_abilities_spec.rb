@@ -28,7 +28,9 @@ RSpec.describe "Harness::Tools::Resolve — ability mode" do
           "difficulty" => "easy",
           "uses_per_rest"  => 5,
           "uses_remaining" => 5,
-          "effect_kind"    => "buff",
+          # utility, not buff: buffs auto-succeed (no roll) since the effects
+          # build — this fixture exists to exercise the unopposed ROLL path.
+          "effect_kind"    => "utility",
           "tags" => [ "arcane", "utility" ]
         }
       ]

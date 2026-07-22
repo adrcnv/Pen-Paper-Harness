@@ -315,6 +315,14 @@ RSpec.describe Harness::Turn::Loop do
       expect(loop_obj.send(:other_narratable?, [ { "name" => "transition" } ])).to be(true)
     end
 
+    it "keeps a contest-tagged resolve inside the dialogue-only skip (untagged resolves still narrate)" do
+      contest = resolve.merge("contest" => true)
+      expect(loop_obj.send(:other_narratable?, [ staged, contest ])).to be(false)
+      # The bracket line still renders — only the model call is skipped.
+      out = loop_obj.send(:compose_narration, "", [ contest, staged ])
+      expect(out).to eq("[press — Charisma 15 vs 10: success]\n\nBess doesn't stop moving. 'I just pour the ale, sir.'")
+    end
+
     it "hides the staged words from the model, leaving a marker" do
       out = loop_obj.send(:sanitize_tool_calls_for_narration, [ staged ])
       expect(out.first.dig("args", "details")).to eq(described_class::STAGED_DIALOGUE_MARKER)

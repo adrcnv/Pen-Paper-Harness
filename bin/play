@@ -614,6 +614,12 @@ loop do
       puts "  HP:     #{p.current_hp}/#{p.max_hp}"
       puts "  coins:  #{p.coins}"
       puts "  stats:  STR=#{p.strength}  DEX=#{p.dexterity}  CON=#{p.constitution}  INT=#{p.intelligence}  WIS=#{p.wisdom}  CHA=#{p.charisma}"
+      now = SessionState.current&.game_time.to_i
+      fx  = Harness::Character::ActiveEffects.active_for(p, now: now)
+      if fx.any?
+        puts "  effects:"
+        fx.each { |e| puts "    #{e['name']}  (#{[ e['expires_at'].to_i - now, 0 ].max} min left)" }
+      end
       abilities = Array(p.abilities)
       if abilities.empty?
         puts "  abilities: (none — basic attacks only at this level)"

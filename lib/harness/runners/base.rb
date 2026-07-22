@@ -77,6 +77,28 @@ module Harness
         Outcome.new(tool_calls: tool_calls, scene_dirty: false, status: :redispatch, note: note)
       end
 
+      # Present-roster lookup, first-token tolerant ("Dobrila" matches
+      # "Dobrila Drozdov"). Shared by the contest binding (conversation) and
+      # the cast runner.
+      def find_present(present, name)
+        n = name.to_s.strip.downcase
+        return nil if n.empty?
+        Array(present).find do |c|
+          cn = c["name"].to_s.strip.downcase
+          cn == n || cn.split(/\s+/).first == n || cn.split(/\s+/).first == n.split(/\s+/).first
+        end
+      end
+
+      # Bind a model-emitted ability reference to one the player actually owns
+      # (id or name, space/underscore-insensitive). Unowned/absent → nil.
+      def player_ability(player, ref)
+        r = ref.to_s.strip.downcase.tr(" ", "_")
+        return nil if r.empty?
+        Array(player.abilities).find do |a|
+          a["id"].to_s.downcase == r || a["name"].to_s.strip.downcase.tr(" ", "_") == r
+        end
+      end
+
       # Promote an ambient `extra` (a `present_extras` description string) into a
       # real Npc so a runner can target it. The weak model cannot act on a
       # nameless figure — `present_characters` is the only thing a structured-

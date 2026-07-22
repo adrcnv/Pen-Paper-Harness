@@ -133,6 +133,7 @@ module Harness
         "present_items"       => world["present_items"] || [],
         "nearby_locations"    => world["nearby_locations"] || [],
         "travel_destinations" => world["travel_destinations"] || [],
+        "player_abilities"    => world["player_abilities"] || [],
         "recent_history"      => world["recent_history"] || []
       }
       "INPUT:\n#{JSON.pretty_generate(payload)}"
@@ -168,8 +169,15 @@ module Harness
         "present_items"       => present_items,
         "nearby_locations"    => nearby_locations(loc),
         "travel_destinations" => travel_destinations(loc),
+        "player_abilities"    => player_abilities,
         "recent_history"      => recent_history
       }
+    end
+
+    # Ability ids/names only — enough for the planner to bind a cast into a
+    # step's check args ("cast charm word on her" → ability: charm_word).
+    def player_abilities
+      Array(::Player.first&.abilities).map { |a| { "id" => a["id"], "name" => a["name"] } }
     end
 
     # OTHER settlements on the world map — top-level, coordinate-anchored places

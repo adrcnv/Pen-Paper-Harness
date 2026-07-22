@@ -35,6 +35,25 @@ module Harness
           50 * n * (n - 1)
         end
 
+        # XP for a successful NON-COMBAT check. Risk is priced by the DC
+        # (trivial/easy pay nothing — mundane rolls can't be farmed for
+        # progression); "clever" is priced by the SITUATIONAL roll_modifier
+        # the caller already assigned for player tactical creativity (see
+        # resolve's roll_modifier schema) — never by a fresh LLM judgment.
+        # Opposed checks (no DC — beating a live opponent's roll) pay the
+        # hard-tier rate.
+        CHECK_XP = {
+          "trivial" => 0, "easy" => 0, "moderate" => 5, "hard" => 15, "very_hard" => 30
+        }.freeze
+        OPPOSED_CHECK_XP       = 15
+        CLEVER_BONUS_PER_POINT = 3
+
+        def for_check(difficulty:, opposed: false, situational_modifier: 0)
+          base = opposed ? OPPOSED_CHECK_XP : CHECK_XP.fetch(difficulty.to_s, 0)
+          return 0 if base.zero?
+          base + situational_modifier.to_i.clamp(0, 5) * CLEVER_BONUS_PER_POINT
+        end
+
         # XP awarded for downing one character at victim_level when the
         # killer is at killer_level. Returns at least 1 (a kill is a kill;
         # symbolic XP for trivial fights so the counter still moves).

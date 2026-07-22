@@ -175,12 +175,20 @@ module Harness
         # library authors set it; trust the YAML).
         item_modifier = (item&.properties || {})["roll_modifier"].to_i
         situational   = args["roll_modifier"].is_a?(Integer) ? args["roll_modifier"].clamp(-5, 5) : 0
-        roll_modifier = item_modifier + situational
+        # An ability may carry an innate check bonus (library.yml
+        # roll_modifier) — what makes a cast charm stronger than bare
+        # persuasion. Not clamped (library-authored) and not counted as
+        # player creativity by check XP (that reads `situational` only).
+        # Live spell effects (Bless +2, Dread Aura -2) add their flat
+        # roll modifiers the same way.
+        innate        = ability ? ability["roll_modifier"].to_i : 0
+        spell_mod     = ::Harness::Character::ActiveEffects.roll_modifier(actor, now: context.game_time)
+        roll_modifier = item_modifier + situational + innate + spell_mod
 
         # Item-modifier rollup: every owned item with a stat-add modifier
         # for this check's stat contributes. e.g., a +1 STR sword bumps
         # the actor's effective STR for an attack roll.
-        actor_stat_value = actor.stat(stat) + ::Harness::Items::Modifiers.stat_bonus(actor, stat)
+        actor_stat_value = actor.stat(stat) + ::Harness::Items::Modifiers.stat_bonus(actor, stat, now: context.game_time)
 
         # Phase: on_attack_roll. Items can set crit_threshold_mod or
         # force_critical here. The outcome hash is the carrier — handlers
@@ -191,7 +199,8 @@ module Harness
           actor:   actor,
           target:  target,
           ability: ability,
-          outcome: attack_outcome
+          outcome: attack_outcome,
+          now:     context.game_time
         )
 
         # Dice modes:
@@ -200,12 +209,19 @@ module Harness
         # - stat-only: opposed if target present, else unopposed
         effective_target_stat = target && target_stat ? target.stat(target_stat) : nil
 
-        outcome = ::Harness::Dice.check(
-          actor_stat:    actor_stat_value,
-          target_stat:   effective_target_stat,
-          difficulty:    difficulty,
-          roll_modifier: roll_modifier
-        )
+        # Buffs and heals don't roll: casting on yourself or a willing ally
+        # is uncontested — a die there is pure downside (absurd failure +
+        # a check-XP button). Debuff/control/damage roll normally.
+        outcome = if ability && %w[buff heal].include?(ability["effect_kind"])
+          ::Harness::Dice::Outcome.new(result: "success", margin: "decisive", critical: false)
+        else
+          ::Harness::Dice.check(
+            actor_stat:    actor_stat_value,
+            target_stat:   effective_target_stat,
+            difficulty:    difficulty,
+            roll_modifier: roll_modifier
+          )
+        end
 
         # auto_succeed_check: if an item provided a one-shot guaranteed crit
         # this attack, override the dice outcome.
@@ -244,7 +260,8 @@ module Harness
             target:   target,
             ability:  ability,
             damage:   damage,
-            outcome:  dealt_outcome
+            outcome:  dealt_outcome,
+            now:      context.game_time
           )
           damage += dealt_outcome[:damage_modifier].to_i
 
@@ -258,7 +275,8 @@ module Harness
             target:   actor,
             ability:  ability,
             damage:   damage,
-            outcome:  taken_outcome
+            outcome:  taken_outcome,
+            now:      context.game_time
           )
           damage = [ damage + taken_outcome[:damage_modifier].to_i, 0 ].max
 
@@ -274,7 +292,8 @@ module Harness
               target:   actor,
               ability:  ability,
               damage:   damage,
-              outcome:  lethal_outcome
+              outcome:  lethal_outcome,
+              now:      context.game_time
             )
           end
 
@@ -304,7 +323,8 @@ module Harness
               target:   target,
               ability:  ability,
               damage:   damage,
-              outcome:  kill_outcome
+              outcome:  kill_outcome,
+              now:      context.game_time
             )
             # Death-loot: detach the deceased's items and anchor them to
             # the location for pickup. Coins stay on the corpse — looted
@@ -342,6 +362,49 @@ module Harness
           xp_award = ::Harness::Character::XP.award!(actor, xp_amount)
         end
 
+        # Check XP: a successful non-combat check pays out by difficulty tier;
+        # the positive SITUATIONAL modifier (the runner's own record of player
+        # tactical creativity) pays a bonus on top. Combat pays through kills
+        # only — no per-swing drip — and damage abilities are combat's
+        # vocabulary wherever they fire, so they never earn check XP.
+        if xp_award.nil? && actor.is_a?(::Player) &&
+           %w[success critical_success].include?(outcome.result) &&
+           !context.active_scene&.in_combat? &&
+           !(ability && %w[damage buff heal].include?(ability["effect_kind"]))
+          amount = ::Harness::Character::XP.for_check(
+            difficulty:           difficulty,
+            opposed:              !effective_target_stat.nil?,
+            situational_modifier: situational
+          )
+          xp_award = ::Harness::Character::XP.award!(actor, amount) if amount.positive?
+        end
+
+        # EFFECT APPLICATION — the non-damage half of the library comes
+        # alive: on a successful cast the ability's authored `effect:` block
+        # lands on the recipient as a timed active_effect (buff → target or
+        # self, debuff → target), and heal rolls its dice into current_hp.
+        # Abilities without a block (utility, unwired buffs) stay prose.
+        effect_applied = nil
+        healed = nil
+        if ability && %w[success critical_success].include?(outcome.result)
+          case ability["effect_kind"]
+          when "buff", "debuff"
+            recipient = ability["effect_kind"] == "debuff" ? target : (target || actor)
+            if recipient && ability["effect"].is_a?(::Hash)
+              entry = ::Harness::Character::ActiveEffects.apply!(recipient, ability: ability, now: context.game_time)
+              effect_applied = entry && { "name" => entry["name"], "on" => recipient.name, "expires_at" => entry["expires_at"] }
+            end
+          when "heal"
+            recipient = target || actor
+            if recipient && ability["damage_dice"]
+              rolled = ::Harness::Abilities::DiceFormula.roll_ability(ability: ability, caster_level: actor.level)
+              new_hp = [ recipient.current_hp.to_i + rolled, recipient.max_hp.to_i ].min
+              healed = new_hp - recipient.current_hp.to_i
+              recipient.update!(current_hp: new_hp)
+            end
+          end
+        end
+
         # Use-count writeback: any successful CALL of an ability spends a use
         # (failure still costs the action, matching D&D-shape spell-slot
         # economy where a missed Fireball still expended the slot). Errors
@@ -361,6 +424,8 @@ module Harness
           "target_stat"  => target ? target_stat : nil,
           "roll_modifier" => roll_modifier != 0 ? roll_modifier : nil,
           "ability_name" => ability&.dig("name"),
+          "effect_applied" => effect_applied,
+          "healed"       => healed && healed > 0 ? healed : nil,
           "damage"       => damage > 0 ? damage : nil,
           "target_hp"    => target ? "#{target.reload.current_hp}/#{target.max_hp}" : nil,
           "target_downed" => target && target.reload.properties.is_a?(Hash) && target.properties["stance"] == "downed",

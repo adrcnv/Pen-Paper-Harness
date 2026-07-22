@@ -38,7 +38,29 @@
 #   uses_per_rest:     int; replenished by pass_time(intent: rest|sleep)
 #   stat:              optional LOCK; absent = use class.primary_stat
 #   opposed_by:        target stat for opposed checks; absent = unopposed (use difficulty)
+#   roll_modifier:     optional innate check bonus — what makes a CAST ability
+#                      mechanically stronger than the bare-stat attempt (a
+#                      charm beats plain persuasion or it isn't worth a use)
+#   effect:            optional block for buff/debuff kinds — what a successful
+#                      cast LANDS on the recipient as a timed active_effect
+#                      (Character::ActiveEffects). Same vocabulary as item
+#                      magic: `modifiers` (stat adds), `roll_modifier` (flat,
+#                      bearer's checks), `effects` (TriggerRegistry entries),
+#                      `duration_minutes` (default 30). No block = prose-only
+#                      (utility posture); buffs the vocabulary can't express
+#                      stay unwired rather than mis-wired.
 #   difficulty:        unopposed DC tier; absent = unopposed default "moderate"
+#   atoms:             optional hand-authored mutation-atom block (Spells::Atoms
+#                      vocabulary) committed on a successful cast — the stage-2
+#                      wire format; lets a spell do things the effect vocabulary
+#                      can't (alter places, mint items, summon beings, ...)
+#   atoms_narrative:   one-line prose for the atoms' composite event
+#   compose:           true = first successful cast binds description prose to a
+#                      target-agnostic atom block (Spells::Composer) and caches
+#                      it on the caster's ability row; replays mechanically after
+#   volatile:          true = re-composed EVERY cast from the caster's worded
+#                      intent + the target's full sheet; never cached, never the
+#                      same twice (wish-class)
 #   tags:              array of free-text descriptors
 
 # ====================== FIGHTER ======================
@@ -67,6 +89,11 @@
   damage_dice: null
   damage_per_level: null
   range: self
+  effect:
+    duration_minutes: 10
+    effects:
+      - trigger: damage_resist
+        params: { amount: 2, type: null }
   area: self
   uses_per_rest: 3
   difficulty: easy
@@ -309,6 +336,21 @@
   opposed_by: constitution
   tags: [arcane, force, legendary, finisher]
 
+- id: wish
+  name: "Wish"
+  description: "Speaks a desire aloud and the world strains to oblige. The obliging is literal-minded, and no two castings resolve alike."
+  classes: [mage, sorcerer]
+  min_level: 13
+  effect_kind: utility
+  damage_dice: null
+  damage_per_level: null
+  range: near
+  area: null
+  uses_per_rest: 1
+  difficulty: very_hard
+  volatile: true
+  tags: [arcane, legendary, chaos]
+
 # ====================== SORCERER ======================
 
 - id: wild_surge
@@ -338,6 +380,7 @@
   uses_per_rest: 2
   stat: charisma
   opposed_by: wisdom
+  roll_modifier: 3
   tags: [charm, social]
 
 - id: sway_crowd
@@ -396,6 +439,9 @@
   uses_per_rest: 2
   stat: charisma
   opposed_by: wisdom
+  effect:
+    duration_minutes: 30
+    roll_modifier: -2
   tags: [fear, area, debuff]
 
 - id: manaburn
@@ -485,6 +531,9 @@
   uses_per_rest: 3
   stat: wisdom
   difficulty: easy
+  effect:
+    duration_minutes: 30
+    roll_modifier: 2
   tags: [divine, buff, ally]
 
 - id: discern_truth
@@ -515,6 +564,15 @@
   uses_per_rest: 2
   stat: wisdom
   difficulty: moderate
+  atoms:
+    - kind: alter_location
+      alteration: "this ground is consecrated — sanctified to the cleric's god; the unaligned find the air heavy"
+    - kind: timed_effect
+      who: caster
+      name: "Sanctified Ground"
+      duration_minutes: 60
+      roll_modifier: 1
+  atoms_narrative: "The ground takes the blessing and holds it; the air goes still."
   tags: [divine, area, buff]
 
 - id: spirit_lash
@@ -812,6 +870,7 @@
   uses_per_rest: 1
   stat: wisdom
   difficulty: moderate
+  compose: true
   tags: [nature, summon, buff]
 
 - id: storm_of_arrows

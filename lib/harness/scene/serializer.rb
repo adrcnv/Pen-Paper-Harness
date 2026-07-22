@@ -26,7 +26,8 @@ module Harness
           "initiative_cooldown"  => active.initiative_cooldown,
           "last_initiator"       => active.last_initiator,
           "spoken_ids"           => active.spoken_ids || [],
-          "last_lines"           => active.last_lines || {}
+          "last_lines"           => active.last_lines || {},
+          "contest_ledger"       => active.contest_ledger || {}
         }
       end
 
@@ -46,7 +47,8 @@ module Harness
           initiative_cooldown:  data["initiative_cooldown"],
           last_initiator:       data["last_initiator"],
           spoken_ids:           Array(data["spoken_ids"]).map(&:to_i),
-          last_lines:           int_keyed(data["last_lines"])
+          last_lines:           int_keyed(data["last_lines"]),
+          contest_ledger:       data["contest_ledger"] || {}
         )
       end
 

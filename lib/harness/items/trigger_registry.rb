@@ -55,8 +55,8 @@ module Harness
             saved_hp = ctx.params["hp_after"].to_i
             ctx.outcome[:revive_to_hp] = saved_hp
             ctx.outcome[:triggered]  ||= []
-            ctx.outcome[:triggered]  << { trigger: "death_save", item_id: ctx.item.id, item_name: ctx.item.name }
-            destroy_item!(ctx.item) if ctx.params["destroy_on_use"]
+            ctx.outcome[:triggered]  << { trigger: "death_save", item_id: ctx.item&.id, item_name: ctx.item&.name }
+            destroy_item!(ctx.item) if ctx.params["destroy_on_use"] && ctx.item
           }
         },
 
@@ -72,7 +72,7 @@ module Harness
             reduction = ctx.params["amount"].to_i
             ctx.outcome[:damage_modifier] = (ctx.outcome[:damage_modifier] || 0) - reduction
             ctx.outcome[:triggered] ||= []
-            ctx.outcome[:triggered] << { trigger: "damage_resist", item_id: ctx.item.id, amount: reduction }
+            ctx.outcome[:triggered] << { trigger: "damage_resist", item_id: ctx.item&.id, amount: reduction }
           }
         },
 
@@ -86,7 +86,7 @@ module Harness
             new_hp = [ ctx.actor.current_hp + heal, ctx.actor.max_hp ].min
             ctx.actor.update!(current_hp: new_hp)
             ctx.outcome[:triggered] ||= []
-            ctx.outcome[:triggered] << { trigger: "heal_on_kill", item_id: ctx.item.id, healed: heal }
+            ctx.outcome[:triggered] << { trigger: "heal_on_kill", item_id: ctx.item&.id, healed: heal }
           }
         },
 
@@ -99,7 +99,7 @@ module Harness
             new_hp = [ ctx.actor.current_hp + heal, ctx.actor.max_hp ].min
             ctx.actor.update!(current_hp: new_hp)
             ctx.outcome[:triggered] ||= []
-            ctx.outcome[:triggered] << { trigger: "regen_on_rest", item_id: ctx.item.id, healed: heal }
+            ctx.outcome[:triggered] << { trigger: "regen_on_rest", item_id: ctx.item&.id, healed: heal }
           }
         },
 
@@ -113,7 +113,7 @@ module Harness
             bonus = ::Harness::Abilities::DiceFormula.roll(ctx.params["damage_dice"])
             ctx.outcome[:damage_modifier] = (ctx.outcome[:damage_modifier] || 0) + bonus
             ctx.outcome[:triggered] ||= []
-            ctx.outcome[:triggered] << { trigger: "bonus_damage_vs_tag", item_id: ctx.item.id, bonus: bonus }
+            ctx.outcome[:triggered] << { trigger: "bonus_damage_vs_tag", item_id: ctx.item&.id, bonus: bonus }
           }
         },
 
@@ -136,7 +136,7 @@ module Harness
           apply: ->(ctx) {
             ctx.outcome[:extra_attack_granted] = true
             ctx.outcome[:triggered] ||= []
-            ctx.outcome[:triggered] << { trigger: "extra_attack", item_id: ctx.item.id }
+            ctx.outcome[:triggered] << { trigger: "extra_attack", item_id: ctx.item&.id }
           }
         },
 
@@ -170,7 +170,7 @@ module Harness
             abilities[target_idx]["uses_remaining"] = [ abilities[target_idx]["uses_remaining"].to_i + 1, abilities[target_idx]["uses_per_rest"].to_i ].min
             ctx.actor.update!(abilities: abilities)
             ctx.outcome[:triggered] ||= []
-            ctx.outcome[:triggered] << { trigger: "restore_use", item_id: ctx.item.id, ability: abilities[target_idx]["name"] }
+            ctx.outcome[:triggered] << { trigger: "restore_use", item_id: ctx.item&.id, ability: abilities[target_idx]["name"] }
           }
         },
 
@@ -181,13 +181,14 @@ module Harness
           phase:         :on_attack_roll,
           params_schema: {},
           apply: ->(ctx) {
+            return unless ctx.item # item-only trigger (use-count lives on the row)
             uses_left = (ctx.item.properties || {}).dig("trigger_uses_remaining").to_i
             return unless uses_left.positive?
             ctx.outcome[:force_critical] = true
             new_props = (ctx.item.properties || {}).merge("trigger_uses_remaining" => uses_left - 1)
             ctx.item.update!(properties: new_props)
             ctx.outcome[:triggered] ||= []
-            ctx.outcome[:triggered] << { trigger: "auto_succeed_check", item_id: ctx.item.id }
+            ctx.outcome[:triggered] << { trigger: "auto_succeed_check", item_id: ctx.item&.id }
           }
         }
       }.freeze
@@ -216,7 +217,7 @@ module Harness
 
         # Fire all items' triggers for a given phase. Returns the outcome
         # hash (mutated in place by handlers).
-        def fire_phase(phase:, actor:, target: nil, ability: nil, damage: nil, event_id: nil, outcome: {})
+        def fire_phase(phase:, actor:, target: nil, ability: nil, damage: nil, event_id: nil, outcome: {}, now: nil)
           return outcome unless PHASES.include?(phase)
           items_for(actor).each do |item|
             Array((item.properties || {})["effects"]).each do |effect|
@@ -233,6 +234,28 @@ module Harness
                 outcome:  outcome
               )
               trig[:apply].call(ctx)
+            end
+          end
+          # Spell-borne effects (active_effects) fire through the SAME
+          # registry — same entry shape, item: nil. Only consulted when the
+          # caller passes the clock (`now`), since expiry is time-gated.
+          if now
+            ::Harness::Character::ActiveEffects.active_for(actor, now: now).each do |ae|
+              Array(ae["effects"]).each do |effect|
+                trig = TRIGGERS[effect["trigger"]]
+                next unless trig && trig[:phase] == phase
+                ctx = Context.new(
+                  actor:    actor,
+                  target:   target,
+                  item:     nil,
+                  damage:   damage,
+                  ability:  ability,
+                  event_id: event_id,
+                  params:   effect["params"] || {},
+                  outcome:  outcome
+                )
+                trig[:apply].call(ctx)
+              end
             end
           end
           outcome

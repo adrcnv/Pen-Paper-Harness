@@ -27,6 +27,25 @@ RSpec.describe Harness::Tools::OpenContainer do
     end
   end
 
+  context "check XP on the pick" do
+    before { allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", roll: 18, against: 20)) }
+
+    it "pays the lock's difficulty tier once, on the successful pick" do
+      chest.update!(properties: chest.properties.merge("locked" => "hard"))
+      out = open
+      expect(out["xp_gained"]).to eq(15)
+      expect(player.reload.xp).to eq(15)
+    end
+
+    it "pays nothing for an unlocked chest" do
+      chest.update!(properties: chest.properties.except("locked"))
+      out = open
+      expect(out["opened"]).to be(true)
+      expect(out["xp_gained"]).to be_nil
+      expect(player.reload.xp).to eq(0)
+    end
+  end
+
   context "with a failed lock roll" do
     before { allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "failure", roll: 3, against: 15)) }
 

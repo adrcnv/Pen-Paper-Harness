@@ -69,6 +69,14 @@ module Harness
           end
         end
 
+        # A picked lock pays check XP by its difficulty tier (player only).
+        # One-shot by construction: success consumes the lock.
+        xp_award = nil
+        if locked && actor.is_a?(::Player)
+          amount   = ::Harness::Character::XP.for_check(difficulty: locked.to_s)
+          xp_award = ::Harness::Character::XP.award!(actor, amount) if amount.positive?
+        end
+
         rarity = item.properties.dig("loot", "rarity") || "common"
         hoard  = ::Harness::Treasure::LootTable.spawn(rarity: rarity, location: loc, rng: Random.new)
 
@@ -89,8 +97,11 @@ module Harness
           "item_name"   => item.name,
           "items"       => hoard[:items].map { |i| { "id" => i.id, "name" => i.name } },
           "coins_found" => hoard[:coins],
-          "opener_balance" => actor.coins
-        }
+          "opener_balance" => actor.coins,
+          "xp_gained"   => xp_award&.dig(:gained),
+          "leveled_up"  => xp_award && xp_award[:levels_gained] > 0 ? true : nil,
+          "new_level"   => xp_award && xp_award[:levels_gained] > 0 ? xp_award[:new_level] : nil
+        }.compact
       end
 
       private

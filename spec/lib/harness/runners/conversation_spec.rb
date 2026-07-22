@@ -272,6 +272,91 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicing.size).to eq(2)
   end
 
+  describe "planner-bound contest (dice binding)" do
+    def contest_step(check)
+      Harness::Dispatcher::Step.new(runner: "conversation", intent: "press the barkeep for the ledger", args: { "check" => check })
+    end
+
+    def statted!(char, cha: 10)
+      char.update!(strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: cha)
+    end
+
+    def speaking_ctx
+      voiced = []
+      ctx = context_with do |full|
+        if full.include?("WORLD MEMORY")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        elsif full.include?("filter stored facts")   # gate fires — the contest's resolve logs an event
+          { "relevant" => [] }.to_json
+        else
+          voiced << full
+          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Fine. Ask your questions." } }.to_json
+        end
+      end
+      ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern), extras: [])
+      [ ctx, voiced ]
+    end
+
+    before { statted!(player, cha: 14); statted!(barkeep) }
+
+    it "rolls once before voicing and injects the settled verdict into the target's payload" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
+
+      expect(voiced.first).to include('"contest"')
+      expect(voiced.first).to include('"result": "success"')
+      contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
+      expect(contest_record).to be_present
+      # Tagged so the narration step keeps contest turns in the dialogue-only
+      # skip (the verdict already renders as bracket + the NPC's own line).
+      expect(contest_record["contest"]).to be(true)
+      expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:social" ])
+    end
+
+    it "reuses the scene's standing verdict instead of rerolling on a repeat attempt" do
+      expect(Harness::Dice).to receive(:check).once.and_return(Harness::Dice::Outcome.new(result: "failure", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+      runner = described_class.new
+
+      runner.run(context: ctx, scene: scene, input: "press Tomas", step: contest_step("target" => "Tomas"))
+      runner.run(context: ctx, scene: scene, input: "press Tomas HARDER", step: contest_step("target" => "Tomas"))
+
+      expect(voiced.last).to include('"result": "failure"') # verdict re-served, not rerolled
+    end
+
+    it "skips the contest entirely when the named target is not present" do
+      expect(Harness::Dice).not_to receive(:check)
+      ctx, _voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "press Nelly", step: contest_step("target" => "Nonexistent Nelly"))
+      expect(outcome.tool_calls.find { |t| t["name"] == "resolve" }).to be_nil
+    end
+
+    it "casts an owned ability with its innate modifier, spends a use, and injects its effect" do
+      player.update!(abilities: [ {
+        "id" => "charm_word", "name" => "Charm Word",
+        "description" => "The target finds the sorcerer plausible for one critical beat.",
+        "effect_kind" => "control", "stat" => "charisma", "opposed_by" => "wisdom",
+        "uses_per_rest" => 2, "uses_remaining" => 2, "roll_modifier" => 3
+      } ])
+      expect(Harness::Dice).to receive(:check).with(hash_including(roll_modifier: 3))
+        .and_return(Harness::Dice::Outcome.new(result: "success", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "quietly cast charm word on Tomas", step: contest_step("target" => "Tomas", "ability" => "charm word"))
+
+      expect(voiced.first).to include("plausible for one critical beat") # the ability's effect, injected
+      expect(player.reload.abilities.first["uses_remaining"]).to eq(1)
+      expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:charm_word" ])
+    end
+  end
+
   describe "knowledge recall" do
     it "recalls a gate-approved fact into the speaker's voicing context" do
       Knowledge.create!(content: "The salt tithe was repealed last winter.", location_id: tavern.id, current: true, game_time: 0)
@@ -299,6 +384,13 @@ RSpec.describe Harness::Runners::Conversation do
         details: { "narrative" => { "trigger" => "saw", "details" => "The ferryman drowned at the crossing." } },
         participants: [ { character: barkeep, role: "subject" } ]
       )
+      # A text-less mechanical log (resolve-shaped details) must NOT reach
+      # the gate as a blank candidate.
+      Harness::Event::ForwardAppender.append(
+        game_time: 5, scope: "personal", location: tavern,
+        details: { "action" => "resolve", "outcome" => "success" },
+        participants: [ { character: barkeep, role: "actor" } ]
+      )
       gate_prompt = nil
       ctx = context_with do |full|
         if full.include?("filter stored facts")
@@ -313,6 +405,7 @@ RSpec.describe Harness::Runners::Conversation do
       described_class.new.run(context: ctx, scene: scene, input: "what happened at the crossing?", step: step)
       expect(gate_prompt).to include("The salt tithe was repealed")  # the fact
       expect(gate_prompt).to include("ferryman drowned")             # the memory — both through one gate
+      expect(gate_prompt).not_to include('"text": ""')               # the blank mechanical log stayed out
     end
 
     it "injects nothing when the gate rejects every candidate" do

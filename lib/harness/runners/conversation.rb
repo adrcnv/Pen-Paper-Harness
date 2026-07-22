@@ -63,11 +63,16 @@ module Harness
         thread   = conversation_thread(context)
         roster   = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
         nearby   = nearby_places(context)
+        # Planner-bound contest: the roll (if any) lands BEFORE anyone is
+        # voiced — the target's payload gets the settled verdict, never the
+        # judgment call.
+        contest = run_contest(context, step, player, present, resolver, tcs, active)
+
         spoken     = 0
         parsed_any = false
         poll_order(present, extras, input, step).each do |v|
           break if spoken >= MAX_SPEAKERS
-          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active)
+          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, contest)
           next unless emit
           parsed_any = true
           if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
@@ -140,6 +145,68 @@ module Harness
             .any? { |w| hay.include?(w) }
       end
 
+      # PLANNER-BOUND CONTEST (the dice binding): the planner read the input
+      # and declared a contest on this step (args.check: target + optional
+      # ability id). The roll happens here, mechanically, before any voicing.
+      # One roll per (target, kind) per scene — the ledger returns the
+      # standing verdict on repeat attempts (you don't get to re-ask the same
+      # question harder; also kills the reroll/XP farm). An ability cast is a
+      # DIFFERENT kind from bare persuasion, so a failed talk can still be
+      # escalated with a charm. Fail-open: unresolvable target, unknown
+      # ability with no fallback, or a resolve error → nil, plain conversation.
+      def run_contest(context, step, player, present, resolver, tcs, active)
+        spec = step&.args&.dig("check")
+        return nil unless spec.is_a?(::Hash)
+
+        target = find_present(present, spec["target"])
+        unless target
+          @logger.info { "[Runner conversation] contest target #{spec['target'].inspect} not present — skipped" }
+          return nil
+        end
+
+        ability = player_ability(player, spec["ability"])
+        kind    = ability ? ability["id"].to_s : "social"
+        key     = "#{target['id']}:#{kind}"
+
+        if (prior = active&.contest_for(key))
+          @logger.info { "[Runner conversation] contest #{key} already settled this scene (#{prior['result']}) — reusing verdict" }
+          return { target_id: target["id"], payload: prior }
+        end
+
+        args = { "actor_id" => player.id, "target_id" => target["id"],
+                 "action" => (step&.intent.to_s.strip.empty? ? "press #{target['name']}" : step.intent) }
+        if ability
+          # resolve's lookup matches on display name, not id
+          args["ability_name"] = ability["name"]
+        else
+          args["stat"]        = "charisma"
+          args["target_stat"] = "wisdom"
+        end
+
+        res, ok = execute_tool(resolver, "resolve", args, into: tcs)
+        # Tag the record: this resolve is a conversation contest whose verdict
+        # the voicing renders in-fiction. The narration step reads the tag to
+        # keep such turns in the dialogue-only skip — a narrator handed a
+        # social verdict re-dramatizes it (invented quotes, contradicted
+        # beats) ahead of the NPC's actual line.
+        tcs.last["contest"] = true if tcs.last && tcs.last["name"] == "resolve"
+        unless ok && res.is_a?(::Hash) && res["outcome"]
+          @logger.warn { "[Runner conversation] contest roll failed (#{res.inspect[0, 140]}) — voicing plainly" }
+          return nil
+        end
+
+        payload = { "kind" => (ability ? ability["name"] : "persuasion"), "result" => res["outcome"] }
+        if ability && %w[success critical_success].include?(res["outcome"])
+          payload["effect"] = ability["description"]
+        end
+        active&.record_contest!(key, payload)
+        @logger.info { "[Runner conversation] contest #{key} → #{res['outcome']}#{res['xp_gained'] ? " (+#{res['xp_gained']}xp)" : ""}" }
+        { target_id: target["id"], payload: payload }
+      end
+
+      # find_present / player_ability live in Runners::Base (shared with the
+      # cast runner).
+
       # A gate candidate carrying a synthetic id (so knowledge-row ids and
       # event-row ids can't collide inside one gate call) + its source, so the
       # approved set splits back into facts vs memories.
@@ -186,7 +253,10 @@ module Harness
       def event_pool(char)
         ids = ::Harness::Tools::QueryEvents.knowable_ids(char)
         return [] if ids.empty?
-        ::Event.queryable.where(id: ids).order(game_time: :desc, id: :desc).limit(EVENT_POOL).to_a
+        # Text-less rows (resolve's mechanical logs) are blank candidates —
+        # unembeddable clutter for the ranker and the gate; drop them here.
+        ::Event.queryable.where(id: ids).order(game_time: :desc, id: :desc).limit(EVENT_POOL)
+               .to_a.reject { |e| e.embed_text.strip.empty? }
       rescue StandardError => e
         @logger.warn { "[Runner conversation] event recall failed (floor only): #{e.class}: #{e.message}" }
         []
@@ -214,13 +284,18 @@ module Harness
       # Voice ONE character. The call sees this character's own events (or, for
       # an extra, just its description), the public roster of who else is here,
       # and the shared thread — never anyone else's events.
-      def voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active)
+      def voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, contest = nil)
         you =
           if v[:kind] == :extra
             { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }
           else
             npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP)
           end
+        # The contest verdict rides in the TARGET's you-block — the dice have
+        # ruled; the voicing renders the consequence, it does not re-judge.
+        if contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
+          you = you.merge("contest" => contest[:payload])
+        end
         # EVERY polled NPC recalls: knowledge facts AND their own memories
         # through one relevance gate (the substantive/banter split is dead —
         # defensive design against a scarecrow that never materialized). The

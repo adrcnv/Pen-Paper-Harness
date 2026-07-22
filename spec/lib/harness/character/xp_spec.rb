@@ -36,6 +36,30 @@ RSpec.describe Harness::Character::XP do
     end
   end
 
+  describe ".for_check" do
+    it "prices by difficulty tier, paying nothing for trivial/easy" do
+      expect(described_class.for_check(difficulty: "trivial")).to eq(0)
+      expect(described_class.for_check(difficulty: "easy")).to eq(0)
+      expect(described_class.for_check(difficulty: "moderate")).to eq(5)
+      expect(described_class.for_check(difficulty: "hard")).to eq(15)
+      expect(described_class.for_check(difficulty: "very_hard")).to eq(30)
+    end
+
+    it "adds the clever bonus from the situational modifier, clamped to +5" do
+      expect(described_class.for_check(difficulty: "moderate", situational_modifier: 3)).to eq(5 + 9)
+      expect(described_class.for_check(difficulty: "hard", situational_modifier: 9)).to eq(15 + 15)
+      expect(described_class.for_check(difficulty: "hard", situational_modifier: -2)).to eq(15)
+    end
+
+    it "pays no clever bonus when the base tier pays nothing" do
+      expect(described_class.for_check(difficulty: "easy", situational_modifier: 5)).to eq(0)
+    end
+
+    it "pays the flat opposed rate for beating a live opponent's roll" do
+      expect(described_class.for_check(difficulty: "moderate", opposed: true)).to eq(15)
+    end
+  end
+
   describe ".for_kill" do
     it "killing equal level: full base XP" do
       expect(described_class.for_kill(killer_level: 5, victim_level: 5)).to eq(250)

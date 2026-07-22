@@ -21,7 +21,7 @@ module Harness
     # rotates. Both die with the scene.
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
-      :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines,
+      :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines, :contest_ledger,
       keyword_init: true
     ) do
       # Has this character already taken a speaking turn in THIS scene? Seeded
@@ -50,6 +50,19 @@ module Harness
       def record_line!(character_id, prose)
         self.last_lines ||= {}
         last_lines[character_id] = prose
+      end
+
+      # Scene-scoped contest ledger: one roll per (target, kind) per scene —
+      # a repeat attempt reuses the standing verdict instead of rerolling
+      # (you don't get to re-ask the same question harder; also kills the
+      # reroll-until-crit / XP farm). Key "target_id:kind"; dies with the scene.
+      def contest_for(key)
+        (contest_ledger || {})[key]
+      end
+
+      def record_contest!(key, payload)
+        self.contest_ledger ||= {}
+        contest_ledger[key] = payload
       end
 
       # Combat sub-mode helpers. `combat` is nil when no fight is running; set

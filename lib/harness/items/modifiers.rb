@@ -28,12 +28,19 @@ module Harness
       ].freeze
 
       class << self
-        # Sum of `op: add` modifiers on `stat`, across all owned items.
-        def stat_bonus(actor, stat)
+        # Sum of `op: add` modifiers on `stat`, across all owned items — plus,
+        # when the caller passes the clock (`now`), the character's live
+        # spell-borne active_effects (same modifier shape, timed).
+        def stat_bonus(actor, stat, now: nil)
           return 0 unless actor&.id
-          modifiers_for(actor)
+          base = modifiers_for(actor)
             .select { |m| m["stat"] == stat.to_s && m["op"] == "add" }
             .sum    { |m| m["value"].to_i }
+          return base if now.nil?
+          base + ::Harness::Character::ActiveEffects.active_for(actor, now: now)
+            .flat_map { |e| Array(e["modifiers"]) }
+            .select   { |m| m["stat"] == stat.to_s && m["op"] == "add" }
+            .sum      { |m| m["value"].to_i }
         end
 
         # Roll all item damage_dice modifiers gated on a phase like "attack".

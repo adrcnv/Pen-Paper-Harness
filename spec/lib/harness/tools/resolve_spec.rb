@@ -78,6 +78,114 @@ RSpec.describe Harness::Tools::Resolve do
     end
   end
 
+  describe "effect application (buff / heal / debuff)" do
+    let(:bless) {
+      { "id" => "bless", "name" => "Bless", "effect_kind" => "buff", "stat" => "wisdom",
+        "uses_per_rest" => 3, "uses_remaining" => 3,
+        "effect" => { "duration_minutes" => 30, "roll_modifier" => 2 } }
+    }
+    let(:mend) {
+      { "id" => "mend", "name" => "Mend", "effect_kind" => "heal", "stat" => "wisdom",
+        "damage_dice" => "1d8", "uses_per_rest" => 4, "uses_remaining" => 4 }
+    }
+
+    it "auto-succeeds a self-buff without rolling, applies the timed effect, pays no XP" do
+      player.update!(wisdom: 10, abilities: [ bless ])
+      expect(::Harness::Dice).not_to receive(:check)
+
+      out = described_class.new.call({ "actor_id" => player.id, "ability_name" => "Bless", "action" => "casts bless" }, context)
+
+      expect(out["outcome"]).to eq("success")
+      expect(out["effect_applied"]).to include("name" => "Bless", "on" => player.name)
+      expect(out["xp_gained"]).to be_nil
+      expect(Harness::Character::ActiveEffects.roll_modifier(player.reload, now: context.game_time)).to eq(2)
+      expect(player.abilities.first["uses_remaining"]).to eq(2) # cast spent a use
+    end
+
+    it "heals rolled HP capped at max, no dice check, no XP" do
+      player.update!(wisdom: 10, max_hp: 20, current_hp: 12, abilities: [ mend ])
+      allow(Harness::Abilities::DiceFormula).to receive(:roll_ability).and_return(30)
+      expect(::Harness::Dice).not_to receive(:check)
+
+      out = described_class.new.call({ "actor_id" => player.id, "ability_name" => "Mend", "action" => "mends wounds" }, context)
+
+      expect(out["healed"]).to eq(8) # capped at max_hp
+      expect(player.reload.current_hp).to eq(20)
+      expect(out["xp_gained"]).to be_nil
+    end
+
+    it "a live Bless adds its flat roll modifier to the caster's later checks" do
+      player.update!(wisdom: 10, abilities: [ bless ])
+      described_class.new.call({ "actor_id" => player.id, "ability_name" => "Bless", "action" => "casts bless" }, context)
+
+      expect(::Harness::Dice).to receive(:check).with(hash_including(roll_modifier: 2))
+        .and_return(::Harness::Dice::Outcome.new(result: "failure", margin: "narrow", critical: false))
+      described_class.new.call({ "actor_id" => player.id, "stat" => "strength", "action" => "force the door", "difficulty" => "hard" }, context)
+    end
+
+    it "a debuff rolls opposed and lands its effect on the TARGET" do
+      player.update!(charisma: 14, abilities: [
+        { "id" => "dread_aura", "name" => "Dread Aura", "effect_kind" => "debuff", "stat" => "charisma",
+          "opposed_by" => "wisdom", "uses_per_rest" => 2, "uses_remaining" => 2,
+          "effect" => { "duration_minutes" => 30, "roll_modifier" => -2 } }
+      ])
+      stub_dice_outcome(result: "success")
+
+      out = described_class.new.call(
+        { "actor_id" => player.id, "ability_name" => "Dread Aura", "action" => "radiates dread", "target_id" => bandit.id },
+        context
+      )
+
+      expect(out["effect_applied"]).to include("name" => "Dread Aura", "on" => bandit.name)
+      expect(Harness::Character::ActiveEffects.roll_modifier(bandit.reload, now: context.game_time)).to eq(-2)
+    end
+  end
+
+  describe "check XP (non-combat)" do
+    def check(args = {})
+      described_class.new.call(
+        { "actor_id" => player.id, "stat" => "dexterity", "action" => "scale the wall" }.merge(args),
+        context
+      )
+    end
+
+    it "awards difficulty-tier XP to the player on a successful check" do
+      stub_dice_outcome(result: "success")
+      out = check("difficulty" => "hard")
+      expect(out["xp_gained"]).to eq(15)
+      expect(player.reload.xp).to eq(15)
+    end
+
+    it "pays the clever bonus from the positive situational modifier" do
+      stub_dice_outcome(result: "success")
+      out = check("difficulty" => "hard", "roll_modifier" => 3)
+      expect(out["xp_gained"]).to eq(15 + 9)
+    end
+
+    it "pays nothing for easy tiers or on failure" do
+      stub_dice_outcome(result: "success")
+      expect(check("difficulty" => "easy")["xp_gained"]).to be_nil
+
+      stub_dice_outcome(result: "failure")
+      expect(check("difficulty" => "hard")["xp_gained"]).to be_nil
+      expect(player.reload.xp).to eq(0)
+    end
+
+    it "pays the opposed rate for beating a live opponent's roll" do
+      stub_dice_outcome(result: "success")
+      out = check("stat" => "charisma", "action" => "stare him down",
+                  "target_id" => bandit.id, "target_stat" => "wisdom")
+      expect(out["xp_gained"]).to eq(15)
+    end
+
+    it "never awards check XP to an NPC actor" do
+      stub_dice_outcome(result: "success")
+      out = check("actor_id" => bandit.id, "difficulty" => "hard")
+      expect(out["xp_gained"]).to be_nil
+      expect(bandit.reload.xp.to_i).to eq(0)
+    end
+  end
+
   describe "unopposed check" do
     it "returns the outcome tier and margin from Dice" do
       stub_dice_outcome(result: "success", margin: "clear")

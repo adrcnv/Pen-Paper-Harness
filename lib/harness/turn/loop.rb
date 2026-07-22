@@ -91,6 +91,7 @@ module Harness
           # planner is remapped to environment by the Dispatcher.
           "environment"  => ::Harness::Runners::Environment.new(logger: logger),
           "inventory"    => ::Harness::Runners::Inventory.new(logger: logger),
+          "cast"         => ::Harness::Runners::Cast.new(logger: logger),
           "time-skip"    => ::Harness::Runners::TimeSkip.new(logger: logger),
           "combat"       => ::Harness::Runners::Combat.new(logger: logger),
           "meta"         => ::Harness::Runners::Meta.new(logger: logger)
@@ -511,11 +512,16 @@ module Harness
       # Does the turn hold anything BESIDES staged dialogue that the narration
       # model needs to render? Rolls, movement, world changes, creations — yes.
       # A pure conversation turn (only staged lines + internal reads) — no.
+      # A contest-tagged resolve (the conversation runner's pre-roll) doesn't
+      # count either: its verdict is already rendered twice — the Ruby bracket
+      # line mechanically, and the NPC's staged line in-fiction — so such
+      # turns stay in the dialogue-only skip. Standalone resolves (lockpicks,
+      # perception) carry no tag and narrate as before.
       FRAMING_TOOLS = %w[resolve transition mutate_character start_combat
                          propose_location propose_character propose_item].freeze
 
       def other_narratable?(tool_calls)
-        Array(tool_calls).any? { |tc| FRAMING_TOOLS.include?(tc["name"]) }
+        Array(tool_calls).any? { |tc| FRAMING_TOOLS.include?(tc["name"]) && !tc["contest"] }
       end
 
       def strip_leading_brackets(text)

@@ -15,7 +15,8 @@ RSpec.describe Harness::Scene::Serializer do
       extras:               [ "a dozing dog" ],
       entered_at_game_time: 100,
       spoken_ids:           [ maren.id ],
-      last_lines:           { maren.id => "What'll it be?" }
+      last_lines:           { maren.id => "What'll it be?" },
+      contest_ledger:       { "#{maren.id}:social" => { "kind" => "persuasion", "result" => "failure" } }
     )
   end
 
@@ -31,6 +32,7 @@ RSpec.describe Harness::Scene::Serializer do
     expect(restored.last_line_for(maren.id)).to eq("What'll it be?")
     expect(restored.present_extras).to eq([ "a dozing dog" ])
     expect(restored.entered_at_game_time).to eq(100)
+    expect(restored.contest_for("#{maren.id}:social")).to eq({ "kind" => "persuasion", "result" => "failure" })
   end
 
   it "rebuilds the snapshot from the DB on load (pure read — no draws)" do
