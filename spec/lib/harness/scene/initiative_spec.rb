@@ -58,6 +58,19 @@ RSpec.describe Harness::Scene::Initiative do
     expect(a.initiative_cooldown).to eq(0) # armed; fires from next turn
   end
 
+  it "leads a pronoun-opening beat with the actor's name (dangling-antecedent guard), leaving name-led beats alone" do
+    gerd = npc(name: "Gerd Vegirsson", subrole: "guard")
+    a = active_with(present: [ gerd ], agendas: { gerd.id => "wants the stranger gone" })
+    context.llm_nuance = stub_llm(emit(actor: "Gerd Vegirsson", beat: "She steps forward, hand resting on the pommel of her sword."))
+    result = run(a, transcript)
+    expect(result[:beat]).to eq("Gerd Vegirsson — She steps forward, hand resting on the pommel of her sword.")
+
+    b = active_with(present: [ gerd ], agendas: { gerd.id => "wants the stranger gone" })
+    context.llm_nuance = stub_llm(emit(actor: "Gerd Vegirsson", beat: "Gerd steps forward with a glare."))
+    result = run(b, transcript)
+    expect(result[:beat]).to eq("Gerd steps forward with a glare.")
+  end
+
   it "fires the beat the consumer picks, STAGES it (no Event row), and records the initiator" do
     maren = npc(name: "Maren", subrole: "barkeep")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player about the docks" })

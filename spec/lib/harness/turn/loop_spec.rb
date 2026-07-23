@@ -356,6 +356,20 @@ RSpec.describe Harness::Turn::Loop do
       expect(msg).to include("\"name\": \"Hero\"")
       expect(msg).to include("\"gender\": \"female\"")
     end
+
+    it "surfaces what the player is carrying (the phantom-axe guard), omitting the key when empty-handed" do
+      # Empty inventory → no `carrying` key at all: absence is the signal the
+      # prompt reads as bare hands.
+      loop_obj.instance_variable_get(:@scene_manager).ensure_entered
+      transcript = Harness::Turn::Transcript.new(input: "chop the tree", location_id: tavern.id)
+      expect(loop_obj.send(:narration_user_message, "chop the tree", transcript)).not_to include("\"carrying\"")
+
+      Item.create!(name: "gnarled scepter", subrole: "weapon", character: player)
+      Item.create!(name: "traveling cloak", subrole: "clothing", character: player)
+      msg = loop_obj.send(:narration_user_message, "chop the tree", transcript)
+      expect(msg).to include("\"carrying\"")
+      expect(msg).to include("gnarled scepter", "traveling cloak")
+    end
   end
 
   describe "off-scene creation partitioning for narration" do

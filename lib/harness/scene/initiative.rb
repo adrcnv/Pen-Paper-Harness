@@ -78,6 +78,7 @@ module Harness
 
         beat = spec["beat"].to_s.strip
         return skip("empty beat for #{actor_name}") if beat.empty?
+        beat = name_led(beat, npc.name)
 
         kind = spec["kind"].to_s.strip
         toward, label = resolve_target(spec["target"], npc, player)
@@ -88,6 +89,17 @@ module Harness
       rescue StandardError => e
         @logger.warn { "[Scene::Initiative] failed: #{e.class}: #{e.message}" }
         nil
+      end
+
+      # The beat is generated in a context that knows its actor, then appended
+      # verbatim to a narration that may have just described someone ELSE — a
+      # leading "She" picks up the wrong antecedent ("...Magnus grins.\n\nShe
+      # steps forward" read as nobody-knows-who). If the opening clause doesn't
+      # name the actor, lead with the name, stage-direction style.
+      def name_led(beat, name)
+        first = name.to_s.split(/\s+/).first.to_s
+        return beat if first.empty? || beat[0, 60].downcase.include?(first.downcase)
+        "#{name} — #{beat}"
       end
 
       # Log why the pass produced no beat this turn, then return nil. Every

@@ -21,7 +21,7 @@ module Harness
         user     = SlotSupport.build_user_payload(npc, state, last_round_summary)
         resolver = ::Harness::Resolver.new(context: context, tools: ::Harness::Resolver::NPC_TURN_TOOLS, logger: logger)
 
-        turn = adapter.start_turn(system: system, user: user, tools: resolver.schemas)
+        turn = adapter.start_turn(system: system, user: user, tools: SlotSupport.slot_schemas(resolver))
         call = nil
         2.times do
           break if turn.complete?

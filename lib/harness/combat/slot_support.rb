@@ -9,7 +9,42 @@ module Harness
     module SlotSupport
       STATS = %w[strength dexterity constitution intelligence wisdom charisma].freeze
 
+      # The combat slots' narrowed resolve schema. The generic Tools::Resolve
+      # schema leaves ability_name/target_id OPTIONAL — under grammar-
+      # constrained decoding the weak model emits the minimal valid object
+      # ("cast arcane bolt at vesna" stuffed into action prose, nothing
+      # bound) and the bare-call fallback turns a spell into a punch. Here
+      # the grammar carries the contract instead: ability_name is REQUIRED
+      # (unarmed_strike is the no-fit answer), and the fields a combat slot
+      # never uses (stat mode, difficulty tiers, item mode) are cut so the
+      # short slot prompt competes with nothing. target_id stays optional
+      # for self-casts — default_target! backstops aggressive actions.
+      COMBAT_RESOLVE_SCHEMA = {
+        "name"        => "resolve",
+        "description" => "Execute your one combat action. ability_name MUST be an ability from your list, or \"unarmed_strike\" for a plain attack. target_id is the id of the character the action is aimed at (from allies/hostiles) — omit ONLY when casting on yourself.",
+        "input_schema" => {
+          "type"       => "object",
+          "properties" => {
+            "actor_id"      => { "type" => "integer", "description" => "your own id" },
+            "ability_name"  => { "type" => "string", "description" => "an ability from your abilities list, or unarmed_strike" },
+            "action"        => { "type" => "string", "description" => "short prose describing the attempt (2-10 words)" },
+            "target_id"     => { "type" => "integer", "description" => "id of the target; omit only for a self-cast" },
+            "roll_modifier" => { "type" => "integer", "description" => "±N tactical circumstance bonus, -5..5, only when circumstance plausibly matters (surprise, flanking, darkness)" },
+            "time_minutes"  => { "type" => "integer", "description" => "combat round ~1" }
+          },
+          "required" => [ "actor_id", "ability_name", "action", "time_minutes" ]
+        }
+      }.freeze
+
       module_function
+
+      # The toolset both slots hand the adapter: the resolver's schemas with
+      # resolve swapped for the combat-narrowed variant above. The resolver
+      # itself still executes through the full Tools::Resolve — only the
+      # model's view narrows.
+      def slot_schemas(resolver)
+        resolver.schemas.map { |s| s["name"] == "resolve" ? COMBAT_RESOLVE_SCHEMA : s }
+      end
 
       # The ~1K-token battlefield view for ONE actor. `extra` keys lead the
       # payload (PlayerTurn puts the player's input first).
@@ -62,7 +97,7 @@ module Harness
       # Normalize → execute → mechanical recovery retries → log. The whole
       # slot-execution sequence both turns share.
       def execute_with_recovery(call, actor, resolver, state, logger: nil, tag: "Combat::Slot")
-        normalize_resolve_args!(call, actor, logger: logger, tag: tag) if call.name == "resolve"
+        normalize_resolve_args!(call, actor, state, logger: logger, tag: tag) if call.name == "resolve"
         result = resolver.execute(call)
 
         # Auto-engage retry: a close-range ability without first moving to
@@ -120,10 +155,12 @@ module Harness
 
       # Auto-fix the most common resolve failures so the slot actually does
       # something instead of erroring:
-      #   - neither stat nor ability_name → unarmed_strike
+      #   - neither stat nor ability_name → an owned ability named in the
+      #     action prose, else unarmed_strike
       #   - named ability depleted → unarmed_strike
       #   - unrecognized stat → strength
-      def normalize_resolve_args!(call, actor, logger: nil, tag: "Combat::Slot")
+      #   - aggressive action with no target → the sole living opponent
+      def normalize_resolve_args!(call, actor, state = nil, logger: nil, tag: "Combat::Slot")
         args = call.args
         return unless args.is_a?(::Hash)
 
@@ -131,8 +168,10 @@ module Harness
         stat         = args["stat"].to_s.strip
 
         if ability_name.empty? && stat.empty?
-          args["ability_name"] = "unarmed_strike"
-          logger&.info { "[#{tag}] #{actor.name} resolve normalized: bare call → ability_name=unarmed_strike" }
+          named = ability_in_action(actor, args["action"])
+          args["ability_name"] = named ? named["name"] : "unarmed_strike"
+          logger&.info { "[#{tag}] #{actor.name} resolve normalized: bare call → ability_name=#{args['ability_name']}" }
+          default_target!(args, actor, state, logger: logger, tag: tag)
           return
         end
 
@@ -142,6 +181,7 @@ module Harness
             args.delete("stat")
             args["ability_name"] = "unarmed_strike"
             logger&.info { "[#{tag}] #{actor.name} resolve normalized: #{ability_name} depleted → ability_name=unarmed_strike" }
+            default_target!(args, actor, state, logger: logger, tag: tag)
             return
           end
         end
@@ -150,6 +190,50 @@ module Harness
           args["stat"] = "strength"
           logger&.info { "[#{tag}] #{actor.name} resolve normalized: invalid stat=#{stat.inspect} → stat=strength" }
         end
+
+        default_target!(args, actor, state, logger: logger, tag: tag)
+      end
+
+      # The emit may carry the intent only in prose ("cast arcane bolt at
+      # vesna") — match the action text against the actor's OWN ability
+      # names (a closed list) before falling back to a punch.
+      def ability_in_action(actor, action)
+        text = action.to_s.downcase.tr("_", " ")
+        return nil if text.empty?
+        Array(actor.abilities).find do |a|
+          name = a["name"].to_s.downcase.tr("_", " ")
+          !name.empty? && text.include?(name) && a["uses_remaining"].to_i > 0
+        end
+      end
+
+      # An aggressive resolve without a target rolls unopposed and deals NO
+      # damage — a silently wasted slot. When exactly one living opponent
+      # stands, bind them. Ambiguity (several foes) is left alone, and
+      # non-aggressive kinds (buff/heal/utility) stay self-casts.
+      def default_target!(args, actor, state, logger: nil, tag: "Combat::Slot")
+        return unless state
+        return if args["target_id"]
+
+        name = args["ability_name"].to_s.downcase
+        aggressive =
+          if name == "unarmed_strike"
+            true
+          else
+            ability = Array(actor.abilities).find { |a| a["name"].to_s.downcase == name }
+            ability && (%w[damage debuff control].include?(ability["effect_kind"].to_s) || ability["opposed_by"])
+          end
+        return unless aggressive
+
+        my_side = state.side_of(actor.id)
+        foes = state.sides.filter_map do |id, side|
+          next if side == my_side || id == actor.id
+          char = ::Character.find_by(id: id)
+          char if char && !(char.max_hp.to_i > 0 && char.current_hp.to_i <= 0)
+        end
+        return unless foes.size == 1
+
+        args["target_id"] = foes.first.id
+        logger&.info { "[#{tag}] #{actor.name} resolve normalized: sole opponent #{foes.first.name} bound as target" }
       end
 
       # One-line summary of what the slot accomplished. Surfaces errors

@@ -6,15 +6,11 @@ Available tools (combat-mode only):
 
 - `resolve` — attack, defend, manipulate. Parameters:
     - `actor_id` (int, required) — YOUR id from the brief.
-    - `ability_name` (string) OR `stat` (string) — pick exactly ONE. This is what determines the roll. `action` is free-text flavor and does NOT count; the engine ignores it for picking the roll.
-      - Use `ability_name` when you have an ability with `uses_remaining > 0` (e.g. `"ability_name": "Heavy Strike"`).
-      - Use `stat` for a raw stat check (`"strength"`, `"dexterity"`, `"constitution"`, `"intelligence"`, `"wisdom"`, `"charisma"`).
-      - If all your abilities are exhausted, use `"ability_name": "unarmed_strike"` (1d4 fallback, always available).
+    - `ability_name` (string, required) — this determines the roll: an ability with `uses_remaining > 0` (e.g. `"Heavy Strike"`), or `"unarmed_strike"` (1d4 fallback, always available) when nothing fits or all are exhausted. `action` is free-text flavor and does NOT count.
     - `target_id` (int) — required when the action is directed at someone.
     - `action` (string) — short prose describing what you do (for narration only).
     - `time_minutes` (int) — usually 1 in combat.
   Example: `resolve({"actor_id": 7, "ability_name": "Heavy Strike", "target_id": 1, "action": "swing the spear", "time_minutes": 1})`
-  WRONG: `resolve({"actor_id": 7, "action": "Heavy Strike chudism", "time_minutes": 1})` — the engine sees no `ability_name`/`stat` and the slot errors.
 
 - `move_to(actor_id, position, target_id?)` — change position bucket. `engaged` requires target_id (the opponent you're closing on). Use to close gap, disengage, or reposition.
 - `escape(actor_id)` — try to leave the fight entirely. DEX check; failure costs you a free hit and your slot. Conservative use only — bloodied AND outnumbered AND no allies.

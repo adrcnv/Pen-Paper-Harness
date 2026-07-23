@@ -11,7 +11,7 @@ Output STRICT JSON, nothing else:
   "actor": "<one of the present character names, or null for nobody this turn>",
   "target": "<who the move is aimed at: another present character's name, or \"player\", or \"the room\">",
   "kind": "<engage | offer | press | watch | hostile>",
-  "beat": "<1-2 sentences, third person present tense: what they say or do — to the player, to another character, or to the room — ready to drop straight into the scene. Empty string when actor is null.>"
+  "beat": "<1-2 sentences, third person present tense, OPENING with the actor's name — never a pronoun (the beat lands after prose about someone else): what they say or do — to the player, to another character, or to the room — ready to drop straight into the scene. Empty string when actor is null.>"
 }
 
 - actor MUST be one of the present character names, or null. Never invent a name. `target`, when it names a character, must ALSO be a present character name (or "player" / "the room").

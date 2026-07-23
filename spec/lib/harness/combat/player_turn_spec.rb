@@ -42,6 +42,30 @@ RSpec.describe Harness::Combat::PlayerTurn do
     end
   end
 
+  it "rescues the lazy emit: binds the ability named in the action prose and the sole hostile as target" do
+    player.update!(abilities: [ {
+      "name" => "Arcane Bolt", "stat" => "intelligence", "opposed_by" => "dexterity",
+      "effect_kind" => "damage", "damage_dice" => "1d8", "uses_remaining" => 4,
+      "range" => "far", "tags" => [ "arcane" ], "requires_tags" => []
+    } ])
+    ctx = make_combat_context
+    allow(::Harness::Dice).to receive(:check).and_return(
+      ::Harness::Dice::Outcome.new(result: "success", margin: "clear", critical: false, roll: 17, against: 12)
+    )
+
+    # The minimal-valid-object emission that turned a cast into a punch:
+    # required fields only, the whole intent stuffed into action prose.
+    adapter = OneShotAdapter.new(tool: "resolve", args: {
+      "actor_id" => player.id, "action" => "cast arcane bolt at vesna", "time_minutes" => 1
+    })
+    call, result = described_class.run(player: player, input: "cast arcane bolt at vesna", scene: ctx.active_scene, adapter: adapter, context: ctx)
+
+    expect(call.args["ability_name"]).to eq("Arcane Bolt")
+    expect(call.args["target_id"]).to eq(vek.id)
+    expect(result["ability_name"]).to eq("Arcane Bolt")
+    expect(vek.reload.current_hp).to be < 18
+  end
+
   it "translates an attack input into resolve, with the actor forced to the player" do
     ctx = make_combat_context
     ctx.active_scene.combat.engage!(player.id, vek.id)

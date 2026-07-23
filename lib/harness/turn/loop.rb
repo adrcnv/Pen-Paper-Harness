@@ -711,7 +711,10 @@ module Harness
         pl = ::Player.first
         return {} unless pl
         g = pl.properties.is_a?(::Hash) ? pl.properties["gender"] : nil
-        { "name" => pl.name, "gender" => g }.compact
+        # `carrying` closes the phantom-axe class: with no inventory in view,
+        # the narrator dresses tool-implying actions with a plausible invented
+        # implement ("gripping your axe" on a caster who owns a scepter).
+        { "name" => pl.name, "gender" => g, "carrying" => pl.items.map(&:name).presence }.compact
       end
 
       def narration_user_message(input, transcript)
