@@ -62,6 +62,32 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicing_calls).to eq(2) # original + exactly one retry
   end
 
+  it "a second speaker sees the first speaker's just-staged line as the current exchange entry" do
+    Npc.create!(name: "Ruta", subrole: "servant", location: tavern)
+    voicings = []
+    ctx = context_with do |full|
+      if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      elsif full.include?("filter stored facts")
+        { "relevant" => [] }.to_json
+      else
+        voicings << full
+        if voicings.size == 1
+          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "The ferry sank on Tuesday, that's what's new." } }.to_json
+        else
+          { "speak" => false }.to_json
+        end
+      end
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "any news, folks?", step: step("asks the room"))
+    expect(voicings.size).to eq(2)
+    expect(voicings[0]).not_to include("ferry sank")                          # first speaker: thread unchanged
+    expect(voicings[1]).to include("The ferry sank on Tuesday")               # second speaker sees it...
+    expect(voicings[1].split("exchange_so_far").last).to include("any news, folks?") # ...as this turn's entry
+  end
+
   it "persists a durable event only when the exchange is flagged memorable" do
     ctx = context_with do
       { "speak" => true,

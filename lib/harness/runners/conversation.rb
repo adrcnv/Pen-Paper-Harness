@@ -74,7 +74,7 @@ module Harness
         parsed_any = false
         poll_order(present, extras, input, step).each do |v|
           break if spoken >= MAX_SPEAKERS
-          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread, nearby, wares, resolver, tcs, active, contest)
+          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest)
           next unless emit
           parsed_any = true
           if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
@@ -321,7 +321,8 @@ module Harness
         frame  = UNPROMPTED_FRAME.sub("<<CAUSE>>") { cause }
 
         emit, voicing_user = voice_one(context, input, step, player, v, roster,
-                                       conversation_thread(context), nearby_places(context), wares_here(context),
+                                       thread_with_current(conversation_thread(context), input, transcript&.tool_calls),
+                                       nearby_places(context), wares_here(context),
                                        resolver, tcs, active, nil, frame: frame)
         prose = emit&.dig("dialogue", "prose").to_s.strip
         if emit.nil? || !emit["speak"] || prose.empty?
@@ -642,6 +643,21 @@ module Harness
         Array(active.narrations).last(THREAD_CAP).map do |h|
           { "player" => h["input"].to_s, "scene" => h["narration"].to_s[0, THREAD_CHARS] }
         end
+      end
+
+      # Same-turn visibility: `narrations` holds only COMPLETED turns, so a
+      # second speaker — or the initiative beat after the runner finished —
+      # would answer blind to what a co-speaker just said (two answers to the
+      # same question, or a beat re-deriving the moment). Lines already staged
+      # THIS turn ride in as the current exchange entry, so a later voice
+      # answers the room as it now stands and the decide-gate can choose
+      # silence over restating an answer someone already gave.
+      def thread_with_current(thread, input, tool_calls)
+        said = Array(tool_calls).filter_map do |tc|
+          tc.dig("args", "details") if tc["name"] == "propose_event" && tc.dig("result", "staged")
+        end
+        return thread if said.empty?
+        thread + [ { "player" => input.to_s, "scene" => said.join("\n\n") } ]
       end
 
       # Stage a line for NARRATION without PERSISTING it. Committing every "she

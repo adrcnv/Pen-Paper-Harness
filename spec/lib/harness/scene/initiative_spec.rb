@@ -147,6 +147,42 @@ RSpec.describe Harness::Scene::Initiative do
     expect(run(a, t)).to be_nil # she already had her voice this turn
   end
 
+  it "the beat's voicing sees lines staged earlier this turn (same-turn visibility)" do
+    maren = npc(name: "Maren")
+    gerd  = npc(name: "Gerd", subrole: "guard")
+    staged = {
+      "name" => "propose_event",
+      "args" => {
+        "participants" => [ { "character_id" => maren.id, "role" => "actor" } ],
+        "details"      => "Maren mutters: 'The cellar's flooded again.'"
+      },
+      "result" => { "staged" => true }
+    }
+    voicing_prompt = nil
+    a = active_with(present: [ maren, gerd ], agendas: { gerd.id => "wants the flooding dealt with" })
+    context.llm_nuance = Class.new do
+      define_method(:complete) do |system:, user:|
+        full = "#{system}\n#{user}"
+        if full.include?("TAKING STOCK")
+          { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
+        elsif full.include?("WORLD MEMORY")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        elsif full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        elsif full.include?("You voice ONE character")
+          voicing_prompt = full
+          { "speak" => true, "dialogue" => { "summary" => "acts", "prose" => "Gerd frowns. 'I'll see to the cellar.'" } }.to_json
+        else
+          { "actor" => "Gerd", "cause" => "the cellar flooding" }.to_json
+        end
+      end
+    end.new
+
+    result = run(a, transcript([ staged ]))
+    expect(result[:npc]).to eq(gerd)
+    expect(voicing_prompt).to include("The cellar's flooded again")
+  end
+
   it "does NOT exclude the previous turn's initiator (rotation law killed — a 1-on-1 can re-fire)" do
     maren = npc(name: "Maren")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants the tab settled" }, last_initiator: maren.id)
