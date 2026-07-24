@@ -770,6 +770,28 @@ RSpec.describe Harness::Runners::Conversation do
       expect(reflection_prompt).to include("The salt tithe was repealed")          # the speaker's recall, in view
     end
 
+    it "carries the closed subrole vocabulary into the reflection tail (no unexpanded marker)" do
+      reflection_prompt = nil
+      ctx = context_with do |full|
+        if full.include?("SECOND PASS: WORLD MEMORY")
+          reflection_prompt = full
+          { "facts" => [] }.to_json
+        elsif full.include?("TAKING STOCK")
+          { "assessment" => "held", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
+        elsif full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "Ask the drover out by the pens." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
+      expect(reflection_prompt).to include("drover, ")          # a vocab noun, singular, in the joined list
+      expect(reflection_prompt).to include("never a group")
+      expect(reflection_prompt).not_to include("<<SUBROLES>>")
+    end
+
     it "does not reflect for a character who stayed silent" do
       reflected = false
       ctx = context_with do |full|

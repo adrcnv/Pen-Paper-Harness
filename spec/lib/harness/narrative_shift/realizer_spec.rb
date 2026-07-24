@@ -75,6 +75,13 @@ RSpec.describe Harness::NarrativeShift::Realizer do
     end
   end
 
+  it "refuses a claim anchored at the player's CURRENT location — scenery, not a referral (the two-drovers bug)" do
+    res = run({ "name" => "two drovers", "subrole" => "drover",
+                "gist" => "arguing over a sprained ankle", "at_location" => "The Drowned Rat" })
+    expect(res).to be_nil
+    expect(Harness::Character::Hatchery).not_to have_received(:spawn)
+  end
+
   it "homes a person at a named destination that resolves to a real Location (present, findable)" do
     relay = Location.create!(name: "Blackwood Relay")
     run({ "name" => "Harek", "at_location" => "blackwood relay" })

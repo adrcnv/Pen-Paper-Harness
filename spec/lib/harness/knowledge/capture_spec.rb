@@ -128,6 +128,16 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Event.last.game_time).to eq(0) # 100 - 2 years clamps
     end
 
+    it "parses 'last night' as a dated happening (the wolf-ambush hole: time was silently dropped)" do
+      Npc.create!(name: "Tomas", location: tavern)
+      expect {
+        capture(facts("content" => "A wolf pack took two sheep from the folds.", "when" => "last night"),
+                game_time: 20_000)
+      }.to change(Event, :count).by(1)
+      expect(Knowledge.count).to eq(0)
+      expect(Event.last.game_time).to eq(20_000 - 1_440)
+    end
+
     it "routes a vague past ('many moons ago') to knowledge, wording intact" do
       Npc.create!(name: "Tomas", location: tavern)
       expect {

@@ -815,6 +815,7 @@ module Harness
       # namespace (its integration spec rejects unexpanded {{ in prompt files).
       def reflection_tail(prose)
         @reflection_template ||= File.read(REFLECTION_PROMPT_PATH)
+                                     .sub("<<SUBROLES>>") { ::Harness::Vocations.all.join(", ") }
         @reflection_template.sub("<<SAID>>") { prose }
       end
 

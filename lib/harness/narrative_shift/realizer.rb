@@ -80,6 +80,15 @@ module Harness
         # movement instead of the worldbuilder inventing a second mill with
         # a second miller.
         place   = resolve_or_mint_location(at_name, context, logger)
+        # A claim anchored at the player's CURRENT location describes this
+        # scene's own furniture, not a findable person elsewhere — anyone
+        # actually here either has a row already or is an extra, whose
+        # promotion door is propose_character. Minting duplicates the room
+        # (the two-drovers bug), so refuse the claim outright.
+        if place && place.id == context.player_location&.id
+          logger.info { "[NarrativeShift] claim #{(spoken.presence || gist).inspect} anchored at the current location #{place.name.inspect} — scenery, refusing mint" }
+          return nil
+        end
         home    = place || settlement_for(context.player_location)
 
         npc = ::Harness::Character::Hatchery.spawn(

@@ -124,7 +124,7 @@ module Harness
       # absolute game_time (minutes), clamped at 0. Unparseable → nil (the
       # fact stays temporally unbound and routes to knowledge).
       UNIT_MINUTES = {
-        "day" => 1_440, "week" => 10_080, "moon" => 43_200, "month" => 43_200,
+        "day" => 1_440, "night" => 1_440, "week" => 10_080, "moon" => 43_200, "month" => 43_200,
         "season" => 129_600, "winter" => 518_400, "summer" => 518_400, "year" => 518_400
       }.freeze
       WORD_NUMBERS = {
