@@ -6,7 +6,7 @@ module Harness
     # when it crosses the in-scene threshold).
     class TimeSkip < Base
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/time_skip.txt")
-      VALID_INTENTS = %w[rest wait sleep linger].freeze
+      VALID_INTENTS = %w[rest wait sleep linger practice].freeze
 
       def run(context:, scene:, input:, step:)
         spec = decide(context, input, step)

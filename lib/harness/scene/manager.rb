@@ -76,7 +76,14 @@ module Harness
           internal_state:       flavor[:internal_state],
           agendas:              flavor[:agendas],
           extras:               flavor[:extras],
-          entered_at_game_time: @context.game_time || 0
+          entered_at_game_time: @context.game_time || 0,
+          # Initiative arrival-settle (nil = skip one turn) applies to ARRIVALS
+          # only. An in-place rebuild — pass_time crossing the threshold at the
+          # same location — is not an arrival: the player never left, and
+          # re-arming the settle there muted initiative on exactly the turns
+          # where hours just passed (chained time-skips kept it settled
+          # forever). Same-location re-entry starts past the settle.
+          initiative_cooldown:  (loc.id == @last_exit_location_id ? 0 : nil)
         )
         @context.active_scene = @active
         @active
@@ -106,6 +113,7 @@ module Harness
         # relocate (the smith off-shift CAN be at the pub you walked to).
         @last_cast_ids       = ::Npc.where(location_id: @active.location.id).pluck(:id)
         @last_exit_game_time = @context.game_time
+        @last_exit_location_id = @active.location.id
 
         # Clear non-residents from the scene we're leaving: transients go home,
         # pure-flavor strangers evaporate. Stops the "merchants stranded at the

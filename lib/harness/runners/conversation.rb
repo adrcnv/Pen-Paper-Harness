@@ -26,6 +26,7 @@ module Harness
     class Conversation < Base
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/conversation.txt")
       REFLECTION_PROMPT_PATH = Rails.root.join("lib/harness/prompts/knowledge_reflection.txt")
+      REEVALUATION_PROMPT_PATH = Rails.root.join("lib/harness/prompts/mood_reevaluation.txt")
       EVENT_SUMMARY_CAP = 10
       # A speaker's own newest memories kept UNGATED for character continuity —
       # gating events by topic must never strip a character of immediate
@@ -63,6 +64,7 @@ module Harness
         thread   = conversation_thread(context)
         roster   = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
         nearby   = nearby_places(context)
+        wares    = wares_here(context)
         # Planner-bound contest: the roll (if any) lands BEFORE anyone is
         # voiced — the target's payload gets the settled verdict, never the
         # judgment call.
@@ -72,7 +74,7 @@ module Harness
         parsed_any = false
         poll_order(present, extras, input, step).each do |v|
           break if spoken >= MAX_SPEAKERS
-          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, contest)
+          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread, nearby, wares, resolver, tcs, active, contest)
           next unless emit
           parsed_any = true
           if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
@@ -87,6 +89,7 @@ module Harness
             # player engaged them for) is an intake hole.
             if v[:kind] == :npc
               reflect_knowledge(context, v, emit, voicing_user)
+              reevaluate_state(context, v, emit, voicing_user, active)
             elsif (minted = ::Character.find_by(id: promo[v[:index]]))
               reflect_knowledge(context, { char: { "name" => minted.name } }, emit, voicing_user)
             end
@@ -284,7 +287,60 @@ module Harness
       # Voice ONE character. The call sees this character's own events (or, for
       # an extra, just its description), the public roster of who else is here,
       # and the shared thread — never anyone else's events.
-      def voice_one(context, input, step, player, v, roster, thread, nearby, resolver, tcs, active, contest = nil)
+      public
+
+      # UNPROMPTED VOICING — the initiative consumer's door into the FULL
+      # conversation machinery. The old thin beat surface (a one-line emit
+      # with no personality, no events, no thread ownership) produced exactly
+      # the ungrounded one-liners it was fed; this replaces it: the chosen NPC
+      # speaks through voice_one with everything a speaking turn gets —
+      # recall, mood/agenda, repeat guard, memorable, then reflection and
+      # taking-stock. The frame overrides the are-you-addressed deliberation:
+      # the selector already ruled that they act; the voicing decides only HOW.
+      # Returns the staged prose, or nil (declined emit, parrot suppressed).
+      UNPROMPTED_FRAME = <<~FRAME
+        --- UNPROMPTED ---
+        No one has addressed you this turn. You have RESOLVED to act on your own: <<CAUSE>>
+        The are-you-speaking deliberation is settled — output the same JSON with "speak": true. Your dialogue.prose is you seizing the moment: say or do the thing, in your manner, grounded in what you actually know. player_input above is what the player just did, not words aimed at you.
+      FRAME
+
+      def voice_unprompted(context:, npc:, cause:, input:, transcript: nil)
+        player = ::Player.first
+        return nil unless player
+        active   = context.active_scene
+        resolver = resolver_for(context)
+        scene    = ::Harness::Tools::QueryScene.build(context)
+        present  = Array(scene["present_characters"])
+        char     = present.find { |c| c["id"] == npc.id }
+        return nil unless char
+
+        roster = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
+        tcs    = []
+        v      = { kind: :npc, char: char }
+        step   = ::Harness::Dispatcher::Step.new(runner: "conversation", intent: cause, args: {})
+        frame  = UNPROMPTED_FRAME.sub("<<CAUSE>>") { cause }
+
+        emit, voicing_user = voice_one(context, input, step, player, v, roster,
+                                       conversation_thread(context), nearby_places(context), wares_here(context),
+                                       resolver, tcs, active, nil, frame: frame)
+        prose = emit&.dig("dialogue", "prose").to_s.strip
+        if emit.nil? || !emit["speak"] || prose.empty?
+          @logger.info { "[Runner conversation] unprompted voicing declined for #{npc.name} (speak=#{emit && emit['speak'].inspect})" }
+          transcript&.record_tool_calls(tcs)
+          return nil
+        end
+        return nil unless apply_emit(resolver, context, scene, emit, v, player, {}, tcs)
+
+        active&.mark_spoken!(npc.id)
+        reflect_knowledge(context, v, emit, voicing_user)
+        reevaluate_state(context, v, emit, voicing_user, active)
+        transcript&.record_tool_calls(tcs)
+        prose
+      end
+
+      private
+
+      def voice_one(context, input, step, player, v, roster, thread, nearby, wares, resolver, tcs, active, contest = nil, frame: nil)
         you =
           if v[:kind] == :extra
             { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }
@@ -318,17 +374,26 @@ module Harness
         # speaker this turn) leads, so llama.cpp reuses that prefix; the per-NPC
         # varying blocks (others_present, you) come LAST. JSON is order-agnostic
         # to the model, so this is a pure prefill win, no behaviour change.
-        user = JSON.pretty_generate(
+        invariant = {
           "player"          => { "id" => player.id, "name" => player.name },
           "player_input"    => input,
           "intent"          => step&.intent,
           "location"        => location_payload(context),
-          "nearby_places"   => nearby,
+          "nearby_places"   => nearby
+        }
+        # Venue stock (invariant across speakers, absent outside shops): the
+        # smith could not see her own racks and denied weapons standing next
+        # to eight for-sale wares — the context-exposure class again.
+        invariant["wares_here"] = wares if wares
+        user = JSON.pretty_generate(invariant.merge(
           "exchange_so_far" => thread,
           "others_present"  => others,
           "you"             => you
-        )
+        ))
         sent_user = "INPUT:\n#{user}"
+        # The unprompted frame (initiative voicing) rides AFTER the payload so
+        # the shared prefix stays cache-identical with normal voicings.
+        sent_user = "#{sent_user}\n\n#{frame}" if frame
         who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
         emit = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
           raw = llm(context).complete(system: preamble, user: sent_user)
@@ -472,10 +537,11 @@ module Harness
           .map { |e| event_text(e) }
           .reject(&:empty?)
         props = ::Npc.find_by(id: char["id"])&.properties
-        # Seeded mood/agenda only on the OPENING stance — once this NPC has spoken
-        # this scene, the thread carries them and the frozen self-state is dropped
-        # (see Active#spoken?). personality/lens/events persist.
-        fresh = !active&.spoken?(char["id"])
+        # Mood and agenda ride EVERY turn now — the post-emit reevaluation
+        # keeps them current, so they can't yank a spoken NPC back to a stale
+        # seed (the reason they used to be dropped at mark_spoken). Mood leads
+        # with the disposition-ladder word: the standing temperature toward
+        # the player.
         {
           "id"          => char["id"],
           "name"        => char["name"],
@@ -483,10 +549,23 @@ module Harness
           "lens"        => char["lens"],
           "personality" => (props["personality"] if props.is_a?(::Hash)),
           "appearance"  => ((props["appearance"] || props["physical"]) if props.is_a?(::Hash)),
-          "mood"        => (active&.state_for(char["id"]) if fresh),
-          "agenda"      => (active&.agenda_for(char["id"]) if fresh),
+          "mood"        => mood_line(active, char["id"]),
+          "agenda"      => active&.agenda_for(char["id"]),
           "events"      => events
         }.compact
+      end
+
+      # "guarded — wiping the same spot on the bar, eyes on the door" — the
+      # ladder word plus the living flavor line. Nil when there's nothing to
+      # say (no seeded state and a neutral ladder).
+      def mood_line(active, id)
+        return nil unless active
+        disp   = active.disposition_for(id)
+        flavor = active.state_for(id)
+        if flavor && disp != "neutral" then "#{disp} — #{flavor}"
+        elsif flavor                   then flavor
+        elsif disp != "neutral"        then disp
+        end
       end
 
       # Pull the human-readable line out of a query_events row. `details` is a
@@ -535,6 +614,21 @@ module Harness
           # (it's already a one-liner), not truncation's.
           entry["about"] = d[0, 240] unless d.empty?
           entry
+        end
+      end
+
+      # For-sale stock anchored at the scene, with the settlement's mechanical
+      # buy prices — nil anywhere without wares, so the payload key (and its
+      # tokens) exists only inside an actual shop.
+      def wares_here(context)
+        loc = context.player_location
+        return nil unless loc
+        items = ::Item.where(location_id: loc.id).select { |i| i.properties.is_a?(::Hash) && i.properties["for_sale"] }
+        return nil if items.empty?
+        facts = ::Harness::Settlement::Facts.for(loc)
+        items.map do |i|
+          { "name"  => i.name,
+            "price" => ::Harness::Economy::Pricing.buy_price(i, wealth: facts["wealth"], economic_basis: facts["economic_basis"]) }
         end
       end
 
@@ -671,6 +765,49 @@ module Harness
         )
       rescue StandardError => e
         @logger.warn { "[Runner conversation] reflection capture failed for #{v[:char]['name']}: #{e.class}: #{e.message}" }
+      end
+
+      # POST-EMIT STATE REEVALUATION — the "taking stock" pass. Third call on
+      # the speaker's still-hot voicing prefix (after the emit and reflection —
+      # the shared prefix is KV-cached, only the tail is new compute): did this
+      # exchange move the speaker's disposition (ONE ladder step max), refresh
+      # their mood line, or conclude their agenda? Personality is INPUT only —
+      # it conditions the shift, never changes. The contest verdict, when one
+      # fired, is already in the voicing payload — the eval feels it through
+      # personality rather than re-judging it. A garbage emit is skipped
+      # outright (held state is always safe), no retry bounce. Speakers only.
+      def reevaluate_state(context, v, emit, voicing_user, active)
+        return unless active
+        prose = emit.dig("dialogue", "prose").to_s.strip
+        return if prose.empty? || voicing_user.nil?
+        id = v[:char]["id"]
+
+        user = "#{voicing_user}\n\n#{reevaluation_tail(prose)}"
+        raw = ::Harness::CostTracker.in_subsystem(:mood_reevaluation) do
+          llm(context).complete(system: preamble, user: user)
+        end
+        taking = ::Harness::LLM::JsonResponse.parse(raw)
+        unless taking.is_a?(::Hash) && taking.key?("disposition")
+          @logger.warn { "[Runner conversation] reevaluation for #{v[:char]['name']} unparseable — state held" }
+          return
+        end
+
+        active.shift_disposition!(id, taking["disposition"]) if %w[warmer colder].include?(taking["disposition"])
+        active.update_state!(id, taking["mood"].strip) if taking["mood"].is_a?(::String) && !taking["mood"].strip.empty?
+        active.clear_agenda!(id) if %w[resolved abandoned].include?(taking["agenda"]) && active.agenda_for(id)
+
+        @logger.info do
+          "[Runner conversation] #{v[:char]['name']} takes stock: disposition=#{taking['disposition']}" \
+            " (now #{active.disposition_for(id)}) mood #{taking['mood'] ? 'refreshed' : 'held'}" \
+            " agenda=#{taking['agenda'] || 'pursue'}"
+        end
+      rescue ::StandardError => e
+        @logger.warn { "[Runner conversation] reevaluation failed for #{v[:char]['name']}: #{e.class}: #{e.message}" }
+      end
+
+      def reevaluation_tail(prose)
+        @reevaluation_template ||= File.read(REEVALUATION_PROMPT_PATH)
+        @reevaluation_template.sub("<<SAID>>") { prose }
       end
 
       # <<...>> markers are runtime substitutions owned by THIS runner —

@@ -22,16 +22,43 @@ module Harness
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
       :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines, :contest_ledger,
+      :dispositions,
       keyword_init: true
     ) do
-      # Has this character already taken a speaking turn in THIS scene? Seeded
-      # mood/agenda steer an NPC's OPENING stance; once they've spoken, the live
-      # conversation thread carries them and the frozen self-state is dropped (it
-      # otherwise fights the evolving exchange — an NPC yanked back to a
-      # pre-conversation stance reads as fickle). Consumed by the conversation
-      # runner + Scene::Initiative, both of which strip mood/agenda for spoken NPCs.
+      # The disposition ladder — each NPC's standing temperature toward the
+      # player, scene-scoped. Descriptive context ONLY, never a trigger. The
+      # post-emit reevaluation moves it at most one step per turn; internal
+      # state (the mood flavor line) rides beside it and is no longer frozen
+      # at the seeded value — the taking-stock pass refreshes both.
+      DISPOSITIONS = %w[hostile guarded neutral warm trusting].freeze
+
+      # Has this character already taken a speaking turn in THIS scene? Once
+      # they've spoken, the live thread carries their words — but mood/agenda
+      # are NO longer dropped with it: the reevaluation pass keeps them
+      # current, so a stale seed can't yank a mid-conversation NPC backwards.
       def spoken?(character_id)
         (spoken_ids || []).include?(character_id)
+      end
+
+      def disposition_for(character_id)
+        (dispositions || {})[character_id] || "neutral"
+      end
+
+      # One ladder step, clamped at the ends. direction: "warmer" | "colder".
+      def shift_disposition!(character_id, direction)
+        idx = DISPOSITIONS.index(disposition_for(character_id)) || 2
+        idx += (direction == "warmer" ? 1 : -1)
+        self.dispositions ||= {}
+        dispositions[character_id] = DISPOSITIONS[idx.clamp(0, DISPOSITIONS.size - 1)]
+      end
+
+      def update_state!(character_id, mood_line)
+        self.internal_state ||= {}
+        internal_state[character_id] = mood_line
+      end
+
+      def clear_agenda!(character_id)
+        (agendas || {}).delete(character_id)
       end
 
       def mark_spoken!(character_id)

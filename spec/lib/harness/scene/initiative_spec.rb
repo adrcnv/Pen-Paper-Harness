@@ -6,25 +6,35 @@ RSpec.describe Harness::Scene::Initiative do
   let!(:player) { Player.create!(name: "Hero", location: loc) }
 
   # Default consumer response: nobody acts. Individual tests override `llm`.
-  let(:llm)     { stub_llm(emit(actor: nil)) }
+  let(:llm)     { stub_llm(selector: { "actor" => nil, "cause" => "" }) }
   let(:context) { Harness::Turn::Context.new(player_location: loc, game_time: 100, llm_nuance: llm) }
 
-  def stub_llm(body)
-    Class.new { define_method(:complete) { |system:, user:| body } }.new
-  end
-
-  def emit(actor:, kind: "engage", beat: "leans in toward the player and says a few low words", target: nil)
-    h = { "actor" => actor, "kind" => kind, "beat" => (actor.nil? ? "" : beat) }
-    h["target"] = target if target
-    h.to_json
+  # v4: the initiative pass is a SELECTOR; the chosen NPC then speaks through
+  # the conversation runner's full voicing (+ reflection + taking-stock).
+  # The stub serves all four surfaces by prompt sniffing.
+  def stub_llm(selector:, line: nil, speak: true)
+    Class.new do
+      define_method(:complete) do |system:, user:|
+        full = "#{system}\n#{user}"
+        if full.include?("TAKING STOCK")
+          { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
+        elsif full.include?("WORLD MEMORY")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        elsif full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        elsif full.include?("You voice ONE character")
+          { "speak" => speak, "dialogue" => (speak ? { "summary" => "acts", "prose" => line.to_s } : nil) }.to_json
+        else
+          selector.to_json
+        end
+      end
+    end.new
   end
 
   def npc(name:, subrole: "barkeep", properties: {})
     Npc.create!(name: name, subrole: subrole, location: loc, current_hp: 5, max_hp: 5, properties: properties)
   end
 
-  # cooldown: 0 means past the arrival-settle (the common test case). Pass nil
-  # to exercise the settle. last_initiator excludes the previous turn's actor.
   def active_with(present:, agendas: {}, internal_state: {}, cooldown: 0, last_initiator: nil)
     snap = Struct.new(:location, :present_characters, :present_corpses, :present_items)
              .new(loc, present, [], [])
@@ -58,76 +68,55 @@ RSpec.describe Harness::Scene::Initiative do
     expect(a.initiative_cooldown).to eq(0) # armed; fires from next turn
   end
 
-  it "leads a pronoun-opening beat with the actor's name (dangling-antecedent guard), leaving name-led beats alone" do
-    gerd = npc(name: "Gerd Vegirsson", subrole: "guard")
-    a = active_with(present: [ gerd ], agendas: { gerd.id => "wants the stranger gone" })
-    context.llm_nuance = stub_llm(emit(actor: "Gerd Vegirsson", beat: "She steps forward, hand resting on the pommel of her sword."))
-    result = run(a, transcript)
-    expect(result[:beat]).to eq("Gerd Vegirsson — She steps forward, hand resting on the pommel of her sword.")
-
-    b = active_with(present: [ gerd ], agendas: { gerd.id => "wants the stranger gone" })
-    context.llm_nuance = stub_llm(emit(actor: "Gerd Vegirsson", beat: "Gerd steps forward with a glare."))
-    result = run(b, transcript)
-    expect(result[:beat]).to eq("Gerd steps forward with a glare.")
-  end
-
-  it "fires the beat the consumer picks, STAGES it (no Event row), and records the initiator" do
+  it "fires through the FULL voicing: staged line (no Event row), mark_spoken, last_initiator recorded" do
     maren = npc(name: "Maren", subrole: "barkeep")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player about the docks" })
-    context.llm_nuance = stub_llm(emit(actor: "Maren", beat: "Maren sets down a mug and says the docks aren't safe after dark."))
+    context.llm_nuance = stub_llm(
+      selector: { "actor" => "Maren", "cause" => "the stranger is heading for the docks" },
+      line: "Maren sets down a mug. 'The docks aren't safe after dark.'"
+    )
     t = transcript
     result = nil
-    # The beat renders (return value) and is recorded for the turn log, but it
-    # must NOT persist as an Event — initiative improv self-canonizing into the
-    # log is the pollution this fixes.
     expect { result = run(a, t) }.not_to change(Event, :count)
+
     expect(result[:npc]).to eq(maren)
-    expect(result[:beat]).to match(/docks/)
-    rec = t.tool_calls.find { |tc| tc["name"] == "propose_event" }
-    expect(rec).to be_present
-    expect(rec.dig("result", "staged")).to be(true)
+    expect(result[:beat]).to match(/docks aren't safe/)
+    rec = t.tool_calls.find { |tc| tc["name"] == "propose_event" && tc.dig("result", "staged") }
+    expect(rec).to be_present                       # the voicing's own staging, recorded for the turn log
+    expect(a.spoken?(maren.id)).to be(true)          # a real speaking turn — thread ownership follows
     expect(a.last_initiator).to eq(maren.id)
   end
 
-  it "appends nothing when the consumer picks nobody (actor null)" do
+  it "appends nothing when the selector picks nobody" do
     maren = npc(name: "Maren")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player" })
-    # default llm returns actor: nil
     t = transcript
     expect(run(a, t)).to be_nil
     expect(names(t)).not_to include("propose_event")
   end
 
-  it "aims a beat at ANOTHER present character when target names them (NPC-to-NPC)" do
-    maren = npc(name: "Maren", subrole: "barkeep")
-    korr  = npc(name: "Korr", subrole: "patron")
-    a = active_with(present: [ maren, korr ], agendas: { maren.id => "wants to needle Korr about his tab" })
-    context.llm_nuance = stub_llm(emit(actor: "Maren", target: "Korr",
-      beat: "Maren turns to Korr and asks, loud enough for the room, when he means to settle his tab."))
-    t = transcript
-    run(a, t)
-    rec = t.tool_calls.find { |tc| tc["name"] == "propose_event" }
-    targeted = rec.dig("args", "participants").find { |p| p["role"] == "target" }
-    expect(targeted["character_id"]).to eq(korr.id)         # aimed at Korr, not the player
-    expect(rec.dig("args", "details")).to match(/toward Korr/)
+  it "returns nil when the voicing itself declines (speak=false survives the frame)" do
+    maren = npc(name: "Maren")
+    a = active_with(present: [ maren ], agendas: { maren.id => "watchful" })
+    context.llm_nuance = stub_llm(selector: { "actor" => "Maren", "cause" => "sizing up the stranger" }, speak: false)
+    expect(run(a, transcript)).to be_nil
   end
 
-  it "tags a watch-kind beat's player participant as a witness, not a target" do
-    korr = npc(name: "Korr", subrole: "patron")
-    a = active_with(present: [ korr ], agendas: { korr.id => "distrusts the stranger" })
-    context.llm_nuance = stub_llm(emit(actor: "Korr", kind: "watch", beat: "Korr watches the newcomer over the rim of his cup."))
-    t = transcript
-    run(a, t)
-    ev = t.tool_calls.find { |tc| tc["name"] == "propose_event" }
-    roles = ev.dig("args", "participants").map { |p| p["role"] }
-    expect(roles).to include("witness")
-    expect(roles).not_to include("target")
+  it "leads a pronoun-opening beat with the actor's name (dangling-antecedent guard)" do
+    gerd = npc(name: "Gerd Vegirsson", subrole: "guard")
+    a = active_with(present: [ gerd ], agendas: { gerd.id => "wants the stranger gone" })
+    context.llm_nuance = stub_llm(
+      selector: { "actor" => "Gerd Vegirsson", "cause" => "the stranger lingers" },
+      line: "She steps forward, hand resting on the pommel of her sword."
+    )
+    result = run(a, transcript)
+    expect(result[:beat]).to eq("Gerd Vegirsson — She steps forward, hand resting on the pommel of her sword.")
   end
 
-  it "ignores an invalid actor name the consumer invents" do
+  it "ignores an invalid actor name the selector invents" do
     maren = npc(name: "Maren")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player" })
-    context.llm_nuance = stub_llm(emit(actor: "Ghost"))
+    context.llm_nuance = stub_llm(selector: { "actor" => "Ghost", "cause" => "boo" })
     t = transcript
     expect(run(a, t)).to be_nil
     expect(names(t)).not_to include("propose_event")
@@ -136,56 +125,37 @@ RSpec.describe Harness::Scene::Initiative do
   it "skips followers (they ride with the player, not initiative targets)" do
     ally = npc(name: "Bjorn", subrole: "fighter", properties: { "following_player" => true })
     a = active_with(present: [ ally ], agendas: { ally.id => "wants to chat" })
-    context.llm_nuance = stub_llm(emit(actor: "Bjorn"))
+    context.llm_nuance = stub_llm(selector: { "actor" => "Bjorn", "cause" => "chat" })
     t = transcript
-    expect(run(a, t)).to be_nil # no eligible candidates → consumer not even consulted
+    expect(run(a, t)).to be_nil # no eligible candidates → selector not even consulted
     expect(t.tool_calls).to be_empty
   end
 
-  it "prefers a NOT-engaged NPC over the one the player just engaged" do
+  it "excludes ONLY same-turn speakers (one turn per character per turn)" do
     maren = npc(name: "Maren")
-    korr  = npc(name: "Korr", subrole: "patron")
-    engaged = {
-      "name" => "propose_event", "args" => {},
-      "result" => { "participants" => [
+    spoke_this_turn = {
+      "name" => "propose_event",
+      "args" => { "participants" => [
         { "character_id" => maren.id,  "role" => "actor" },
-        { "character_id" => player.id, "role" => "target" }
-      ] }
-    }
-    a = active_with(present: [ maren, korr ],
-                    agendas: { maren.id => "wants to warn the player", korr.id => "sizes up the newcomer" })
-    context.llm_nuance = stub_llm(emit(actor: "Korr"))
-    t = transcript([ engaged ])
-    result = run(a, t)
-    expect(result[:npc]).to eq(korr) # Maren was engaged → Korr is preferred
-  end
-
-  it "falls back to the engaged NPC in a one-on-one (else initiative can never fire in a two-hander)" do
-    maren = npc(name: "Maren")
-    engaged = {
-      "name" => "propose_event", "args" => {},
-      "result" => { "participants" => [
-        { "character_id" => maren.id,  "role" => "actor" },
-        { "character_id" => player.id, "role" => "target" }
-      ] }
+        { "character_id" => player.id, "role" => "participant" }
+      ] },
+      "result" => { "staged" => true }
     }
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player" })
-    context.llm_nuance = stub_llm(emit(actor: "Maren", beat: "Maren leans in: there's something you should know before you go."))
-    t = transcript([ engaged ])
-    result = run(a, t)
-    expect(result[:npc]).to eq(maren) # only NPC present — engaged or not, she can act
+    context.llm_nuance = stub_llm(selector: { "actor" => "Maren", "cause" => "warn" }, line: "Maren speaks.")
+    t = transcript([ spoke_this_turn ])
+    expect(run(a, t)).to be_nil # she already had her voice this turn
   end
 
-  it "excludes the previous turn's initiator so the room rotates" do
-    ada = npc(name: "Ada")
-    bo  = npc(name: "Bo")
-    a = active_with(present: [ ada, bo ],
-                    agendas: { ada.id => "wants to talk", bo.id => "wants to warn the player" },
-                    last_initiator: ada.id)
-    context.llm_nuance = stub_llm(emit(actor: "Bo"))
-    t = transcript
-    result = run(a, t)
-    expect(result[:npc]).to eq(bo)
+  it "does NOT exclude the previous turn's initiator (rotation law killed — a 1-on-1 can re-fire)" do
+    maren = npc(name: "Maren")
+    a = active_with(present: [ maren ], agendas: { maren.id => "wants the tab settled" }, last_initiator: maren.id)
+    context.llm_nuance = stub_llm(
+      selector: { "actor" => "Maren", "cause" => "the tab is still unpaid" },
+      line: "Maren plants the saw. 'We settle up. Now.'"
+    )
+    result = run(a, transcript)
+    expect(result[:npc]).to eq(maren)
   end
 
   it "no-ops with no present NPCs" do
@@ -199,7 +169,7 @@ RSpec.describe Harness::Scene::Initiative do
     bandit = npc(name: "Vek", subrole: "bandit")
     a = active_with(present: [ bandit ], agendas: { bandit.id => "means to rob the player" })
     a.start_combat!
-    context.llm_nuance = stub_llm(emit(actor: "Vek"))
+    context.llm_nuance = stub_llm(selector: { "actor" => "Vek", "cause" => "robbery" })
     t = transcript
     expect(run(a, t)).to be_nil
     expect(names(t)).not_to include("propose_event")

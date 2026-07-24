@@ -11,7 +11,12 @@ RSpec.describe Harness::Turn::Loop do
   let!(:player) { Player.create!(name: "Hero", subrole: "adventurer", location: tavern) }
   let(:context) { Harness::Turn::Context.new(player_location: tavern) }
 
-  def run(reasoning:, narration: "(narration)", mode: nil)
+  # mode defaults to :agentic — this harness scripts REASONING-LOOP tool
+  # sequences through FakeAdapter#start_turn, which only the agentic loop
+  # consumes. Since agentic routing was vaporized (2026-07-24), the loop is
+  # reachable ONLY via the explicit mode; state-machine routing has its own
+  # coverage in the runner + dispatcher specs.
+  def run(reasoning:, narration: "(narration)", mode: :agentic)
     adapter = Harness::LLM::FakeAdapter.new(reasoning: reasoning, narration: narration)
     described_class.new(adapter: adapter, context: context, mode: mode).run_turn(input: "player input")
   end
@@ -178,13 +183,13 @@ RSpec.describe Harness::Turn::Loop do
         reasoning: [],
         narration: "Tormund spilled the beans about a courier named Corren"
       )
-      described_class.new(adapter: adapter, context: context).run_turn(input: "press Tormund")
+      described_class.new(adapter: adapter, context: context, mode: :agentic).run_turn(input: "press Tormund")
 
       transition_adapter = Harness::LLM::FakeAdapter.new(
         reasoning: [ { tool: "transition", args: { "destination_id" => warehouse.id } } ],
         narration: "you walk over to the warehouse"
       )
-      described_class.new(adapter: transition_adapter, context: context).run_turn(input: "go to warehouse")
+      described_class.new(adapter: transition_adapter, context: context, mode: :agentic).run_turn(input: "go to warehouse")
 
       # Capture the reasoning input on turn 3 (post-transition).
       captured_reasoning_input = nil
@@ -193,7 +198,7 @@ RSpec.describe Harness::Turn::Loop do
         captured_reasoning_input = user
         super(system: system, user: user, tools: tools)
       end
-      described_class.new(adapter: observing_adapter, context: context).run_turn(input: "look around the warehouse")
+      described_class.new(adapter: observing_adapter, context: context, mode: :agentic).run_turn(input: "look around the warehouse")
 
       # Tavern narration must not have leaked into the warehouse turn's input.
       expect(captured_reasoning_input).not_to include("Tormund")
@@ -452,7 +457,7 @@ RSpec.describe Harness::Turn::Loop do
         super(system: system, user: user)
       end
 
-      described_class.new(adapter: adapter, context: context).run_turn(input: "go to the warehouse")
+      described_class.new(adapter: adapter, context: context, mode: :agentic).run_turn(input: "go to the warehouse")
 
       expect(captured_narration_user).to include("\"current_scene\"")
       expect(captured_narration_user).to include("Bram")
@@ -593,7 +598,7 @@ RSpec.describe Harness::Turn::Loop do
       script = Array.new(50) { { tool: "query_scene", args: {} } }
       adapter = Harness::LLM::FakeAdapter.new(reasoning: script, narration: "..")
       transcript = described_class.new(
-        adapter: adapter, context: context, max_tool_calls: 3
+        adapter: adapter, context: context, max_tool_calls: 3, mode: :agentic
       ).run_turn(input: "go")
       expect(transcript.tool_calls.size).to eq(3)
     end
@@ -663,7 +668,7 @@ RSpec.describe Harness::Turn::Loop do
           raise "adapter exploded"
         end
         def complete(system:, user:)
-          "never reached"
+          raise "adapter exploded"
         end
       end.new
 
@@ -731,6 +736,9 @@ RSpec.describe Harness::Turn::Loop do
         instance
       end
 
+      # mode: :agentic — the reasoning loop is no longer routable from the
+      # state machine (agentic vaporized); these tests exercise the explicit
+      # dev-mode door, the only way start_combat fires from a scripted loop.
       transcript = run(
         reasoning: [
           { tool: "start_combat",
@@ -742,7 +750,8 @@ RSpec.describe Harness::Turn::Loop do
               "inciting_beat" => "Mud drew steel on Vek"
             } }
         ],
-        narration: "(unused — combat owns the narration)"
+        narration: "(unused — combat owns the narration)",
+        mode: :agentic
       )
       start_combat_call = transcript.tool_calls.find { |c| c["name"] == "start_combat" }
       expect(start_combat_call).not_to be_nil
@@ -765,7 +774,8 @@ RSpec.describe Harness::Turn::Loop do
               "inciting_beat" => "Mud refuses to back down"
             } }
         ],
-        narration: "regular narration body"
+        narration: "regular narration body",
+        mode: :agentic
       )
       expect(transcript.combat).to be_a(Harness::Combat::Loop::Result)
       expect(transcript.combat.end_reason).to eq(:yielded)

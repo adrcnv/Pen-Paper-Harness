@@ -33,7 +33,7 @@ RSpec.describe Harness::Runners::Conversation do
     calls = 0
     ctx = context_with do |full|
       calls += 1
-      if full.include?("SECOND PASS: WORLD MEMORY")    # post-turn reflection — not under test here
+      if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))    # post-turn reflection — not under test here
         { "facts" => [], "people" => [], "places" => [] }.to_json
       elsif full.include?("--- RETRY ---")
         expect(full).to include('"speak" is true but dialogue.prose is missing', '"pro"')
@@ -52,7 +52,7 @@ RSpec.describe Harness::Runners::Conversation do
   it "drops the line when the retry is also malformed (no infinite bounce)" do
     voicing_calls = 0
     ctx = context_with do |full|
-      voicing_calls += 1 unless full.include?("WORLD MEMORY")
+      voicing_calls += 1 unless (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
       "not json at all"
     end
     scene = Harness::Tools::QueryScene.build(ctx)
@@ -109,7 +109,7 @@ RSpec.describe Harness::Runners::Conversation do
   # a `people` list; capture hands each to the Realizer.
   def capture_people(*people, dialogue: "Ask for Harek at the relay.")
     context_with do |full|
-      if full.include?("WORLD MEMORY")
+      if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
         { "facts" => [], "people" => people }.to_json
       else
         { "speak" => true, "dialogue" => { "summary" => "points", "prose" => dialogue } }.to_json
@@ -176,7 +176,7 @@ RSpec.describe Harness::Runners::Conversation do
     expect(captured).to include("gruff, taciturn", "wary of strangers", "wants the player to drink or leave") # the soul
   end
 
-  it "strips the seeded mood/agenda after the NPC's first speaking turn (thread carries it after)" do
+  it "keeps mood/agenda in the payload after the NPC has spoken (the taking-stock pass keeps them current)" do
     barkeep.update!(properties: { "personality" => "gruff, taciturn" })
     active = Harness::Scene::Active.new(
       location: tavern, snapshot: nil, narrations: [],
@@ -187,23 +187,66 @@ RSpec.describe Harness::Runners::Conversation do
     voicings = []
     ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
       llm_nuance: StubLLM.new { |full|
-        voicings << full unless full.include?("WORLD MEMORY") || full.include?("filter stored facts")
-        { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "What'll it be?" } }.to_json
+        if full.include?("TAKING STOCK")
+          { "assessment" => "Tomas holds.", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
+        elsif full.include?("WORLD MEMORY")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        else
+          voicings << full
+          { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "What'll it be?" } }.to_json
+        end
       })
     ctx.active_scene = active
     scene = Harness::Tools::QueryScene.build(ctx)
 
-    # First turn: the barkeep speaks — the seeded opening stance is present.
     described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
     expect(voicings.last).to include("wary of strangers", "wants the player to drink or leave")
     expect(active.spoken?(barkeep.id)).to be(true)
 
-    # Second turn, same scene: mood/agenda gone; personality + thread remain.
+    # Second turn, same scene: mood/agenda STILL ride — no longer frozen
+    # seeds, the reevaluation owns keeping them honest.
     voicings.clear
     described_class.new.run(context: ctx, scene: scene, input: "still here", step: step)
-    expect(voicings.last).not_to include("wary of strangers")
-    expect(voicings.last).not_to include("wants the player to drink or leave")
-    expect(voicings.last).to include("gruff, taciturn")
+    expect(voicings.last).to include("wary of strangers", "wants the player to drink or leave", "gruff, taciturn")
+  end
+
+  it "takes stock after speaking: one ladder step, mood refreshed, resolved agenda cleared" do
+    active = Harness::Scene::Active.new(
+      location: tavern, snapshot: nil, narrations: [],
+      internal_state: { barkeep.id => "easy, wiping the bar" },
+      agendas: { barkeep.id => "get the stranger to buy a drink" },
+      extras: [], entered_at_game_time: 90
+    )
+    tails = []
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full|
+        if full.include?("TAKING STOCK")
+          tails << full
+          { "assessment" => "Tomas hardens toward the freeloader.",
+            "disposition" => "colder", "mood" => "polishing the same mug, knuckles white", "agenda" => "resolved" }.to_json
+        elsif full.include?("WORLD MEMORY")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "rebuffs", "prose" => "Then we're done here." } }.to_json
+        end
+      })
+    ctx.active_scene = active
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "I'm not buying anything", step: step)
+
+    expect(tails.last).to include("Then we're done here.")   # the eval re-reads the spoken line
+    expect(active.disposition_for(barkeep.id)).to eq("guarded")   # neutral → one step colder
+    expect(active.state_for(barkeep.id)).to eq("polishing the same mug, knuckles white")
+    expect(active.agenda_for(barkeep.id)).to be_nil
+
+    # Next voicing renders the ladder word into the mood line.
+    captured = nil
+    ctx2 = Harness::Turn::Context.new(player_location: tavern, game_time: 101,
+      llm_nuance: StubLLM.new { |full| captured ||= full; { "speak" => false }.to_json })
+    ctx2.active_scene = active
+    described_class.new.run(context: ctx2, scene: scene, input: "fine", step: step)
+    expect(captured).to include("guarded — polishing the same mug, knuckles white")
   end
 
   it "surfaces the real nearby places into the voicing call (grounding against invented duplicates)" do
@@ -268,8 +311,31 @@ RSpec.describe Harness::Runners::Conversation do
 
     described_class.new.run(context: ctx, scene: scene, input: "hello everyone", step: step("greet the room"))
     # Count VOICING calls only — the post-turn capture pass (WORLD MEMORY) is orthogonal.
-    voicing = polled.reject { |p| p.include?("WORLD MEMORY") || p.include?("filter stored facts") }
+    voicing = polled.reject { |p| (p.include?("WORLD MEMORY") || p.include?("TAKING STOCK")) || p.include?("filter stored facts") }
     expect(voicing.size).to eq(2)
+  end
+
+  it "surfaces the venue's for-sale stock with prices — and only when a shop has any" do
+    polled = []
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full| polled << full; { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "Aye." } }.to_json })
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "what do you sell?", step: step("asks about wares"))
+    # Assert on the INPUT payload only — the system preamble documents the key.
+    payload = polled.first.split("INPUT:").last
+    expect(payload).not_to include("wares_here")   # no stock → key absent, zero tokens
+
+    Item.create!(name: "gleaming saber", subrole: "weapon", location: tavern, properties: { "for_sale" => true })
+    Item.create!(name: "old broom", subrole: "tool", location: tavern)  # anchored but not for sale
+    polled.clear
+    described_class.new.run(context: ctx, scene: scene, input: "what do you sell?", step: step("asks about wares"))
+
+    payload = polled.find { |p| !(p.include?("WORLD MEMORY") || p.include?("TAKING STOCK")) }.split("INPUT:").last
+    expect(payload).to include("wares_here")
+    expect(payload).to include("gleaming saber")
+    expect(payload).not_to include("old broom")
+    expect(payload).to match(/"price": \d+/)
   end
 
   describe "planner-bound contest (dice binding)" do
@@ -284,7 +350,7 @@ RSpec.describe Harness::Runners::Conversation do
     def speaking_ctx
       voiced = []
       ctx = context_with do |full|
-        if full.include?("WORLD MEMORY")
+        if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
           { "facts" => [], "people" => [], "places" => [] }.to_json
         elsif full.include?("filter stored facts")   # gate fires — the contest's resolve logs an event
           { "relevant" => [] }.to_json
@@ -364,7 +430,7 @@ RSpec.describe Harness::Runners::Conversation do
       ctx = context_with do |full|
         if full.include?("filter stored facts")   # the relevance gate (synthetic ids: fact is candidate #1)
           { "relevant" => [ 1 ] }.to_json
-        elsif full.include?("WORLD MEMORY")        # capture (fires on grounded turns too)
+        elsif (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))        # capture (fires on grounded turns too)
           { "facts" => [] }.to_json
         else                                       # the barkeep's voicing
           voicing_prompt = full
@@ -451,7 +517,7 @@ RSpec.describe Harness::Runners::Conversation do
 
     it "appends NO marker when someone actually spoke" do
       ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
         { "speak" => true, "dialogue" => { "summary" => "s", "prose" => "Aye, what'll it be?" } }.to_json
       end
       scene = Harness::Tools::QueryScene.build(ctx)
@@ -472,7 +538,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "suppresses a verbatim re-emit of the speaker's previous line (breaks off instead)" do
       line = "Aye, the salt tithe was repealed last winter, and good riddance to it."
       ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
         { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => line } }.to_json
       end
       active_scene_for(ctx)
@@ -490,7 +556,7 @@ RSpec.describe Harness::Runners::Conversation do
       lines = [ "#{base} and names the Flats.", "#{base} and names the docks instead." ]
       calls = 0
       ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
         calls += 1
         { "speak" => true, "dialogue" => { "summary" => "pitches", "prose" => lines[calls - 1] } }.to_json
       end
@@ -507,7 +573,7 @@ RSpec.describe Harness::Runners::Conversation do
       chunk = "The Reeve is haggling for timber rights again. Not exactly a secret, just business, drink up friend."
       turn  = 0
       ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
         tomas = full.include?("\"name\": \"Tomas\"")
         if turn == 1      # turn 1: Tomas speaks the chunk, Ragnar stays silent
           tomas ? { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "Tomas leans on the bar. \"#{chunk}\"" } }.to_json : { "speak" => false }.to_json
@@ -530,7 +596,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "lets a genuinely NEW line through" do
       calls = 0
       ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if full.include?("SECOND PASS: WORLD MEMORY")
+        next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
         calls += 1
         prose = calls == 1 ? "Aye, what'll it be?" : "The cellar's flooded again, if you must know."
         { "speak" => true, "dialogue" => { "summary" => "talks", "prose" => prose } }.to_json
@@ -548,7 +614,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "tells every voicing call WHERE the conversation is (the Common Room leak fix)" do
       voicing_prompt = nil
       ctx = context_with do |full|
-        voicing_prompt = full unless full.include?("WORLD MEMORY") || full.include?("filter stored facts")
+        voicing_prompt = full unless (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK")) || full.include?("filter stored facts")
         { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "Well met." } }.to_json
       end
       scene = Harness::Tools::QueryScene.build(ctx)
@@ -563,7 +629,7 @@ RSpec.describe Harness::Runners::Conversation do
       tavern.update!(parent_id: city.id)
       voicing_prompt = nil
       ctx = context_with do |full|
-        voicing_prompt = full unless full.include?("WORLD MEMORY") || full.include?("filter stored facts")
+        voicing_prompt = full unless (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK")) || full.include?("filter stored facts")
         { "speak" => true, "dialogue" => { "summary" => "hi", "prose" => "Well met." } }.to_json
       end
       scene = Harness::Tools::QueryScene.build(ctx)
@@ -598,7 +664,7 @@ RSpec.describe Harness::Runners::Conversation do
 
       voicing_prompt = nil
       llm = EmbeddingStubLLM.new do |full|
-        if full.include?("SECOND PASS: WORLD MEMORY")
+        if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
           { "facts" => [], "people" => [], "places" => [] }.to_json
         elsif full.include?("filter stored facts")
           # ONE ranked pool: the mill fact and mill memory tie at the top in
@@ -626,7 +692,7 @@ RSpec.describe Harness::Runners::Conversation do
   describe "knowledge reflection (per-speaker capture)" do
     it "writes a fact the speaker's reflection reports" do
       ctx = context_with do |full|
-        if full.include?("SECOND PASS: WORLD MEMORY")   # the reflection tail
+        if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))   # the reflection tail
           { "facts" => [ { "content" => "The salt tithe was repealed last winter.", "subrole" => nil, "scope" => "local", "min_int" => nil } ] }.to_json
         elsif full.include?("filter stored facts")      # relevance gate
           { "relevant" => [] }.to_json
@@ -648,7 +714,7 @@ RSpec.describe Harness::Runners::Conversation do
         if full.include?("--- RETRY ---")               # the correction bounce
           expect(full).to include("answered in DIALOGUE schema")
           { "facts" => [ { "content" => "Eli works the crab pots by the shed.", "concerns" => [], "scope" => "local" } ] }.to_json
-        elsif full.include?("SECOND PASS: WORLD MEMORY") # schema collision: model re-voiced
+        elsif (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK")) # schema collision: model re-voiced
           reflection_calls += 1
           { "thought" => "…", "speak" => true, "dialogue" => { "summary" => "repeats", "prose" => "As I said." } }.to_json
         elsif full.include?("filter stored facts")
@@ -668,7 +734,7 @@ RSpec.describe Harness::Runners::Conversation do
 
     it "drops the claims when the reflection bounce also fails (no infinite loop)" do
       ctx = context_with do |full|
-        if full.include?("SECOND PASS: WORLD MEMORY")   # collision on BOTH attempts (retry contains this too)
+        if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))   # collision on BOTH attempts (retry contains this too)
           { "thought" => "…", "speak" => true, "dialogue" => { "summary" => "repeats", "prose" => "As I said." } }.to_json
         elsif full.include?("filter stored facts")
           { "relevant" => [] }.to_json
@@ -686,7 +752,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "extends the speaker's OWN voicing context: the reflection prompt carries the payload plus the spoken line" do
       reflection_prompt = nil
       ctx = context_with do |full|
-        if full.include?("SECOND PASS: WORLD MEMORY")
+        if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
           reflection_prompt = full
           { "facts" => [] }.to_json
         elsif full.include?("filter stored facts")
@@ -707,7 +773,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "does not reflect for a character who stayed silent" do
       reflected = false
       ctx = context_with do |full|
-        reflected = true if full.include?("SECOND PASS: WORLD MEMORY")
+        reflected = true if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
         { "speak" => false }.to_json
       end
       scene = Harness::Tools::QueryScene.build(ctx)
@@ -797,7 +863,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "reflects the debut line under the minted identity (no intake hole on promotion)" do
       ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
         llm_nuance: StubLLM.new { |full|
-          if full.include?("SECOND PASS: WORLD MEMORY")
+          if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
             { "facts" => [ { "content" => "The garrison marches at dawn.", "concerns" => [] } ],
               "people" => [], "places" => [] }.to_json
           elsif full.include?(recruit_desc)

@@ -74,10 +74,10 @@ module Harness
         @scene_manager        = scene_manager || ::Harness::Scene::Manager.new(context: context, logger: logger)
         @mode                 = self.class.resolve_mode(mode)
 
-        # Runner registry. Only built runners live here; unbuilt plan labels
-        # route the whole turn agentically (build-time scaffold, see
-        # Dispatcher#built?). Grows as runners land (movement, conversation, …).
-        # Injectable for tests.
+        # Runner registry. Only built runners live here; a plan step naming
+        # anything else degrades to a safe inspection step (the agentic
+        # scaffold fallback is gone — see run_state_machine). Injectable for
+        # tests.
         @registry = registry || {
           "inspection"   => ::Harness::Runners::Inspection.new(logger: logger),
           "movement"     => ::Harness::Runners::Movement.new(logger: logger),
@@ -331,26 +331,26 @@ module Harness
       end
 
       # State-machine turn: dispatch → ordered plan → chained runners.
-      # Two whole-turn escapes to the agentic loop, both LOUD in the log and
-      # NEITHER a per-step fallback:
-      #   - dispatcher produced no usable plan (the planner itself failed),
-      #   - the plan names a runner we haven't built yet (build-time scaffold).
-      # Once all runners exist, only an explicit :agentic mode reaches the loop.
+      # The agentic loop is NOT reachable from here anymore (it persisted
+      # invented dialogue as events — the Ilyrra flail). Every failure shape
+      # degrades to a safe inspection step instead, LOUD in the log; the loop
+      # survives only behind the explicit :agentic mode toggle.
       def run_state_machine(input, transcript)
         plan = @dispatcher.plan(input)
 
         if plan.failed? || plan.empty?
-          logger.info { "[Executor] no usable plan (#{plan.failed? ? 'parse-fail' : 'empty'}) → agentic this turn" }
-          return run_reasoning(input, transcript)
+          logger.info { "[Executor] no usable plan (#{plan.failed? ? 'parse-fail' : 'empty'}) → single inspection step" }
+          fallback = ::Harness::Dispatcher::Step.new(runner: "inspection", intent: input, args: {})
+          return execute_chain([ fallback ], input, transcript)
         end
 
-        unbuilt = plan.steps.map(&:runner).reject { |r| @dispatcher.built?(r) }.uniq
-        if unbuilt.any?
-          logger.info { "[Executor] plan needs unbuilt runner(s) #{unbuilt.inspect} → agentic this turn (scaffold)" }
-          return run_reasoning(input, transcript)
+        steps = plan.steps.map do |step|
+          next step if @dispatcher.built?(step.runner)
+          logger.info { "[Executor] unknown runner #{step.runner.inspect} → inspection for that step" }
+          ::Harness::Dispatcher::Step.new(runner: "inspection", intent: step.intent, args: step.args || {})
         end
 
-        execute_chain(plan.steps, input, transcript)
+        execute_chain(steps, input, transcript)
       end
 
       # Run an ordered list of Dispatcher::Step through their runners. Handoff

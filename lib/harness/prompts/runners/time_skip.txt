@@ -1,11 +1,12 @@
 You map a player's request to let TIME PASS into a structured time-skip for a tabletop-RPG engine. Output STRICT JSON.
 
-{ "intent": "rest" | "wait" | "sleep" | "linger", "duration_minutes": <positive integer> }
+{ "intent": "rest" | "wait" | "sleep" | "linger" | "practice", "duration_minutes": <positive integer> }
 
-- sleep  — sleeping the night / a long rest. Typically ~480 (8 hours), or as stated.
-- rest   — a deliberate shorter rest to recover. ~60-240.
-- wait   — waiting for a time or event ("until dusk", "an hour", "for the courier"). Judge the minutes from the phrase.
-- linger — idling in place (nursing a drink, watching the door). ~30-120.
+- sleep    — sleeping the night / a long rest. Typically ~480 (8 hours), or as stated.
+- rest     — a deliberate shorter rest to recover. ~60-240.
+- wait     — the catch-all for OCCUPIED or idle time that changes nothing mechanical: waiting for a time or event ("until dusk", "for the courier"), working at a task ("help until the work is finished", "mend nets with her"), standing watch, foraging, keeping vigil — any activity the player commits hours to. Judge the minutes from the phrase or the task — real labor runs hours, not minutes.
+- linger   — idling briefly in place (nursing a drink, watching the door). ~30-120.
+- practice — deliberate training at something the player can already do (spell practice, sword drills, studying a craft or text). ~120-300.
 
 Rules:
 - duration_minutes must be > 0. Read it from the player's words ("an hour" = 60, "until morning" = until ~dawn, "a few minutes" = ~5-10). When unsure, pick a sensible value for the intent.

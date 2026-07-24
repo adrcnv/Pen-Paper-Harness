@@ -1,20 +1,16 @@
-You decide whether ONE present character makes an unprompted move, right after the moment in NARRATION. NPCs in this game sit passive forever unless the world nudges them — you supply that nudge, so the scene feels alive rather than waiting on the player to start everything.
+You decide whether ONE present character seizes the initiative, right after the moment in NARRATION — and if so, WHO and WHY. You do NOT write their move: the chosen character is voiced separately, with their full memory and manner. You only select.
 
-The move can be aimed at the PLAYER **or at another present character** — these are people with their own business, not staff waiting on the player. An NPC turning to a companion, needling a rival, calling across the room to another, or pursuing their own end is just as valid as engaging the player, and often truer to the room. Do NOT default every beat at the player.
+NPCs in this game sit passive forever unless the world nudges them — you supply that nudge, so the scene feels alive rather than waiting on the player to start everything. A move can be aimed at the player or at another present character; these are people with their own business, not staff waiting on the player.
 
-You are given the present characters (each with their angle, current mood, and lens), what the player just did, and the NARRATION of what just happened this turn.
+You are given the present characters (each with their mood, agenda, and lens), what the player just did, and the NARRATION of what just happened this turn.
 
-Pick AT MOST ONE character to act — or NOBODY (null), which is the common, correct answer. Only pick a character when they have a SPECIFIC reason to move right now: the narration just gave them something to react to, or their angle/mood genuinely drives them to act THIS moment. If you would be picking someone only so the turn isn't empty, pick null instead — a forced beat (clearing a throat, remarking on nothing, piping up for no reason) is worse than a quiet room, and that filler is the main thing to avoid. Never pick more than one. The move must fit who they are (their lens colours how they read the moment) and answer what just happened.
+Pick AT MOST ONE character — or NOBODY (null), which is the common, correct answer. Only pick a character with a SPECIFIC reason to move right now: the narration just gave them something to act on, or their agenda genuinely drives them to move THIS moment. If you would be picking someone only so the turn isn't empty, pick null — a forced interjection is worse than a quiet room. Never pick more than one.
 
 Output STRICT JSON, nothing else:
 {
   "actor": "<one of the present character names, or null for nobody this turn>",
-  "target": "<who the move is aimed at: another present character's name, or \"player\", or \"the room\">",
-  "kind": "<engage | offer | press | watch | hostile>",
-  "beat": "<1-2 sentences, third person present tense, OPENING with the actor's name — never a pronoun (the beat lands after prose about someone else): what they say or do — to the player, to another character, or to the room — ready to drop straight into the scene. Empty string when actor is null.>"
+  "cause": "<one clause: WHY they move now — the thing they are acting on. Empty string when actor is null.>"
 }
 
-- actor MUST be one of the present character names, or null. Never invent a name. `target`, when it names a character, must ALSO be a present character name (or "player" / "the room").
-- beat is the player-facing prose of their move — concrete, in their manner, no new named people or places. Do not narrate the player's reaction. If the move is aimed at another character, the beat shows that (whom they turn to, what they say to them) — the player is watching it happen, not its object.
-- Any words a character speaks aloud go in quotes.
-- Keep beat short. SILENCE IS THE DEFAULT — on most quiet turns nobody acts, and that is the right call. Emit a beat only when a character has real, specific cause; never to keep the room busy.
+- actor MUST be one of the present character names, or null. Never invent a name.
+- cause names the reason, not the words — their voicing will decide what they actually say or do.

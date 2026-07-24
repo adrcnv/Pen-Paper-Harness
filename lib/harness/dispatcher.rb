@@ -62,17 +62,21 @@ module Harness
       plan
     end
 
-    # The standalone "dice" runner was retired — a roll belongs INSIDE an
-    # interaction, not as its own step (movement-as-a-dice-step was the bug that
-    # started this). The planner prompt no longer offers "dice", but a weak local
-    # model may still emit it from habit; remap it to environment (the home for
-    # bare physical/athletic attempts: climb, swim, force) so the turn doesn't
-    # needlessly fall back to agentic on an unbuilt label.
-    RETIRED_RUNNER_REMAP = { "dice" => "environment" }.freeze
+    # Retired labels a weak model may still emit from habit, remapped to safe
+    # runners so the turn never falls through to the frozen agentic loop:
+    #   dice    — a roll belongs INSIDE an interaction, not as its own step
+    #             (movement-as-a-dice-step was the founding bug) → environment.
+    #   agentic — VAPORIZED as a routing target (2026-07-24): the frozen loop
+    #             persisted invented dialogue as events and scripted whole
+    #             mini-scenes (the Ilyrra flail). The label is gone from the
+    #             planner prompt; a habit emission lands on inspection —
+    #             read-only, fails soft. The loop itself survives only behind
+    #             the explicit :agentic dev mode.
+    RETIRED_RUNNER_REMAP = { "dice" => "environment", "agentic" => "inspection" }.freeze
     def normalize_runner(label)
       mapped = RETIRED_RUNNER_REMAP[label.to_s]
       return label unless mapped
-      @logger.info { "[Dispatcher] remapped retired runner 'dice' → '#{mapped}'" }
+      @logger.info { "[Dispatcher] remapped retired runner #{label.to_s.inspect} → '#{mapped}'" }
       mapped
     end
 

@@ -93,6 +93,28 @@ RSpec.describe Harness::Tools::PassTime do
       expect(player.reload.current_hp).to eq(12)
     end
 
+    it "practice of 2+ hours pays the flat XP award ONCE per rest cycle; a rest re-arms it" do
+      out = tool.call({ "intent" => "practice", "duration_minutes" => 180 }, context)
+      expect(out["practice_xp"]).to eq(described_class::PRACTICE_XP)
+      xp_after_first = player.reload.xp
+
+      # Second session same cycle: clock moves, no award — the grinder door stays shut.
+      again = tool.call({ "intent" => "practice", "duration_minutes" => 180 }, context)
+      expect(again["practice_xp"]).to be_nil
+      expect(player.reload.xp).to eq(xp_after_first)
+
+      tool.call({ "intent" => "rest", "duration_minutes" => 480 }, context)
+      rearmed = tool.call({ "intent" => "practice", "duration_minutes" => 120 }, context)
+      expect(rearmed["practice_xp"]).to eq(described_class::PRACTICE_XP)
+    end
+
+    it "a short practice session moves the clock but pays nothing" do
+      out = tool.call({ "intent" => "practice", "duration_minutes" => 30 }, context)
+      expect(out["practice_xp"]).to be_nil
+      expect(out["after"]).to eq(1030)
+      expect(player.reload.properties).not_to have_key("practiced_since_rest")
+    end
+
     it "result echoes refreshed=true on rest, false on wait" do
       out_rest = tool.call({ "intent" => "rest", "duration_minutes" => 60 }, context)
       out_wait = tool.call({ "intent" => "wait", "duration_minutes" => 60 }, context)

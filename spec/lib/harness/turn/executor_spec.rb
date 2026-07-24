@@ -51,22 +51,27 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(transcript.runners_ran).to eq([ "inspection" ]) # the executor records which runner ran
   end
 
-  it "falls to the agentic loop for the whole turn when the plan names an unbuilt runner" do
+  # The agentic loop is no longer routable (vaporized 2026-07-24) — every
+  # failure shape degrades to a safe inspection step instead, and the loop
+  # survives only behind the explicit :agentic mode.
+  it "degrades an unknown-runner step to inspection instead of the agentic loop" do
     stub_plan("movement")                                   # movement not in registry
     loop_obj, adapter = build_loop(registry: { "inspection" => Harness::Runners::Inspection.new })
 
-    loop_obj.run_turn(input: "go to the docks")
+    transcript = loop_obj.run_turn(input: "go to the docks")
 
-    expect(adapter.reasoning_calls.size).to eq(1)          # agentic ran
+    expect(adapter.reasoning_calls).to be_empty            # agentic did NOT run
+    expect(transcript.runners_ran).to eq([ "inspection" ])
   end
 
-  it "falls to the agentic loop when the dispatcher can't produce a plan" do
+  it "degrades a failed plan to a single inspection step carrying the raw input" do
     stub_plan(parse_error: "no JSON")
     loop_obj, adapter = build_loop(registry: { "inspection" => Harness::Runners::Inspection.new })
 
-    loop_obj.run_turn(input: "???")
+    transcript = loop_obj.run_turn(input: "???")
 
-    expect(adapter.reasoning_calls.size).to eq(1)
+    expect(adapter.reasoning_calls).to be_empty
+    expect(transcript.runners_ran).to eq([ "inspection" ])
   end
 
   it "treats :combat as a hard terminator and aborts remaining steps" do

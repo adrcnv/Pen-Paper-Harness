@@ -16,8 +16,17 @@ module Harness
     # gets a real gap to fill, internal-state regenerates, present
     # characters re-checked).
     class PassTime < Base
-      VALID_INTENTS         = %w[rest wait sleep linger].freeze
+      VALID_INTENTS         = %w[rest wait sleep linger practice].freeze
       RESTORATIVE_INTENTS   = %w[rest sleep].freeze
+
+      # Practice (training montage): a session of >= 2 hours pays a small
+      # flat XP award, ONCE per rest cycle (the flag clears when the player
+      # rests/sleeps). Bounded on purpose — check XP prices RISK, and
+      # practice is riskless; an uncapped award would be a zero-risk grinder
+      # undercutting every priced check in the game. One session per day
+      # matters; grinding doesn't.
+      PRACTICE_MIN_MINUTES = 120
+      PRACTICE_XP          = 5
 
       def self.tool_name
         "pass_time"
@@ -30,7 +39,7 @@ module Harness
           "input_schema" => {
             "type"       => "object",
             "properties" => {
-              "intent"           => { "type" => "string", "enum" => VALID_INTENTS, "description" => "what kind of pass-time this is. Shapes narration tone but doesn't change clock math." },
+              "intent"           => { "type" => "string", "enum" => VALID_INTENTS, "description" => "what kind of pass-time this is. Shapes narration tone but doesn't change clock math. `practice` (training, drills, study of something the player can already do) additionally pays a small XP award for sessions of 2+ hours, once per rest cycle." },
               "duration_minutes" => { "type" => "integer", "description" => "how many in-fiction minutes pass. Sleep at an inn ~480 (8h). Wait until dusk varies. Linger at the bar ~60-180. Must be > 0." }
             },
             "required" => [ "intent", "duration_minutes" ]
@@ -73,7 +82,17 @@ module Harness
           end
         end
 
-        {
+        practice_xp = nil
+        if intent == "practice" && duration >= PRACTICE_MIN_MINUTES
+          player = ::Player.first
+          if player && !(player.properties || {})["practiced_since_rest"]
+            award = ::Harness::Character::XP.award!(player, PRACTICE_XP)
+            player.update!(properties: (player.properties || {}).merge("practiced_since_rest" => true))
+            practice_xp = award[:gained]
+          end
+        end
+
+        result = {
           "intent"           => intent,
           "duration_minutes" => duration,
           "before"           => before,
@@ -81,11 +100,17 @@ module Harness
           "scene_dirty"      => context.scene_dirty,
           "refreshed"        => refreshed
         }
+        result["practice_xp"] = practice_xp if practice_xp
+        result
       end
 
       private
 
       def refresh_player_uses!(player)
+        # A rest also re-arms the once-per-cycle practice award.
+        props = player.properties || {}
+        player.update!(properties: props.except("practiced_since_rest")) if props["practiced_since_rest"]
+
         return unless Array(player.abilities).any?
         refreshed = player.abilities.map do |a|
           a.merge("uses_remaining" => a["uses_per_rest"])

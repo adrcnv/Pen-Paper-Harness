@@ -61,6 +61,23 @@ RSpec.describe Harness::Scene::Manager do
       expect(second).not_to equal(first)
     end
 
+    it "arms the initiative settle on a true arrival but NOT on an in-place rebuild (time-skip)" do
+      manager.enter
+      expect(manager.active.initiative_cooldown).to be_nil   # arrival → one-turn settle
+
+      # In-place rebuild (pass_time crossed the threshold): exit + re-enter
+      # at the SAME location — the player never left, so no settle.
+      manager.exit
+      manager.ensure_entered
+      expect(manager.active.initiative_cooldown).to eq(0)
+
+      # A real move re-arms the settle at the destination.
+      manager.exit
+      context.player_location = warehouse
+      manager.ensure_entered
+      expect(manager.active.initiative_cooldown).to be_nil
+    end
+
     it "narrations start empty" do
       maren
       expect(manager.ensure_entered.narrations).to eq([])

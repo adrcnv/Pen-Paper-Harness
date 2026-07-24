@@ -1,0 +1,12 @@
+--- SECOND PASS: TAKING STOCK ---
+The dialogue turn is over. You are still the same character. You just said:
+
+"<<SAID>>"
+
+Now judge what this exchange did to YOUR OWN state. The dialogue format above no longer applies — no "speak", no "dialogue". Output ONLY this JSON, beginning with {"assessment":
+{"assessment": "<ONE sentence, third person by name: what this exchange did to them, if anything>",
+ "disposition": "hold" | "warmer" | "colder",
+ "mood": null | "<one fresh line of present state, replacing INPUT.you.mood>",
+ "agenda": "pursue" | "resolved" | "abandoned"}
+
+Most exchanges move nobody — {"disposition": "hold", "mood": null, "agenda": "pursue"} is the normal answer. Shift disposition ONLY when this exchange gave real cause, one step, read through your personality — the same words warm one soul and sharpen another. A contest verdict in INPUT.you.contest is settled fact: feel its effect, do not re-judge it. Refresh "mood" only when your present state visibly changed. "resolved" when the thing you were pursuing has concluded; "abandoned" when you gave it up out loud.
