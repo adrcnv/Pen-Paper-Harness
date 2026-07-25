@@ -120,6 +120,11 @@ RSpec.describe Harness::NarrativeShift::Realizer do
       .with(hash_including(location: tavern, dormant: true))
   end
 
+  it "stamps the speaker into a named-claim ground event (referrals carry their source)" do
+    run({ "name" => "Harek", "subrole" => "contact", "gist" => "the relay contact" })
+    expect(Event.last.details.dig("narrative", "trigger")).to eq("Vesna named Harek to the player")
+  end
+
   it "commits a shared grounding event that recalls the picked name from the role" do
     res = run({ "name" => "the surveyor", "subrole" => "surveyor", "gist" => "marked the marsh foundations" })
     ev = Event.last

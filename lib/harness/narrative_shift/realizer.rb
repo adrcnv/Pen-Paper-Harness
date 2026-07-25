@@ -266,7 +266,12 @@ module Harness
         if (player = ::Player.first)
           parts << { character: player, role: "recipient" }
         end
-        trigger = role_ref ? "#{role_ref} is #{npc.name}" : "named #{npc.name} to the player"
+        # The named-case trigger carries the SPEAKER — "tell him I sent you"
+        # only pays off if the referrer's name is in the subject's memory text
+        # (participants held Wenriel as source, but participants don't render
+        # into prose). The role-ref trigger stays a bare alias: it is the
+        # recall key ("the surveyor is Corin") and must not be reworded.
+        trigger = role_ref ? "#{role_ref} is #{npc.name}" : "#{speaker_label(speaker)} named #{npc.name} to the player"
         body    = [ role_ref, gist.presence ].compact.join(" — ")
         body    = "#{speaker_label(speaker)} spoke of #{npc.name}" if body.empty?
         ::Harness::Event::ForwardAppender.append(

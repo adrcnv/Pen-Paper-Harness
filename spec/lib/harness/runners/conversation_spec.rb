@@ -62,6 +62,30 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicing_calls).to eq(2) # original + exactly one retry
   end
 
+  it "renders an event's cast into the you-block line, excluding the holder (participation as visible links)" do
+    vesna = Npc.create!(name: "Vesna", subrole: "trader", location: tavern)
+    ev = Event.create!(game_time: 50, scope: "personal", location_id: tavern.id,
+                       details: { "narrative" => { "trigger" => "shared a smoke", "details" => "Talked over the fence about the flood." } })
+    [ barkeep, vesna, player ].each { |c| EventParticipant.create!(event: ev, character: c, role: "participant") }
+
+    voicing = nil
+    ctx = context_with do |full|
+      if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      elsif full.include?("filter stored facts")
+        { "relevant" => [] }.to_json
+      else
+        voicing ||= full   # first voicing = Tomas (addressed); Vesna's chime-in poll comes after
+        { "speak" => true, "dialogue" => { "summary" => "chats", "prose" => "Aye." } }.to_json
+      end
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+    expect(voicing).to include("(with Hero, Vesna)")           # cast surfaced, holder (Tomas) excluded
+    expect(voicing).not_to include("(with Tomas")
+  end
+
   it "a second speaker sees the first speaker's just-staged line as the current exchange entry" do
     Npc.create!(name: "Ruta", subrole: "servant", location: tavern)
     voicings = []

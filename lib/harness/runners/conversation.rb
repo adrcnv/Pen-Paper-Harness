@@ -238,7 +238,7 @@ module Harness
           if row.is_a?(::Knowledge)
             RecallItem.new(i, row.content, :knowledge)
           else
-            RecallItem.new(i, dated_memory_text(row, context.game_time), :event)
+            RecallItem.new(i, dated_memory_text(row, context.game_time, exclude_id: char.id), :event)
           end
         end
 
@@ -269,9 +269,11 @@ module Harness
       # content contract: dates live in game_time, never in the wording, so
       # relative time is computed fresh here and can't go stale. Same-day
       # events get no prefix.
-      def dated_memory_text(event, now)
+      def dated_memory_text(event, now, exclude_id: nil)
         phrase = ago_phrase(now.to_i - event.game_time.to_i)
-        phrase ? "(#{phrase}) #{event.recall_text}" : event.recall_text
+        base   = phrase ? "(#{phrase}) #{event.recall_text}" : event.recall_text
+        cast   = cast_suffix(event.event_participants.map(&:character_id), exclude_id)
+        cast ? "#{base} #{cast}" : base
       end
 
       def ago_phrase(delta_minutes)
@@ -535,7 +537,7 @@ module Harness
       def npc_knowledge(resolver, char, tcs, active, event_cap: EVENT_SUMMARY_CAP)
         res, _ = execute_tool(resolver, "query_events", { "for_holder_id" => char["id"], "limit" => event_cap }, into: tcs)
         events = Array(res.is_a?(Hash) ? res["events"] : res)
-          .map { |e| event_text(e) }
+          .map { |e| event_text(e, exclude_id: char["id"]) }
           .reject(&:empty?)
         props = ::Npc.find_by(id: char["id"])&.properties
         # Mood and agenda ride EVERY turn now — the post-emit reevaluation
@@ -573,7 +575,7 @@ module Harness
       # JSON hash, NOT a flat string: genesis/catch-up events carry
       # {"summary" => "..."}, propose_event/conversation events carry
       # {"narrative" => {"trigger", "details"}}.
-      def event_text(e)
+      def event_text(e, exclude_id: nil)
         return e.to_s[0, EVENT_TEXT_CAP] unless e.is_a?(::Hash)
         d = e["details"]
         text =
@@ -587,7 +589,22 @@ module Harness
           else
             d.to_s
           end
-        text.to_s.strip[0, EVENT_TEXT_CAP].to_s
+        text = text.to_s.strip[0, EVENT_TEXT_CAP].to_s
+        cast = cast_suffix(Array(e["participants"]).map { |p| p.is_a?(::Hash) ? p["character_id"] : nil }, exclude_id)
+        cast ? "#{text} #{cast}" : text
+      end
+
+      # The participation graph, surfaced: an event names its cast so a shared
+      # moment reads as a LINK between the people in it. The rows store who
+      # was involved; without this the names were thrown away at the exact
+      # moment the model needed them (Torvin "remembering" a referral that
+      # named no referrer). The holder is left out — it's their own memory.
+      CAST_CAP = 4
+      def cast_suffix(ids, exclude_id)
+        ids = ids.compact.uniq - [ exclude_id ]
+        return nil if ids.empty?
+        names = ::Character.where(id: ids.first(CAST_CAP)).pluck(:name)
+        names.empty? ? nil : "(with #{names.join(', ')})"
       end
 
       # The physical places around the speakers: the settlement they're in and
