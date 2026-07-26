@@ -152,7 +152,8 @@ module Harness
             "subrole" => c.subrole,
             "lens"    => props["lens"],
             "mood"    => [ (disp unless disp == "neutral"), @active.state_for(c.id) ].compact.join(" — ").presence,
-            "agenda"  => @active.agenda_for(c.id)
+            "agenda"  => @active.agenda_for(c.id),
+            "debts"   => debt_lines(c.id)
           }.compact
         end
 
@@ -175,6 +176,15 @@ module Harness
 
       def follower?(c)
         c.properties.is_a?(::Hash) && c.properties["following_player"] == true
+      end
+
+      # Open obligations from the candidate's seat — mechanical grounds for a
+      # beat ("the stranger owes them coin and is standing right there").
+      def debt_lines(id)
+        ::Obligation.open_now.involving(id).order(id: :desc).limit(2)
+                    .map { |o| o.line_for(id) }.presence
+      rescue ::StandardError
+        nil
       end
 
       def llm

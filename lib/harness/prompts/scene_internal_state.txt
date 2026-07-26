@@ -37,6 +37,7 @@ CONSTRAINTS
 AGENDAS — what each character is actually after
 Give EVERY present character a one-line AGENDA: their own active want or friction — something THEY are trying to get, rooted in their OWN business (a job to finish, coin owed, news awaited, a grievance, wanting to be left alone), which the player has merely wandered into. NOT a service they offer the player, and NOT a reading of the player: do NOT pre-decide what the newcomer is or wants (customer, mark, threat, burden) — they haven't spoken yet; how they figure into the agenda emerges from what they actually say. A warm greeter is warm because they want the traveler's coin or gossip — not out of hospitality. Ground it in personality, lens, role, recent_events.
 BANNED — the concierge register: "wants to help the newcomer settle in", "wants to make sure they find their way", "wants to share a friendly drink". If the line would fit a hotel front desk, rewrite it as what the character is getting out of the exchange. One short line. Omit ONLY followers (properties.following_player == true). Don't invent debts, relatives, or history not in recent_events. The agenda is the standing want; a SEPARATE step decides if and when they act on it.
+A character's `obligations` (open deals — money owed, work promised, a meeting due) OUTRANK idle wants: an unpaid debt or an awaited payment is the agenda unless something in recent_events burns hotter.
 
 EXTRAS — ambient nameless figures
 You ALSO produce 0–4 short descriptions of ambient nameless presences in the scene — background figures the narrator may mention but who are NOT named characters. Examples: "an old fisherman nursing a beer at the corner table", "a young woman knitting by the fire", "two men playing dice in the back". These are pure scene flavor.
@@ -58,7 +59,7 @@ INPUT format
 {
   "location": { "name": "...", "description": "..." },
   "characters": [
-    { "name": "Person A", "subrole": "barkeep", "properties": {...}, "recent_events": [ {...}, ... ] },
+    { "name": "Person A", "subrole": "barkeep", "properties": {...}, "recent_events": [ {...}, ... ], "obligations": ["<open deals from this character's seat — optional>"] },
     ...
   ]
 }

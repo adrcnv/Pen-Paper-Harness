@@ -44,8 +44,20 @@ module Harness
             "name"          => c.name,
             "subrole"       => c.subrole,
             "properties"    => mood_properties(c),
-            "recent_events" => recent_events(c)
-          }
+            "recent_events" => recent_events(c),
+            "obligations"   => obligations(c)
+          }.compact
+        end
+
+        # Open deals from this character's seat — the mechanical agenda
+        # candidates ("unenforced behaviour doesn't happen": a debt only
+        # gets pursued if the seeder can see it).
+        OBLIGATION_LIMIT = 3
+        def self.obligations(c)
+          ::Obligation.open_now.involving(c.id).order(id: :desc).limit(OBLIGATION_LIMIT)
+                      .map { |o| o.line_for(c.id) }.presence
+        rescue ::StandardError
+          nil
         end
 
         # Only the keys the prompt reads (see MOOD_PROPERTY_KEYS) — not the

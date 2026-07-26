@@ -62,6 +62,47 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicing_calls).to eq(2) # original + exactly one retry
   end
 
+  it "keeps text-less mechanical events OUT of the you-block (no bare cast-suffix resurrection)" do
+    ev = Event.create!(game_time: 60, scope: "personal", location_id: tavern.id,
+                       details: { "resolve" => { "outcome" => "failure", "stat" => "charisma" } })
+    [ barkeep, player ].each { |c| EventParticipant.create!(event: ev, character: c, role: "participant") }
+    voicing = nil
+    ctx = context_with do |full|
+      if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      elsif full.include?("filter stored facts")
+        { "relevant" => [] }.to_json
+      else
+        voicing ||= full
+        { "speak" => true, "dialogue" => { "summary" => "nods", "prose" => "Aye." } }.to_json
+      end
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+    expect(voicing).not_to include('" (with')
+  end
+
+  it "rides open obligations into the you-block as debts, from the speaker's seat" do
+    Obligation.create!(debtor: player, creditor: barkeep, kind: "coins", amount: 12,
+                       terms: "For the room", due: "by first light", game_time: 50)
+    voicing = nil
+    ctx = context_with do |full|
+      if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      elsif full.include?("filter stored facts")
+        { "relevant" => [] }.to_json
+      else
+        voicing ||= full
+        { "speak" => true, "dialogue" => { "summary" => "presses", "prose" => "You still owe for the room." } }.to_json
+      end
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+    expect(voicing).to include("Hero owes you 12 coins — For the room — due: by first light")
+  end
+
   it "renders an event's cast into the you-block line, excluding the holder (participation as visible links)" do
     vesna = Npc.create!(name: "Vesna", subrole: "trader", location: tavern)
     ev = Event.create!(game_time: 50, scope: "personal", location_id: tavern.id,
@@ -260,6 +301,30 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicings.last).to include("wary of strangers", "wants the player to drink or leave", "gruff, taciturn")
   end
 
+  it "strips an echoed disposition prefix from the eval's mood before storing (no 'guarded — guarded —' pileup)" do
+    active = Harness::Scene::Active.new(
+      location: tavern, snapshot: nil, narrations: [],
+      internal_state: { barkeep.id => "easy, wiping the bar" },
+      agendas: {}, extras: [], entered_at_game_time: 90
+    )
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full|
+        if full.include?("TAKING STOCK")
+          { "assessment" => "Tomas cools.", "disposition" => "hold",
+            "mood" => "guarded — watching the stranger's hands", "agenda" => "pursue" }.to_json
+        elsif full.include?("WORLD MEMORY")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "grunts", "prose" => "Hm." } }.to_json
+        end
+      })
+    ctx.active_scene = active
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+    expect(active.state_for(barkeep.id)).to eq("watching the stranger's hands")
+  end
+
   it "takes stock after speaking: one ladder step, mood refreshed, resolved agenda cleared" do
     active = Harness::Scene::Active.new(
       location: tavern, snapshot: nil, narrations: [],
@@ -451,6 +516,28 @@ RSpec.describe Harness::Runners::Conversation do
 
       outcome = described_class.new.run(context: ctx, scene: scene, input: "press Nelly", step: contest_step("target" => "Nonexistent Nelly"))
       expect(outcome.tool_calls.find { |t| t["name"] == "resolve" }).to be_nil
+    end
+
+    it "downgrades a DAMAGE-kind ability binding to bare persuasion (a pitch never fires a bolt)" do
+      player.update!(abilities: [ {
+        "id" => "arcane_bolt", "name" => "Arcane Bolt",
+        "description" => "A thin streak of pale force.",
+        "effect_kind" => "damage", "stat" => "intelligence", "damage_dice" => "1d6",
+        "uses_per_rest" => 4, "uses_remaining" => 4
+      } ])
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", margin: "narrow", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "attack magic, want a cut?", step: contest_step("target" => "Tomas", "ability" => "arcane bolt"))
+
+      contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
+      expect(contest_record.dig("args", "ability_name")).to be_nil          # rolled as persuasion...
+      expect(contest_record.dig("args", "stat")).to eq("charisma")
+      expect(barkeep.reload.current_hp).to eq(barkeep.max_hp)               # ...nobody got shot
+      expect(player.reload.abilities.first["uses_remaining"]).to eq(4)      # ...no use burned
+      expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:social" ])
+      expect(voiced.first).not_to include("pale force")                     # no effect injection
     end
 
     it "casts an owned ability with its innate modifier, spends a use, and injects its effect" do

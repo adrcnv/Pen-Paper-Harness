@@ -90,4 +90,35 @@ RSpec.describe Harness::Tools::TransferCoins do
       expect(vendor.reload.coins).to eq(5)
     end
   end
+
+  describe "obligation auto-settle (paying your creditor pays the debt)" do
+    it "settles the debt when the payment covers it" do
+      ob = Obligation.create!(debtor: player, creditor: vendor, kind: "coins", amount: 12, terms: "For lodging")
+      out = described_class.new.call({ "from_id" => player.id, "to_id" => vendor.id, "amount" => 12 }, context)
+      expect(out.dig("obligation", "status")).to eq("settled")
+      expect(ob.reload.status).to eq("settled")
+    end
+
+    it "reduces the debt on a partial payment" do
+      ob = Obligation.create!(debtor: player, creditor: vendor, kind: "coins", amount: 12, terms: "For lodging")
+      out = described_class.new.call({ "from_id" => player.id, "to_id" => vendor.id, "amount" => 5 }, context)
+      expect(out.dig("obligation", "remaining")).to eq(7)
+      expect(ob.reload).to have_attributes(status: "open", amount: 7)
+    end
+
+    it "settles an unfixed-amount debt on any payment" do
+      ob = Obligation.create!(debtor: player, creditor: vendor, kind: "coins", amount: nil, terms: "A third of the take")
+      described_class.new.call({ "from_id" => player.id, "to_id" => vendor.id, "amount" => 3 }, context)
+      expect(ob.reload.status).to eq("settled")
+    end
+
+    it "leaves unrelated transfers and deed obligations alone" do
+      deed  = Obligation.create!(debtor: player, creditor: vendor, kind: "deed", terms: "Haul the grain")
+      other = Obligation.create!(debtor: vendor, creditor: player, kind: "coins", amount: 4, terms: "Change owed")
+      out = described_class.new.call({ "from_id" => player.id, "to_id" => vendor.id, "amount" => 5 }, context)
+      expect(out["obligation"]).to be_nil
+      expect(deed.reload.status).to eq("open")
+      expect(other.reload.status).to eq("open")
+    end
+  end
 end

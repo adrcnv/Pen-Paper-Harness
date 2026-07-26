@@ -157,6 +157,8 @@ module Harness
       # DIFFERENT kind from bare persuasion, so a failed talk can still be
       # escalated with a charm. Fail-open: unresolvable target, unknown
       # ability with no fallback, or a resolve error → nil, plain conversation.
+      SOCIAL_ABILITY_KINDS = %w[control utility].freeze
+
       def run_contest(context, step, player, present, resolver, tcs, active)
         spec = step&.args&.dig("check")
         return nil unless spec.is_a?(::Hash)
@@ -168,6 +170,16 @@ module Harness
         end
 
         ability = player_ability(player, spec["ability"])
+        # SOCIAL-COMPATIBLE KINDS ONLY: resolve executes a bound ability's
+        # REAL mechanics — a damage-kind bolt "backing" a business pitch deals
+        # actual HP and burns a use (the Idunn-at-14/20 incident: the planner
+        # bound a mere mention of attack magic). Only kinds that shape a
+        # social beat may ride a conversation contest; anything else
+        # downgrades to bare persuasion.
+        if ability && !SOCIAL_ABILITY_KINDS.include?(ability["effect_kind"].to_s)
+          @logger.info { "[Runner conversation] contest ability #{ability['name'].inspect} (#{ability['effect_kind']}) is not social — downgraded to persuasion" }
+          ability = nil
+        end
         kind    = ability ? ability["id"].to_s : "social"
         key     = "#{target['id']}:#{kind}"
 
@@ -554,8 +566,21 @@ module Harness
           "appearance"  => ((props["appearance"] || props["physical"]) if props.is_a?(::Hash)),
           "mood"        => mood_line(active, char["id"]),
           "agenda"      => active&.agenda_for(char["id"]),
+          "debts"       => debts_for(char["id"]),
           "events"      => events
         }.compact
+      end
+
+      # Open obligations from this character's seat — the durable half of
+      # "keeping track of what you are owed". Settled truth like a contest
+      # verdict: the voicing acts on it (collect, honor, press), never
+      # re-litigates whether the deal exists.
+      DEBT_CAP = 4
+      def debts_for(id)
+        ::Obligation.open_now.involving(id).order(id: :desc).limit(DEBT_CAP)
+                    .map { |o| o.line_for(id) }.reverse.presence
+      rescue ::StandardError
+        nil
       end
 
       # "guarded — wiping the same spot on the bar, eyes on the door" — the
@@ -590,6 +615,10 @@ module Harness
             d.to_s
           end
         text = text.to_s.strip[0, EVENT_TEXT_CAP].to_s
+        # Text-less rows (resolve's mechanical logs) must stay empty so the
+        # caller's reject(&:empty?) drops them — a bare " (with Kaol)" cast
+        # suffix on a blank line resurrects what the filter exists to kill.
+        return text if text.empty?
         cast = cast_suffix(Array(e["participants"]).map { |p| p.is_a?(::Hash) ? p["character_id"] : nil }, exclude_id)
         cast ? "#{text} #{cast}" : text
       end
@@ -826,7 +855,13 @@ module Harness
         end
 
         active.shift_disposition!(id, taking["disposition"]) if %w[warmer colder].include?(taking["disposition"])
-        active.update_state!(id, taking["mood"].strip) if taking["mood"].is_a?(::String) && !taking["mood"].strip.empty?
+        if taking["mood"].is_a?(::String) && !taking["mood"].strip.empty?
+          # The eval sees mood rendered as "guarded — <flavor>" and often
+          # echoes the ladder word back; stored raw, the next render becomes
+          # "guarded — guarded — …". Strip a leading ladder-word prefix.
+          flavor = taking["mood"].strip.sub(/\A(?:#{::Harness::Scene::DISPOSITIONS.join('|')})\s*—\s*/i, "")
+          active.update_state!(id, flavor) unless flavor.empty?
+        end
         active.clear_agenda!(id) if %w[resolved abandoned].include?(taking["agenda"]) && active.agenda_for(id)
 
         @logger.info do

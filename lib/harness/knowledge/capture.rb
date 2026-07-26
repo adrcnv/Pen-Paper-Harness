@@ -59,6 +59,7 @@ module Harness
         facts  = extract_facts(@payload)
         people = attribute_people(extract_people(@payload))
         places = extract_places(@payload)
+        deals  = extract_deals(@payload)
         # Show the raw extraction (content + concerns) BEFORE routing/dedup, so
         # calibration is visible: what the razor kept, and where it routed it.
         facts.each { |f| @logger.info { "[Knowledge::Capture]   extracted: concerns=#{Array(f['concerns']).inspect} when=#{f['when'].inspect} :: #{f['content'].to_s[0, 120]}" } }
@@ -75,7 +76,8 @@ module Harness
         # proper-named sublocation of the current town). Independent of fact
         # routing; also a no-op without a context.
         realize_places(places)
-        @logger.info { "[Knowledge::Capture] #{@speaker}: #{facts.size} fact(s), #{written.size} written, #{people.size} person-ref(s), #{places.size} place-ref(s)" }
+        write_deals(deals)
+        @logger.info { "[Knowledge::Capture] #{@speaker}: #{facts.size} fact(s), #{written.size} written, #{people.size} person-ref(s), #{places.size} place-ref(s), #{deals.size} deal(s)" }
         written
       end
 
@@ -178,6 +180,54 @@ module Harness
         Array(parsed.is_a?(::Hash) ? parsed["people"] : nil).select do |p|
           p.is_a?(::Hash) && (p["name"].to_s.strip != "" || p["gist"].to_s.strip != "")
         end
+      end
+
+      # DEALS — bargains struck ALOUD in this exchange, reported by the
+      # speaker's own reflection (the obligations writer). The v1 razor is
+      # mechanical: both parties must resolve to the SPEAKER or the PLAYER —
+      # a deal between third parties is hearsay and doesn't bind. A same-pair
+      # same-kind OPEN row already on the books is not re-struck (the
+      # re-extraction drip: every later mention of the deal would otherwise
+      # mint a twin).
+      def extract_deals(parsed)
+        Array(parsed.is_a?(::Hash) ? parsed["deals"] : nil).select do |d|
+          d.is_a?(::Hash) && ::Obligation::KINDS.include?(d["kind"].to_s) &&
+            d["terms"].to_s.strip != "" && d["who_owes"].to_s.strip != "" && d["owed_to"].to_s.strip != ""
+        end
+      end
+
+      def write_deals(deals)
+        deals.each do |d|
+          debtor   = deal_party(d["who_owes"])
+          creditor = deal_party(d["owed_to"])
+          unless debtor && creditor && debtor.id != creditor.id
+            @logger.info { "[Knowledge::Capture] deal dropped (parties must be speaker or player): #{d['who_owes'].inspect} owes #{d['owed_to'].inspect} — #{d['terms'].to_s[0, 80]}" }
+            next
+          end
+          if ::Obligation.open_now.exists?(debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s)
+            @logger.info { "[Knowledge::Capture] deal skipped (open #{d['kind']} obligation #{debtor.name}→#{creditor.name} already on the books)" }
+            next
+          end
+          amount = d["amount"].is_a?(::Integer) && d["amount"].positive? ? d["amount"] : nil
+          row = ::Obligation.create!(
+            debtor: debtor, creditor: creditor, kind: d["kind"].to_s, amount: amount,
+            terms: d["terms"].to_s.strip[0, 300], due: d["due"].presence,
+            status: "open", game_time: @game_time.to_i, location_id: @location&.id
+          )
+          @logger.info { "[Knowledge::Capture] OBLIGATION ##{row.id} #{debtor.name} owes #{creditor.name} (#{row.kind}#{amount ? " #{amount}" : ''}): #{row.terms}" }
+        rescue ::StandardError => e
+          @logger.warn { "[Knowledge::Capture] deal write failed: #{e.class}: #{e.message}" }
+        end
+      end
+
+      def deal_party(name)
+        if name_match?(name, @speaker)
+          @speaker_row = ::Character.find_by(name: @speaker) unless defined?(@speaker_row)
+          return @speaker_row
+        end
+        player = ::Player.first
+        return player if player && name_match?(name, player.name)
+        nil
       end
 
       # Places an NPC named that could become real, findable rows. A valid entry

@@ -164,6 +164,44 @@ RSpec.describe Harness::Knowledge::Capture do
     end
   end
 
+  describe "deals (the obligations writer)" do
+    let!(:speaker_row) { Npc.create!(name: "Tomas", subrole: "barkeep", location: tavern) }
+    let!(:player)      { Player.create!(name: "Gu", location: tavern) }
+
+    def deals(*ds) = { "deals" => ds }
+
+    it "writes an open obligation between the speaker and the player" do
+      capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 5,
+                    "terms" => "Five coppers for the ale", "due" => "before you leave town"))
+      ob = Obligation.last
+      expect(ob.debtor).to eq(player)
+      expect(ob.creditor).to eq(speaker_row)
+      expect(ob).to have_attributes(kind: "coins", amount: 5, status: "open",
+                                    due: "before you leave town", game_time: 100)
+    end
+
+    it "drops a deal whose parties are not the speaker and the player (hearsay doesn't bind)" do
+      expect {
+        capture(deals("who_owes" => "Mirek", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Mend the fence"))
+      }.not_to change(Obligation, :count)
+    end
+
+    it "does not re-strike a same-pair same-kind deal already open (the re-extraction drip)" do
+      Obligation.create!(debtor: player, creditor: speaker_row, kind: "coins", amount: 5,
+                         terms: "Five for the ale", game_time: 90)
+      expect {
+        capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 5,
+                      "terms" => "Five coppers for the ale"))
+      }.not_to change(Obligation, :count)
+    end
+
+    it "keeps an unfixed amount as nil (a third of the take)" do
+      capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => nil,
+                    "terms" => "A third of whatever the tip earns"))
+      expect(Obligation.last.amount).to be_nil
+    end
+  end
+
   describe "person fact inheritance (minted map)" do
     # A fact naming a person realized THIS turn must attach to their row, even
     # when that person lives outside the current settlement — the settlement-scope

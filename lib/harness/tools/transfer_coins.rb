@@ -62,6 +62,7 @@ module Harness
         end
 
         log_event(from, to, amount, reason, context)
+        settled = settle_obligation(from, to, amount)
 
         {
           "from_id"        => from.id,
@@ -70,10 +71,28 @@ module Harness
           "from_balance"   => from.coins,
           "to_balance"     => to.coins,
           "reason"         => reason
-        }
+        }.merge(settled ? { "obligation" => settled } : {})
       end
 
       private
+
+      # AUTO-SETTLE: paying your creditor pays the debt. Oldest open coins
+      # obligation from payer to payee; payment covering the amount (or an
+      # unfixed amount — "a third of the take") settles it, a lesser payment
+      # reduces it. Dumb on purpose: one row at a time, no ledger.
+      def settle_obligation(from, to, amount)
+        ob = ::Obligation.open_now.where(kind: "coins", debtor_id: from.id, creditor_id: to.id).order(:id).first
+        return nil unless ob
+        if ob.amount.nil? || amount >= ob.amount
+          ob.update!(status: "settled")
+          { "id" => ob.id, "status" => "settled", "terms" => ob.terms }
+        else
+          ob.update!(amount: ob.amount - amount)
+          { "id" => ob.id, "status" => "open", "remaining" => ob.amount, "terms" => ob.terms }
+        end
+      rescue ::StandardError
+        nil
+      end
 
       def log_event(from, to, amount, reason, context)
         ::Harness::Event::ForwardAppender.append(

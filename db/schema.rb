@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_09_030000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_25_180000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -139,6 +139,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_030000) do
     t.index ["biome"], name: "index_locations_on_biome"
     t.index ["faction_id"], name: "index_locations_on_faction_id"
     t.index ["parent_id"], name: "index_locations_on_parent_id"
+  end
+
+  create_table "obligations", force: :cascade do |t|
+    t.integer "amount"
+    t.datetime "created_at", null: false
+    t.integer "creditor_id", null: false
+    t.integer "debtor_id", null: false
+    t.string "due"
+    t.integer "game_time", default: 0, null: false
+    t.string "kind", null: false
+    t.integer "location_id"
+    t.string "status", default: "open", null: false
+    t.text "terms", null: false
+    t.datetime "updated_at", null: false
+    t.index ["creditor_id", "status"], name: "index_obligations_on_creditor_id_and_status"
+    t.index ["debtor_id", "status"], name: "index_obligations_on_debtor_id_and_status"
   end
 
   create_table "session_states", force: :cascade do |t|

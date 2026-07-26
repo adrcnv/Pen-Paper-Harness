@@ -194,6 +194,22 @@ RSpec.describe Harness::Scene::Initiative do
     expect(result[:npc]).to eq(maren)
   end
 
+  it "surfaces a candidate's open debts to the selector (mechanical grounds for a beat)" do
+    maren = npc(name: "Maren")
+    Obligation.create!(debtor: player, creditor: maren, kind: "coins", amount: 9,
+                       terms: "For the mended cloak", game_time: 0)
+    selector_prompt = nil
+    context.llm_nuance = Class.new do
+      define_method(:complete) do |system:, user:|
+        selector_prompt = user unless user.include?("You voice ONE character")
+        { "actor" => nil, "cause" => "" }.to_json
+      end
+    end.new
+    a = active_with(present: [ maren ], agendas: {})
+    run(a, transcript)
+    expect(selector_prompt).to include("Hero owes you 9 coins — For the mended cloak")
+  end
+
   it "no-ops with no present NPCs" do
     a = active_with(present: [])
     t = transcript
