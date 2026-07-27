@@ -11,6 +11,13 @@ module Harness
     #                 executor re-plans the remaining work, bounded by
     #                 REDISPATCH_CAP. NOT a soft fallback — a signal that the
     #                 plan went stale under the world.
+    #   :skipped    — the step's referent deterministically does not exist
+    #                 (an item only ever mentioned in fiction, a recipient
+    #                 that isn't a row). Re-planning can never fix it, so the
+    #                 executor marks THIS step unresolved and CONTINUES the
+    #                 chain — one dead step must not kill the independent
+    #                 steps behind it (the stuck-tankard turn: a phantom-ale
+    #                 pickup hard-stopped the walk AND the question).
     #   :combat     — the step entered combat. Hard terminator: the executor
     #                 aborts remaining steps and the turn loop's combat
     #                 hand-off takes over.
@@ -26,6 +33,7 @@ module Harness
 
       def ok?         = status == :ok
       def redispatch? = status == :redispatch
+      def skipped?    = status == :skipped
       def combat?     = status == :combat
       def halted?     = status == :halted
     end

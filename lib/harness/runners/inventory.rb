@@ -17,27 +17,32 @@ module Harness
         tcs = []
         from = spec["from_id"] || player.id
 
+        # A null id is the resolver saying "this thing isn't in the world"
+        # (an ale that exists only in staged dialogue). That's deterministic —
+        # re-planning reproduces it — so skip the step and let the chain
+        # continue rather than burning the redispatch cap and killing the
+        # independent steps behind it.
         case spec["action"]
         when "pickup"
-          return redispatch("pickup without item_id", tcs) unless spec["item_id"]
+          return skip("pickup without item_id", tcs) unless spec["item_id"]
           execute_tool(resolver, "pickup", { "item_id" => spec["item_id"], "by_character_id" => player.id }, into: tcs)
         when "drop"
-          return redispatch("drop without item_id", tcs) unless spec["item_id"]
+          return skip("drop without item_id", tcs) unless spec["item_id"]
           execute_tool(resolver, "drop", { "item_id" => spec["item_id"], "by_character_id" => player.id }, into: tcs)
         when "give"
-          return redispatch("give without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          return skip("give without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "give_item", { "item_id" => spec["item_id"], "from_id" => from, "to_id" => spec["to_id"], "reason" => spec["reason"] }, into: tcs)
         when "transfer_coins"
-          return redispatch("transfer without to_id/amount", tcs) unless spec["to_id"] && spec["amount"]
+          return skip("transfer without to_id/amount", tcs) unless spec["to_id"] && spec["amount"]
           execute_tool(resolver, "transfer_coins", { "from_id" => from, "to_id" => spec["to_id"], "amount" => spec["amount"], "reason" => spec["reason"] }, into: tcs)
         when "buy"
-          return redispatch("buy without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          return skip("buy without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "buy_item", { "item_id" => spec["item_id"], "merchant_id" => spec["to_id"], "buyer_id" => player.id }, into: tcs)
         when "sell"
-          return redispatch("sell without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          return skip("sell without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "sell_item", { "item_id" => spec["item_id"], "merchant_id" => spec["to_id"], "seller_id" => player.id }, into: tcs)
         when "open"
-          return redispatch("open without item_id", tcs) unless spec["item_id"]
+          return skip("open without item_id", tcs) unless spec["item_id"]
           execute_tool(resolver, "open_container", { "item_id" => spec["item_id"], "by_character_id" => player.id }, into: tcs)
         else
           return redispatch("unknown inventory action #{spec['action'].inspect}", tcs)

@@ -60,11 +60,12 @@ module Harness
         maybe_run_materialize(loc, materialize_target)
         maybe_pull_traveler(loc)
         maybe_draw_local(loc)
+        maybe_pin_appointments(loc)
         maybe_seed_location_items(loc)
         maybe_stock_shop(loc)
         maybe_seed_treasure(loc)
 
-        snapshot = ::Harness::Scene::Assembler.for(location: loc)
+        snapshot = ::Harness::Scene::Assembler.for(location: loc, game_time: @context.game_time)
         maybe_run_character_catch_up(snapshot.present_characters)
         maybe_weave_claim_web(snapshot.present_characters)
         flavor = generate_internal_state(loc, snapshot.present_characters)
@@ -270,6 +271,13 @@ module Harness
         return [] unless ::Harness::Clock.phase(now) == ::Harness::Clock.phase(@last_exit_game_time)
         return [] unless (now - @last_exit_game_time) < CART_WINDOW_MINUTES
         @last_cast_ids
+      end
+
+      # The certainty draw: an NPC whose open meet with the player falls due
+      # HERE is relocated into the scene (Scene::AppointmentPin). Mechanical,
+      # no LLM gate — an appointment is not a dice roll.
+      def maybe_pin_appointments(loc)
+        ::Harness::Scene::AppointmentPin.pin!(loc, @context.game_time, logger: logger)
       end
 
       # Intra-city draw: at a sublocation, occasionally a same-city resident

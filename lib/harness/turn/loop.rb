@@ -167,6 +167,11 @@ module Harness
             combat_result = run_combat(transcript)
           end
 
+          # Missed meetings break mechanically once the clock is past due —
+          # runs after the turn's time advancement so this turn's initiative
+          # and next turn's payloads see the breach. Non-fatal inside.
+          ::Obligation.sweep_breaches!(@context.game_time, logger: logger)
+
           # If the reasoning loop fired a transition / travel / threshold-
           # crossing pass_time, rebuild the scene NOW — before narration —
           # so this turn's narration is recorded against the destination
@@ -406,6 +411,15 @@ module Harness
             chain_created_locations << { "id" => r["location_id"], "type" => r["type"], "name" => r["name"] } if r.is_a?(Hash) && r["location_id"]
           end
           logger.info { "[Executor] step #{step_no} #{step.runner} → #{outcome.status} (#{outcome.tool_calls.size} tool call(s))#{outcome.note ? " #{outcome.note}" : ''}" }
+
+          # A deterministically-dead step (referent doesn't exist) stalls
+          # alone; the chain continues. The intent (not the mechanical note)
+          # goes to narration's `unresolved` so the stall renders diegetically.
+          if outcome.skipped?
+            logger.info { "[Executor] step #{step_no} #{step.runner} skipped (#{outcome.note}); chain continues" }
+            transcript.unresolved ||= step.intent.to_s.strip.presence || outcome.note
+            next
+          end
 
           if outcome.combat?
             logger.info { "[Executor] combat terminator at step #{step_no}; aborting #{pending.size} remaining step(s)" }

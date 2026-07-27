@@ -43,7 +43,20 @@ module Harness
       def state(character, game_time)
         phase = ::Harness::Clock.phase(game_time)
         return :off if phase == :night
+        if (post = post_venue(character))
+          return VenueHours.open?(post, phase) ? :working : :free
+        end
         WORK_BLOCKS.fetch(character.subrole.to_s, DEFAULT_WORK).include?(phase) ? :working : :free
+      end
+
+      # A sublocation home IS a post (home == workplace under the current
+      # model), and the venue's hours are the ground truth for its keeper's
+      # shift — the subrole blocks are only the fallback for root-homed
+      # characters and unclassifiable venues.
+      def post_venue(character)
+        home = character.home_location
+        return nil unless home&.parent_id
+        VenueHours.kind(home) ? home : nil
       end
 
       # nil game_time = no clock in play (tests, headless) → no routine gate.

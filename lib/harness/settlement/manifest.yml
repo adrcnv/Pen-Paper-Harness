@@ -22,6 +22,7 @@ universal:
   - key: tavern
     subrole: barkeep
     min_size: hamlet
+    shop: [ provisions ]   # ale and stew on the board — "take the ale" resolves against real wares
     names: [ "the Tavern", "the Alehouse", "the Public House", "the Common Room" ]
     description: "A low-beamed taproom where the settlement drinks, eats, and trades talk."
   - key: market_square
@@ -38,6 +39,7 @@ universal:
   - key: inn
     subrole: innkeeper
     min_size: town
+    shop: [ provisions ]
     names: [ "the Inn", "the Travellers' Rest", "the Coaching Inn" ]
     description: "Lodging for travellers, with stabling out back and a fire kept for paying strangers."
 

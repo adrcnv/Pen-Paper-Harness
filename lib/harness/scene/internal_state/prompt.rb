@@ -49,12 +49,14 @@ module Harness
           }.compact
         end
 
-        # Open deals from this character's seat — the mechanical agenda
+        # Outstanding deals from this character's seat — the mechanical agenda
         # candidates ("unenforced behaviour doesn't happen": a debt only
-        # gets pursued if the seeder can see it).
+        # gets pursued if the seeder can see it), broken ones included. No
+        # clock here (the seeder isn't handed game_time), so lines carry the
+        # spoken due text without the urgency suffix.
         OBLIGATION_LIMIT = 3
         def self.obligations(c)
-          ::Obligation.open_now.involving(c.id).order(id: :desc).limit(OBLIGATION_LIMIT)
+          ::Obligation.outstanding.involving(c.id).order(id: :desc).limit(OBLIGATION_LIMIT)
                       .map { |o| o.line_for(c.id) }.presence
         rescue ::StandardError
           nil

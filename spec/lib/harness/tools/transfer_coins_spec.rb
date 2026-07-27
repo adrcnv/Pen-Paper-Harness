@@ -35,6 +35,8 @@ RSpec.describe Harness::Tools::TransferCoins do
       expect(ev.details["transfer_coins"]).to include("amount" => 12, "reason" => "ale and lodging")
       roles = ev.event_participants.pluck(:character_id, :role).sort
       expect(roles).to include([ player.id, "payer" ], [ vendor.id, "payee" ])
+      # The legible past-tense record — the mechanical door owns "paid".
+      expect(ev.recall_text).to eq("Hero paid Marta 12 coins — ale and lodging")
     end
 
     it "uses to.location when from has no location" do
@@ -92,18 +94,20 @@ RSpec.describe Harness::Tools::TransferCoins do
   end
 
   describe "obligation auto-settle (paying your creditor pays the debt)" do
-    it "settles the debt when the payment covers it" do
+    it "settles the debt when the payment covers it, and the event says so" do
       ob = Obligation.create!(debtor: player, creditor: vendor, kind: "coins", amount: 12, terms: "For lodging")
       out = described_class.new.call({ "from_id" => player.id, "to_id" => vendor.id, "amount" => 12 }, context)
       expect(out.dig("obligation", "status")).to eq("settled")
       expect(ob.reload.status).to eq("settled")
+      expect(Event.order(:id).last.recall_text).to eq("Hero paid Marta 12 coins, settling their bargain (For lodging)")
     end
 
-    it "reduces the debt on a partial payment" do
+    it "reduces the debt on a partial payment, and the event carries the remainder" do
       ob = Obligation.create!(debtor: player, creditor: vendor, kind: "coins", amount: 12, terms: "For lodging")
       out = described_class.new.call({ "from_id" => player.id, "to_id" => vendor.id, "amount" => 5 }, context)
       expect(out.dig("obligation", "remaining")).to eq(7)
       expect(ob.reload).to have_attributes(status: "open", amount: 7)
+      expect(Event.order(:id).last.recall_text).to eq("Hero paid Marta 5 coins, part of their bargain (7 coins still owed)")
     end
 
     it "settles an unfixed-amount debt on any payment" do

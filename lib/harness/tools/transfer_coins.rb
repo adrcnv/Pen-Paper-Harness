@@ -13,7 +13,8 @@ module Harness
     # Side effects:
     #   - transactional update of both characters' coin columns
     #   - one personal-scope event with both as participants
-    #     (from = "payer", to = "payee"; reason free text)
+    #     (from = "payer", to = "payee"; reason free text), carrying a
+    #     legible narrative line that notes any obligation it settled
     class TransferCoins < Base
       def self.tool_name
         "transfer_coins"
@@ -61,8 +62,8 @@ module Harness
           to.update!(coins: to.coins + amount)
         end
 
-        log_event(from, to, amount, reason, context)
         settled = settle_obligation(from, to, amount)
+        log_event(from, to, amount, reason, settled, context)
 
         {
           "from_id"        => from.id,
@@ -94,12 +95,24 @@ module Harness
         nil
       end
 
-      def log_event(from, to, amount, reason, context)
+      # The PAST-TENSE payment record, written by the door that moved the
+      # coins — a mouth may record a promise (an obligation), only mechanics
+      # may record a completion. The narrative line makes it render in
+      # recall/you-blocks (a bare transfer_coins hash is invisible history).
+      def log_event(from, to, amount, reason, settled, context)
+        line = "#{from.name} paid #{to.name} #{amount} coin#{'s' unless amount == 1}"
+        line += " — #{reason}" unless reason.empty?
+        if settled
+          line += settled["status"] == "settled" ?
+            ", settling their bargain (#{settled['terms']})" :
+            ", part of their bargain (#{settled['remaining']} coins still owed)"
+        end
         ::Harness::Event::ForwardAppender.append(
           game_time: context.game_time || 0,
           scope:     "personal",
           location:  from.location || to.location,
           details: {
+            "narrative" => { "details" => line },
             "transfer_coins" => {
               "from_id" => from.id,
               "to_id"   => to.id,

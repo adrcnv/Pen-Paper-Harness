@@ -4,8 +4,8 @@ RSpec.describe Harness::Items::Library do
   before  { described_class.reload! }
   after   { described_class.reload! }
 
-  it "loads all four categories without raising" do
-    %w[weapons armor jewelry magical].each do |c|
+  it "loads all five categories without raising" do
+    %w[weapons armor jewelry magical provisions].each do |c|
       expect(described_class.for_category(c)).to be_an(Array)
       expect(described_class.for_category(c)).not_to be_empty
     end

@@ -26,12 +26,13 @@ module Harness
     #   movement is now `transition` (sibling/parent/child) or `travel`
     #   (top-level coords → coords).
     class Assembler
-      def self.for(location:)
-        new(location).assemble
+      def self.for(location:, game_time: nil)
+        new(location, game_time: game_time).assemble
       end
 
-      def initialize(location)
-        @location = location
+      def initialize(location, game_time: nil)
+        @location  = location
+        @game_time = game_time
       end
 
       def assemble
@@ -49,7 +50,7 @@ module Harness
         }
         Snapshot.new(
           location:           @location,
-          present_characters: living,
+          present_characters: reject_absent(living),
           present_corpses:    dead,
           present_items:      present_items
         )
@@ -60,6 +61,43 @@ module Harness
       def dormant?(character)
         props = character.properties
         props.is_a?(Hash) && props["dormant"] == true
+      end
+
+      # Establishments close. With a clock, residents of this exact spot are
+      # absent when it's shut: at night everyone home-rooted here is asleep,
+      # and a classified venue outside its hours has its keeper away even by
+      # day. The row isn't moved — housing doesn't exist yet, so "where they
+      # are instead" is unrepresentable; they simply aren't in the scene.
+      # Followers ride with the player, and an NPC holding a due-now meeting
+      # with the player waits regardless (the appointment outranks the
+      # shutters). Visitors (home elsewhere) linger until the Evictor runs.
+      def reject_absent(living)
+        return living unless @game_time
+        phase = ::Harness::Clock.phase(@game_time)
+        return living unless phase == :night || VenueHours.closed?(@location, phase)
+        keep = meet_exempt_ids
+        living.reject { |c|
+          c.home_location_id == @location.id && !keep.include?(c.id) && !follower?(c)
+        }
+      end
+
+      def follower?(c)
+        c.properties.is_a?(Hash) && c.properties["following_player"] == true
+      end
+
+      # Counterparties of an open meet with the player falling due (early by
+      # the pin lead, late within the breach grace) stay visible wherever
+      # they stand — same window AppointmentPin uses to place them.
+      def meet_exempt_ids
+        player = ::Player.first
+        return [] unless player
+        now = @game_time.to_i
+        window = (now - ::Obligation::BREACH_GRACE)..(now + AppointmentPin::LEAD)
+        ::Obligation.open_now.where(kind: "meet").involving(player.id)
+          .where(due_time: window)
+          .flat_map { |o| [ o.debtor_id, o.creditor_id ] }.uniq - [ player.id ]
+      rescue ::StandardError
+        []
       end
 
       def present_items

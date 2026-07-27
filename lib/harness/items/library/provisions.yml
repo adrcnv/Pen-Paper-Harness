@@ -1,0 +1,16 @@
+# Provisions — tavern and inn wares: drink and simple fare. Cheap consumable
+# stock so "take the ale" resolves against a real item instead of a phantom
+# from staged dialogue. No modifiers, no effects — these are coins-and-color,
+# not gear; Items::Value floors them at 1 coin via the `provision` tag.
+
+- id: drink
+  kind_pool:    [ale, mead, cider, small beer, mulled wine]
+  flavor_pool:  [frothy, dark, cloudy, watered, honeyed, sour, warm]
+  base_tags:    [provision, drink]
+  weight: 50
+
+- id: meal
+  kind_pool:    [stew, pottage, black bread, salt fish, hard cheese, sausage]
+  flavor_pool:  [hot, hearty, day-old, thin, smoked, greasy]
+  base_tags:    [provision, food]
+  weight: 50

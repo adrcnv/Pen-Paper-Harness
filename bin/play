@@ -659,10 +659,11 @@ loop do
           puts line
         end
       end
-      debts = Obligation.open_now.involving(p.id).order(:id)
+      debts = Obligation.outstanding.involving(p.id).order(:id)
       if debts.any?
+        now = context.game_time
         puts "  debts:"
-        debts.each { |o| puts "    #{o.line_for(p.id)}" }
+        debts.each { |o| puts "    #{o.line_for(p.id, now: now)}" }
       end
       followers = Npc.where(location_id: p.location_id).select { |c|
         c.properties.is_a?(Hash) && c.properties["following_player"] == true

@@ -36,7 +36,7 @@ module Harness
       # model to render from this-turn's tool results, not from the cached
       # mood.) See AUDIT in execution_flows_observed.md.
       def self.build(context, condense_mood: false)
-        snap = ::Harness::Scene::Assembler.for(location: context.player_location)
+        snap = ::Harness::Scene::Assembler.for(location: context.player_location, game_time: context.game_time)
         active = context.active_scene
         # If the player moved mid-turn (transition / travel), the cached active
         # scene belongs to the OLD location — its extras / internal_state /

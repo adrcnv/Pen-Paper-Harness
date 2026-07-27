@@ -86,6 +86,19 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(after_step.calls).to eq(0)                       # chain aborted at combat
   end
 
+  it "continues the chain past a :skipped step and surfaces the stall as unresolved (the stuck-tankard fix)" do
+    dead  = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :skipped, note: "pickup without item_id"))
+    after = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :ok))
+    stub_plan("dead", "after")
+    loop_obj, = build_loop(registry: { "dead" => dead, "after" => after })
+
+    transcript = loop_obj.run_turn(input: "take the ale and talk to the reeve")
+
+    expect(dead.calls).to eq(1)
+    expect(after.calls).to eq(1)                            # chain CONTINUED
+    expect(transcript.unresolved).to eq("do dead")          # the step intent, for diegetic rendering
+  end
+
   it "bounds re-dispatch and hard-stops after REDISPATCH_CAP" do
     stale = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :redispatch))
     stub_plan("stale")                                     # every re-plan returns [stale]

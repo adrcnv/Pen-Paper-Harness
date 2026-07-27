@@ -70,13 +70,17 @@ module Harness
         # Turn::Context; a no-op (empty map) without one (unit tests).
         realize_people(people)
         bake_bindings!(facts)
+        # Deals BEFORE fact routing: the obligation owns its happening, so the
+        # event branch can drop a same-pair re-description — the same bargain
+        # emitted again under `facts`, usually in past tense ("Jay paid…"
+        # while the ledger says owed — the split-brain).
+        @deal_pairs = write_deals(deals)
         written = facts.filter_map { |f| route(f) }
         persist_embeddings(written)
         # Places named in dialogue → the PlaceRealizer (the buildings twin: mint a
         # proper-named sublocation of the current town). Independent of fact
         # routing; also a no-op without a context.
         realize_places(places)
-        write_deals(deals)
         @logger.info { "[Knowledge::Capture] #{@speaker}: #{facts.size} fact(s), #{written.size} written, #{people.size} person-ref(s), #{places.size} place-ref(s), #{deals.size} deal(s)" }
         written
       end
@@ -126,7 +130,7 @@ module Harness
       # absolute game_time (minutes), clamped at 0. Unparseable → nil (the
       # fact stays temporally unbound and routes to knowledge).
       UNIT_MINUTES = {
-        "day" => 1_440, "night" => 1_440, "week" => 10_080, "moon" => 43_200, "month" => 43_200,
+        "hour" => 60, "day" => 1_440, "night" => 1_440, "week" => 10_080, "moon" => 43_200, "month" => 43_200,
         "season" => 129_600, "winter" => 518_400, "summer" => 518_400, "year" => 518_400
       }.freeze
       WORD_NUMBERS = {
@@ -188,7 +192,8 @@ module Harness
       # a deal between third parties is hearsay and doesn't bind. A same-pair
       # same-kind OPEN row already on the books is not re-struck (the
       # re-extraction drip: every later mention of the deal would otherwise
-      # mint a twin).
+      # mint a twin). Returns the sorted id pairs it accepted (created or
+      # already open) so the event branch can drop same-pair re-descriptions.
       def extract_deals(parsed)
         Array(parsed.is_a?(::Hash) ? parsed["deals"] : nil).select do |d|
           d.is_a?(::Hash) && ::Obligation::KINDS.include?(d["kind"].to_s) &&
@@ -197,6 +202,7 @@ module Harness
       end
 
       def write_deals(deals)
+        pairs = []
         deals.each do |d|
           debtor   = deal_party(d["who_owes"])
           creditor = deal_party(d["owed_to"])
@@ -204,20 +210,25 @@ module Harness
             @logger.info { "[Knowledge::Capture] deal dropped (parties must be speaker or player): #{d['who_owes'].inspect} owes #{d['owed_to'].inspect} — #{d['terms'].to_s[0, 80]}" }
             next
           end
+          pair = [ debtor.id, creditor.id ].sort
           if ::Obligation.open_now.exists?(debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s)
             @logger.info { "[Knowledge::Capture] deal skipped (open #{d['kind']} obligation #{debtor.name}→#{creditor.name} already on the books)" }
+            pairs << pair
             next
           end
           amount = d["amount"].is_a?(::Integer) && d["amount"].positive? ? d["amount"] : nil
           row = ::Obligation.create!(
             debtor: debtor, creditor: creditor, kind: d["kind"].to_s, amount: amount,
             terms: d["terms"].to_s.strip[0, 300], due: d["due"].presence,
+            due_time: ::Obligation.parse_due(d["due"], @game_time),
             status: "open", game_time: @game_time.to_i, location_id: @location&.id
           )
+          pairs << pair
           @logger.info { "[Knowledge::Capture] OBLIGATION ##{row.id} #{debtor.name} owes #{creditor.name} (#{row.kind}#{amount ? " #{amount}" : ''}): #{row.terms}" }
         rescue ::StandardError => e
           @logger.warn { "[Knowledge::Capture] deal write failed: #{e.class}: #{e.message}" }
         end
+        pairs.uniq
       end
 
       def deal_party(name)
@@ -477,6 +488,16 @@ module Harness
 
         if participants.empty?
           @logger.info { "[Knowledge::Capture] SKIP event fact — teller #{@speaker.inspect} unknown, no party resolved #{parties.inspect} :: #{content}" }
+          return nil
+        end
+
+        # A deal this pass claimed this pair: the obligation row owns the
+        # happening, and an undated fact between the same two people is that
+        # bargain re-described — usually in past tense ("paid" while the
+        # ledger says owed). Dated facts pass: an explicit `when` places them
+        # before this exchange.
+        if at.nil? && Array(@deal_pairs).include?(participants.map(&:id).sort)
+          @logger.info { "[Knowledge::Capture] SKIP event fact — deal owns pair #{participants.map(&:name).inspect} :: #{content}" }
           return nil
         end
 

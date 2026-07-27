@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_25_180000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_26_200000) do
   create_table "characters", force: :cascade do |t|
     t.text "abilities"
     t.string "character_class", default: "commoner", null: false
@@ -147,6 +147,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_25_180000) do
     t.integer "creditor_id", null: false
     t.integer "debtor_id", null: false
     t.string "due"
+    t.integer "due_time"
     t.integer "game_time", default: 0, null: false
     t.string "kind", null: false
     t.integer "location_id"

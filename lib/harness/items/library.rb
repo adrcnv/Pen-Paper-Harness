@@ -7,14 +7,14 @@ module Harness
     # Scenarios::Roller treatment).
     #
     # Categories are the YAML filenames in lib/harness/items/library/:
-    #   weapons.yml, armor.yml, jewelry.yml, magical.yml
+    #   weapons.yml, armor.yml, jewelry.yml, magical.yml, provisions.yml
     #
     # Each entry contributes a `weight` toward category-level weighted picks.
     # Magical effects reference TriggerRegistry by name; validation rejects
     # unknown trigger names + malformed params.
     module Library
       LIBRARY_DIR = Rails.root.join("lib/harness/items/library")
-      CATEGORIES  = %w[weapons armor jewelry magical].freeze
+      CATEGORIES  = %w[weapons armor jewelry magical provisions].freeze
 
       class InvalidLibrary < StandardError; end
 

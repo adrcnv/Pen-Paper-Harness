@@ -138,6 +138,16 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Event.last.game_time).to eq(20_000 - 1_440)
     end
 
+    it "parses 'an hour ago' as a dated happening (the crewless-boat hole: 'an hour ago' baked into knowledge)" do
+      Npc.create!(name: "Tomas", location: tavern)
+      expect {
+        capture(facts("content" => "A boat arrived at the docks with no crew.", "when" => "an hour ago"),
+                game_time: 20_000)
+      }.to change(Event, :count).by(1)
+      expect(Knowledge.count).to eq(0)
+      expect(Event.last.game_time).to eq(20_000 - 60)
+    end
+
     it "routes a vague past ('many moons ago') to knowledge, wording intact" do
       Npc.create!(name: "Tomas", location: tavern)
       expect {
@@ -199,6 +209,56 @@ RSpec.describe Harness::Knowledge::Capture do
       capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => nil,
                     "terms" => "A third of whatever the tip earns"))
       expect(Obligation.last.amount).to be_nil
+    end
+
+    it "bakes a parseable due into due_time; a condition-due stays nil" do
+      capture(deals({ "who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "meet",
+                      "terms" => "Help unload the herring", "due" => "tomorrow dawn" },
+                    { "who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "deed",
+                      "terms" => "A name for the work", "due" => "after the barge is loaded" }),
+              game_time: 480)
+      dated, conditional = Obligation.order(:id).last(2)
+      expect(dated.due_time).to eq(1440 + 360)
+      expect(conditional.due_time).to be_nil
+    end
+
+    # The split-brain guard: one reflection pass emitting the same bargain
+    # twice — once under `deals` (the ledger: owed) and once under `facts`,
+    # usually past tense (history: paid). The obligation owns the happening.
+    describe "same-pair fact re-description" do
+      def deal_and_fact(fact)
+        deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 5,
+              "terms" => "Five coppers for the tip").merge(facts(fact))
+      end
+
+      it "drops an undated same-pair fact when a deal was struck this pass" do
+        expect {
+          capture(deal_and_fact("content" => "Gu paid Tomas five coppers for the tip.", "concerns" => [ "Gu" ]))
+        }.to change(Obligation, :count).by(1)
+        expect(Event.count).to eq(0)
+        expect(Knowledge.count).to eq(0)
+      end
+
+      it "drops it even when the deal was already on the books (the re-mention drip)" do
+        Obligation.create!(debtor: player, creditor: speaker_row, kind: "coins", amount: 5,
+                           terms: "Five coppers for the tip", game_time: 90)
+        capture(deal_and_fact("content" => "Gu owes Tomas five coppers.", "concerns" => [ "Gu" ]))
+        expect(Obligation.count).to eq(1)
+        expect(Event.count).to eq(0)
+      end
+
+      it "still writes a dated same-pair fact (an explicit when predates the bargain)" do
+        expect {
+          capture(deal_and_fact("content" => "Gu lodged with Tomas.", "concerns" => [ "Gu" ], "when" => "2 days ago"))
+        }.to change(Event, :count).by(1)
+      end
+
+      it "still writes a fact between a different pair" do
+        Npc.create!(name: "Ingvar Ingvarson", location: city)
+        expect {
+          capture(deal_and_fact("content" => "Ingvar owes the counting house forty marks.", "concerns" => [ "Ingvar Ingvarson" ]))
+        }.to change(Event, :count).by(1)
+      end
     end
   end
 

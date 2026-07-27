@@ -40,6 +40,8 @@ module Harness
       def maybe_draw
         return nil unless @location&.parent_id   # sublocations only
         return nil unless @location.settlement?   # not a wilderness-leaf sub
+        # No patrons drift into a shut room — venue hours gate the draw.
+        return nil if @game_time && VenueHours.closed?(@location, ::Harness::Clock.phase(@game_time))
         return nil unless @rng.rand < chance
 
         local = candidates.sample(random: @rng)

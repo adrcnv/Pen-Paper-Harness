@@ -178,11 +178,12 @@ module Harness
         c.properties.is_a?(::Hash) && c.properties["following_player"] == true
       end
 
-      # Open obligations from the candidate's seat — mechanical grounds for a
-      # beat ("the stranger owes them coin and is standing right there").
+      # Outstanding obligations from the candidate's seat — mechanical grounds
+      # for a beat ("the stranger owes them coin and is standing right there"),
+      # broken ones included.
       def debt_lines(id)
-        ::Obligation.open_now.involving(id).order(id: :desc).limit(2)
-                    .map { |o| o.line_for(id) }.presence
+        ::Obligation.outstanding.involving(id).order(id: :desc).limit(2)
+                    .map { |o| o.line_for(id, now: @context.game_time) }.presence
       rescue ::StandardError
         nil
       end

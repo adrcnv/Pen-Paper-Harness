@@ -60,6 +60,54 @@ RSpec.describe Harness::Scene::Assembler do
       end
     end
 
+    describe "closed venues and night (clock-aware presence)" do
+      let(:alehouse) { Location.create!(name: "the Alehouse", parent: city) }
+      let!(:barkeep) { Npc.create!(name: "Faelar", subrole: "barkeep", location: alehouse, home_location: alehouse) }
+
+      MORNING_T = 8 * 60
+      NOON_T    = 12 * 60
+      NIGHT_T   = 23 * 60
+
+      it "hides the keeper at their shut venue (a tavern of a morning)" do
+        snap = described_class.for(location: alehouse, game_time: MORNING_T)
+        expect(snap.present_characters).to be_empty
+      end
+
+      it "keeps the keeper during open hours" do
+        snap = described_class.for(location: alehouse, game_time: NOON_T)
+        expect(snap.present_characters).to include(barkeep)
+      end
+
+      it "hides home-rooted residents everywhere at night" do
+        townsman = Npc.create!(name: "Townsman", location: city, home_location: city)
+        expect(described_class.for(location: alehouse, game_time: NIGHT_T).present_characters).to be_empty
+        expect(described_class.for(location: city, game_time: NIGHT_T).present_characters).to be_empty
+        expect(townsman.reload.location_id).to eq(city.id) # hidden, not moved
+      end
+
+      it "keeps visitors (home elsewhere) and followers" do
+        visitor  = Npc.create!(name: "Visitor", location: alehouse, home_location: city)
+        follower = Npc.create!(name: "Shadow", location: alehouse, home_location: alehouse,
+                               properties: { "following_player" => true })
+        snap = described_class.for(location: alehouse, game_time: NIGHT_T)
+        expect(snap.present_characters).to contain_exactly(visitor, follower)
+      end
+
+      it "keeps a resident holding a due-now meet with the player (the appointment outranks the shutters)" do
+        player = Player.create!(name: "Jay", location: alehouse)
+        Obligation.create!(debtor: barkeep, creditor: player, kind: "meet",
+                           terms: "Meet before opening", due_time: MORNING_T + 30,
+                           game_time: MORNING_T - 600, location_id: alehouse.id)
+        snap = described_class.for(location: alehouse, game_time: MORNING_T)
+        expect(snap.present_characters).to include(barkeep)
+      end
+
+      it "applies no filter without a clock" do
+        snap = described_class.for(location: alehouse)
+        expect(snap.present_characters).to include(barkeep)
+      end
+    end
+
     describe "present_items" do
       let(:tavern)    { Location.create!(name: "Dockside Inn", parent: city) }
       let(:warehouse) { Location.create!(name: "Warehouse",    parent: city) }

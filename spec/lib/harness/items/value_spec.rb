@@ -34,4 +34,8 @@ RSpec.describe Harness::Items::Value do
   it "never returns below 1" do
     expect(described_class.of(item(tags: []))).to be >= 1
   end
+
+  it "prices a provision at a copper, not half a sword" do
+    expect(described_class.of(item(tags: %w[provision drink]))).to eq(1)
+  end
 end

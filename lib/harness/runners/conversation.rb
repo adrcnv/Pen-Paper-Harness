@@ -360,7 +360,7 @@ module Harness
           if v[:kind] == :extra
             { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }
           else
-            npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP)
+            npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP, now: context.game_time)
           end
         # The contest verdict rides in the TARGET's you-block — the dice have
         # ruled; the voicing renders the consequence, it does not re-judge.
@@ -546,7 +546,7 @@ module Harness
       # mood and scene agenda (seeded at scene entry). query_events already
       # scopes to this holder (own + witnessed + local), so the events list is
       # strictly this character's knowledge; no other character's memories enter.
-      def npc_knowledge(resolver, char, tcs, active, event_cap: EVENT_SUMMARY_CAP)
+      def npc_knowledge(resolver, char, tcs, active, event_cap: EVENT_SUMMARY_CAP, now: nil)
         res, _ = execute_tool(resolver, "query_events", { "for_holder_id" => char["id"], "limit" => event_cap }, into: tcs)
         events = Array(res.is_a?(Hash) ? res["events"] : res)
           .map { |e| event_text(e, exclude_id: char["id"]) }
@@ -566,19 +566,20 @@ module Harness
           "appearance"  => ((props["appearance"] || props["physical"]) if props.is_a?(::Hash)),
           "mood"        => mood_line(active, char["id"]),
           "agenda"      => active&.agenda_for(char["id"]),
-          "debts"       => debts_for(char["id"]),
+          "debts"       => debts_for(char["id"], now),
           "events"      => events
         }.compact
       end
 
-      # Open obligations from this character's seat — the durable half of
-      # "keeping track of what you are owed". Settled truth like a contest
-      # verdict: the voicing acts on it (collect, honor, press), never
-      # re-litigates whether the deal exists.
+      # Outstanding obligations from this character's seat — the durable half
+      # of "keeping track of what you are owed", broken ones included (a
+      # missed meeting is a grudge, not a closed book). Settled truth like a
+      # contest verdict: the voicing acts on it (collect, honor, press),
+      # never re-litigates whether the deal exists.
       DEBT_CAP = 4
-      def debts_for(id)
-        ::Obligation.open_now.involving(id).order(id: :desc).limit(DEBT_CAP)
-                    .map { |o| o.line_for(id) }.reverse.presence
+      def debts_for(id, now = nil)
+        ::Obligation.outstanding.involving(id).order(id: :desc).limit(DEBT_CAP)
+                    .map { |o| o.line_for(id, now: now) }.reverse.presence
       rescue ::StandardError
         nil
       end

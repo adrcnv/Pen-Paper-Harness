@@ -11,8 +11,9 @@ module Harness
       BASE = 5
 
       # A small floor by item class so a plain (no-modifier) weapon/armor still
-      # has a sensible worth. Picks the richest matching tag.
-      CATEGORY_BASE = { "jewelry" => 14, "armor" => 10, "weapon" => 8 }.freeze
+      # has a sensible worth. Picks the richest matching tag. Provisions go
+      # NEGATIVE against BASE: a mug of ale is a copper, not half a sword.
+      CATEGORY_BASE = { "jewelry" => 14, "armor" => 10, "weapon" => 8, "provision" => -4 }.freeze
 
       STAT_PER_POINT   = 7    # each +1 to a stat modifier
       DAMAGE_MODIFIER  = 12   # each bonus damage-die modifier

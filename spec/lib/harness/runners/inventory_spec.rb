@@ -31,11 +31,19 @@ RSpec.describe Harness::Runners::Inventory do
     expect(barkeep.reload.coins).to eq(8)
   end
 
-  it "re-dispatches when a transfer lacks recipient/amount" do
+  it "skips (chain continues) when a transfer lacks recipient/amount — a deterministic dead end" do
     ctx = context_with { { "action" => "transfer_coins", "reason" => "huh" }.to_json }
     scene = Harness::Tools::QueryScene.build(ctx)
     outcome = described_class.new.run(context: ctx, scene: scene, input: "pay", step: step)
-    expect(outcome.status).to eq(:redispatch)
+    expect(outcome.status).to eq(:skipped)
+  end
+
+  it "skips a pickup of an item that exists only in fiction (the phantom ale)" do
+    ctx = context_with { { "action" => "pickup", "item_id" => nil, "reason" => "no ale item present" }.to_json }
+    scene = Harness::Tools::QueryScene.build(ctx)
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "take the ale", step: step)
+    expect(outcome.status).to eq(:skipped)
+    expect(outcome.note).to eq("pickup without item_id")
   end
 
   describe "shop buy/sell dispatch (to_id is the merchant)" do
@@ -62,11 +70,11 @@ RSpec.describe Harness::Runners::Inventory do
       expect(owned.reload.location_id).to eq(shop.id)
     end
 
-    it "re-dispatches buy without a merchant" do
+    it "skips buy without a merchant" do
       ctx = context_with { { "action" => "buy", "item_id" => ware.id }.to_json }
       scene = Harness::Tools::QueryScene.build(ctx)
       outcome = described_class.new.run(context: ctx, scene: scene, input: "buy it", step: step)
-      expect(outcome.status).to eq(:redispatch)
+      expect(outcome.status).to eq(:skipped)
     end
   end
 
@@ -82,11 +90,11 @@ RSpec.describe Harness::Runners::Inventory do
       expect(chest.reload.properties["state"]).to eq("open")
     end
 
-    it "re-dispatches open without an item_id" do
+    it "skips open without an item_id" do
       ctx = context_with { { "action" => "open" }.to_json }
       scene = Harness::Tools::QueryScene.build(ctx)
       outcome = described_class.new.run(context: ctx, scene: scene, input: "open it", step: step)
-      expect(outcome.status).to eq(:redispatch)
+      expect(outcome.status).to eq(:skipped)
     end
   end
 end

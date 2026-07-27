@@ -108,6 +108,12 @@ RSpec.describe Harness::Scene::LocalDraw do
       expect(described_class.new(tavern, game_time: evening, rng: fires).maybe_draw).to eq(local)
     end
 
+    it "never draws into a shut venue (no patrons at the tavern of a morning)" do
+      npc(location_id: mirehold.id, home_location_id: mirehold.id, subrole: "minstrel")
+      morning = 8 * 60
+      expect(described_class.new(tavern, game_time: morning, rng: fires).maybe_draw).to be_nil
+    end
+
     it "falls back to the flat CHANCE when no game_time is supplied" do
       local = npc(location_id: mirehold.id, home_location_id: mirehold.id)
       expect(described_class.new(tavern, rng: fires).maybe_draw).to eq(local)

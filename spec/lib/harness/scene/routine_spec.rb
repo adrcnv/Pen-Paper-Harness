@@ -39,6 +39,29 @@ RSpec.describe Harness::Scene::Routine do
     end
   end
 
+  describe "venue-hours posts (home at a classified sublocation)" do
+    let(:city)     { Location.create!(name: "Saltmere") }
+    let(:alehouse) { Location.create!(name: "the Alehouse", parent: city) }
+
+    it "derives the shift from the venue's hours, not the subrole block" do
+      pot_boy = Npc.create!(name: "Pot Boy", subrole: "labourer", location: alehouse, home_location: alehouse)
+      expect(described_class.state(pot_boy, MORNING)).to eq(:free)    # subrole block says :working
+      expect(described_class.state(pot_boy, EVENING)).to eq(:working) # subrole block says :free
+    end
+
+    it "falls back to the subrole block for an unclassifiable venue home" do
+      hall  = Location.create!(name: "the Moot Hall", parent: city)
+      clerk = Npc.create!(name: "Hall Clerk", subrole: "clerk", location: hall, home_location: hall)
+      expect(described_class.state(clerk, NOON)).to eq(:working)
+      expect(described_class.state(clerk, EVENING)).to eq(:free)
+    end
+
+    it "falls back to the subrole block for a root-homed character" do
+      smith = Npc.create!(name: "Root Smith", subrole: "smith", location: city, home_location: city)
+      expect(described_class.state(smith, NOON)).to eq(:working)
+    end
+  end
+
   describe ".free? / .awake? (draw gates)" do
     it "a nil clock disables the routine gate entirely" do
       expect(described_class.free?(npc("smith"), nil)).to be(true)

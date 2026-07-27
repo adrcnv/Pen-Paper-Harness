@@ -77,6 +77,12 @@ module Harness
         Outcome.new(tool_calls: tool_calls, scene_dirty: false, status: :redispatch, note: note)
       end
 
+      # Deterministic dead end (the referent doesn't exist) — the executor
+      # stalls this step and continues the chain instead of re-planning.
+      def skip(note, tool_calls = [])
+        Outcome.new(tool_calls: tool_calls, scene_dirty: false, status: :skipped, note: note)
+      end
+
       # Present-roster lookup, first-token tolerant ("Dobrila" matches
       # "Dobrila Drozdov"). Shared by the contest binding (conversation) and
       # the cast runner.
@@ -130,7 +136,7 @@ module Harness
 
         id = (ok && res.is_a?(Hash)) ? (res["character_id"] || res["id"]) : nil
         if id && (active = context.active_scene)
-          active.snapshot = ::Harness::Scene::Assembler.for(location: context.player_location)
+          active.snapshot = ::Harness::Scene::Assembler.for(location: context.player_location, game_time: context.game_time)
         end
         cache[index] = id
       end
