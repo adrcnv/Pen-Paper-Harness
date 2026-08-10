@@ -10,7 +10,8 @@ module Harness
     #              workplace); not drawable elsewhere.
     #   :free    — off shift; the draw pool. This is how the town smith turns
     #              up at the pub of an evening.
-    #   :off     — night; drawable nowhere.
+    #   :off     — asleep; drawable nowhere. Night for most; a night-shift
+    #              keeper (tavern) instead sleeps through their closed block.
     #
     # Consumers today: LocalDraw (requires :free) and TravelerPull (requires
     # not-:off — long-distance travel is itself time away from the post, so a
@@ -42,10 +43,15 @@ module Harness
 
       def state(character, game_time)
         phase = ::Harness::Clock.phase(game_time)
-        return :off if phase == :night
         if (post = post_venue(character))
-          return VenueHours.open?(post, phase) ? :working : :free
+          return :working if VenueHours.open?(post, phase)
+          # Off-hours for a post-holder: a night-shift keeper (tavern) sleeps
+          # through their closed block; a day-trade keeper is off at night
+          # and free of an evening (the smith at the pub).
+          return :off if phase == :night || VenueHours::HOURS[VenueHours.kind(post)].include?(:night)
+          return :free
         end
+        return :off if phase == :night
         WORK_BLOCKS.fetch(character.subrole.to_s, DEFAULT_WORK).include?(phase) ? :working : :free
       end
 

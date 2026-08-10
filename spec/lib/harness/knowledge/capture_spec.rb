@@ -190,6 +190,21 @@ RSpec.describe Harness::Knowledge::Capture do
                                     due: "before you leave town", game_time: 100)
     end
 
+    it "resolves a spoken 'where' to an existing location, link-only" do
+      capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "meet",
+                    "terms" => "Meet in Saltmere at dusk", "due" => "at dusk", "where" => "saltmere"))
+      expect(Obligation.last.location_id).to eq(city.id)
+    end
+
+    it "falls back to the struck location when 'where' is unknown or absent (never mints)" do
+      capture(deals({ "who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "meet",
+                      "terms" => "Meet at the Old Bridge", "where" => "the Old Bridge" },
+                    { "who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 2,
+                      "terms" => "Two coppers for the ale" }))
+      expect(Obligation.pluck(:location_id)).to all(eq(tavern.id))
+      expect(Location.where("LOWER(name) = ?", "the old bridge")).to be_empty
+    end
+
     it "drops a deal whose parties are not the speaker and the player (hearsay doesn't bind)" do
       expect {
         capture(deals("who_owes" => "Mirek", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Mend the fence"))
@@ -251,6 +266,18 @@ RSpec.describe Harness::Knowledge::Capture do
         expect {
           capture(deal_and_fact("content" => "Gu lodged with Tomas.", "concerns" => [ "Gu" ], "when" => "2 days ago"))
         }.to change(Event, :count).by(1)
+      end
+
+      it "drops a concerns-empty fact naming both parties (the knowledge-path leak)" do
+        expect {
+          capture(deal_and_fact("content" => "Gu and Tomas agreed Gu would pay five coppers for the tip.", "concerns" => []))
+        }.to change(Obligation, :count).by(1)
+        expect(Knowledge.count).to eq(0)
+      end
+
+      it "still writes a concerns-empty fact naming only one party" do
+        capture(deal_and_fact("content" => "Tomas keeps the only ledger in Saltmere.", "concerns" => []))
+        expect(Knowledge.count).to eq(1)
       end
 
       it "still writes a fact between a different pair" do

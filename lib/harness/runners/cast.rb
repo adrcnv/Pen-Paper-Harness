@@ -47,6 +47,14 @@ module Harness
         unless ok && res.is_a?(::Hash) && res["outcome"]
           return redispatch("cast failed: #{res.is_a?(::Hash) ? res['error'] : 'unparseable resolve'}", tcs)
         end
+        # Tag a person-targeted CONTROL contest (charm and kin) so narration
+        # renders bracket-only: untagged, the narrator re-dramatized the
+        # verdict and put invented acceptance speech in the target's mouth
+        # ahead of the initiative beat (the charm-word double-acceptance).
+        # Physical/self casts stay narratable — nobody else voices those.
+        if target && ability["effect_kind"] == "control" && tcs.last && tcs.last["name"] == "resolve"
+          tcs.last["contest"] = "cast"
+        end
 
         # Stage-2 composed magic: on a successful cast, an ability with an
         # atom block (authored, cached, or composed now) commits it.

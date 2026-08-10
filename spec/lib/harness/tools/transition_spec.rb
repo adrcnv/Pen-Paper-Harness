@@ -6,10 +6,12 @@ RSpec.describe Harness::Tools::Transition do
   let(:warehouse) { Location.create!(name: "Warehouse", parent: city) }
   let!(:player) { Player.create!(name: "Hero", location: tavern) }
   let(:context) {
-    Harness::Turn::Context.new(player_location: tavern, game_time: 100).tap { |c|
+    # Noon — day phase, so the Warehouse (a trade venue) is open and the
+    # barred-door gate stays out of the mechanics tests' way.
+    Harness::Turn::Context.new(player_location: tavern, game_time: 720).tap { |c|
       c.active_scene = Harness::Scene::Active.new(
         location: tavern, snapshot: nil, narrations: [], internal_state: {}, agendas: {}, extras: [],
-        entered_at_game_time: 100
+        entered_at_game_time: 720
       )
     }
   }
@@ -60,6 +62,38 @@ RSpec.describe Harness::Tools::Transition do
       described_class.new.call({ "destination_id" => warehouse.id }, context)
 
       [ a, b ].each { |c| expect(c.reload.location_id).to eq(warehouse.id) }
+    end
+  end
+
+  describe "barred doors (venue hours)" do
+    NIGHT_TIME = 23 * 60
+
+    it "refuses a shut trade venue at night, player unmoved" do
+      context.game_time = NIGHT_TIME
+      out = described_class.new.call({ "destination_id" => warehouse.id }, context)
+      expect(out["refused"]).to eq("closed")
+      expect(context.player_location).to eq(tavern)
+      expect(context.game_time).to eq(NIGHT_TIME) # no clock cost on a refused door
+    end
+
+    it "never bars a tavern (night arrival is possible and safe)" do
+      context.player_location = warehouse
+      player.update!(location: warehouse)
+      context.game_time = NIGHT_TIME
+      out = described_class.new.call({ "destination_id" => tavern.id }, context)
+      expect(out["error"]).to be_nil
+      expect(context.player_location).to eq(tavern)
+    end
+
+    it "a due-now appointment at the venue opens the door" do
+      keeper = Npc.create!(name: "Factor", location: warehouse, home_location: warehouse)
+      Obligation.create!(debtor: keeper, creditor: player, kind: "meet",
+                         terms: "Meet at the warehouse", due_time: NIGHT_TIME + 30,
+                         game_time: 0, location_id: warehouse.id)
+      context.game_time = NIGHT_TIME
+      out = described_class.new.call({ "destination_id" => warehouse.id }, context)
+      expect(out["error"]).to be_nil
+      expect(context.player_location).to eq(warehouse)
     end
   end
 end

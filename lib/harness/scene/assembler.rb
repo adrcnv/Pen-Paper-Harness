@@ -63,18 +63,19 @@ module Harness
         props.is_a?(Hash) && props["dormant"] == true
       end
 
-      # Establishments close. With a clock, residents of this exact spot are
-      # absent when it's shut: at night everyone home-rooted here is asleep,
-      # and a classified venue outside its hours has its keeper away even by
-      # day. The row isn't moved — housing doesn't exist yet, so "where they
-      # are instead" is unrepresentable; they simply aren't in the scene.
-      # Followers ride with the player, and an NPC holding a due-now meeting
-      # with the player waits regardless (the appointment outranks the
-      # shutters). Visitors (home elsewhere) linger until the Evictor runs.
+      # Staff keep hours. With a clock, residents of this exact spot are
+      # absent outside their venue's staffed phases (VenueHours: the tavern
+      # keeper works nights and sleeps of a morning; everyone else sleeps at
+      # night). The row isn't moved — housing doesn't exist yet, so "where
+      # they are instead" is unrepresentable; they simply aren't in the
+      # scene. Followers ride with the player, and an NPC holding a due-now
+      # meeting with the player waits regardless (the appointment outranks
+      # the shutters). Visitors (home elsewhere) linger until the Evictor
+      # runs.
       def reject_absent(living)
         return living unless @game_time
         phase = ::Harness::Clock.phase(@game_time)
-        return living unless phase == :night || VenueHours.closed?(@location, phase)
+        return living if VenueHours.residents_present?(@location, phase)
         keep = meet_exempt_ids
         living.reject { |c|
           c.home_location_id == @location.id && !keep.include?(c.id) && !follower?(c)

@@ -38,8 +38,14 @@ module Harness
           return redispatch("transition target not resolved", tcs) unless tid
           dest_name = nearby.find { |n| n["id"] == tid }&.dig("name") || "there"
           return declined(dest_name) unless confirm_scene_change(context, dest_name)
-          _, ok = execute_tool(resolver, "transition", { "destination_id" => tid }, into: tcs)
-          return redispatch("transition failed for id=#{tid}", tcs) unless ok
+          res, ok = execute_tool(resolver, "transition", { "destination_id" => tid }, into: tcs)
+          unless ok
+            # A barred door is deterministic (venue shut at this hour) —
+            # skip so the rest of the chain survives; the refusal rides in
+            # tcs for narration to render as a shut door.
+            return skip(res["error"], tcs) if res.is_a?(::Hash) && res["refused"] == "closed"
+            return redispatch("transition failed for id=#{tid}", tcs)
+          end
           Outcome.new(tool_calls: tcs, scene_dirty: true, status: :ok)
 
         when "travel"

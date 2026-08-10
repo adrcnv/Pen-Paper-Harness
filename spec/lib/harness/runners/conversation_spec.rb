@@ -869,6 +869,28 @@ RSpec.describe Harness::Runners::Conversation do
       expect(reflection_calls).to eq(1)
     end
 
+    it "bounces a MALFORMED-JSON reflection once instead of raising past the retry (the Bodil charm-meet drop)" do
+      ctx = context_with do |full|
+        if full.include?("--- RETRY ---")               # the correction bounce
+          expect(full).to include("unparseable")
+          { "facts" => [], "deals" => [ { "who_owes" => "Tomas the Barkeep", "owed_to" => "Hero", "kind" => "meet",
+                                          "terms" => "Meet at the shed at dusk.", "due" => "at dusk" } ] }.to_json
+        elsif (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK")) # truncated garbage
+          "{\"facts\": [\n{"
+        elsif full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        else
+          { "speak" => true, "dialogue" => { "summary" => "agrees", "prose" => "Fine. The shed, at dusk." } }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      expect {
+        described_class.new.run(context: ctx, scene: scene, input: "meet me at the shed at dusk?", step: step)
+      }.to change(Obligation, :count).by(1)
+      expect(Obligation.last.kind).to eq("meet")
+    end
+
     it "drops the claims when the reflection bounce also fails (no infinite loop)" do
       ctx = context_with do |full|
         if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))   # collision on BOTH attempts (retry contains this too)

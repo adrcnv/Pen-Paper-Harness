@@ -57,6 +57,7 @@ module Harness
         maybe_run_genesis(loc)
         maybe_lay_out_settlement(loc)
         maybe_run_catch_up(loc)
+        maybe_seed_staff(loc)
         maybe_run_materialize(loc, materialize_target)
         maybe_pull_traveler(loc)
         maybe_draw_local(loc)
@@ -278,6 +279,16 @@ module Harness
       # no LLM gate — an appointment is not a dice roll.
       def maybe_pin_appointments(loc)
         ::Harness::Scene::AppointmentPin.pin!(loc, @context.game_time, logger: logger)
+      end
+
+      # The staffing invariant: a manifest venue's keeper is spawned
+      # mechanically before the Materializer casts (so the cast sees them
+      # and fills patron slots, not the keeper's). Runs BEFORE the LLM cast
+      # on purpose — staffing is never the LLM's decision. Needs llm_grunt
+      # only for the spawn's stats/description dressing.
+      def maybe_seed_staff(loc)
+        return unless @context.llm_grunt
+        ::Harness::Scene::StaffSeeder.ensure!(loc, llm: @context.llm_grunt, logger: logger)
       end
 
       # Intra-city draw: at a sublocation, occasionally a same-city resident

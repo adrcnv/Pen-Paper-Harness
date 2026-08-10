@@ -477,6 +477,16 @@ module Harness
           prose =
             if dialogue.any? && !other_narratable?(transcript.tool_calls)
               ""
+            # A cast-contest turn with NO staged dialogue (charm and kin):
+            # the Ruby bracket carries the verdict; the target's response, if
+            # any, arrives as the initiative beat AFTER narration. Handed the
+            # gap, the model invents the target's acceptance speech (the
+            # charm-word double-acceptance) — so the turn renders bracket-only.
+            # Conversation contests keep their model call when silent (the
+            # non-response beat); their tag is `true`, not "cast".
+            elsif dialogue.empty? && !other_narratable?(transcript.tool_calls) &&
+                  Array(transcript.tool_calls).any? { |tc| tc["contest"] == "cast" }
+              ""
             else
               user = narration_user_message(input, transcript)
               transcript.narration_prompt = user
@@ -526,11 +536,11 @@ module Harness
       # Does the turn hold anything BESIDES staged dialogue that the narration
       # model needs to render? Rolls, movement, world changes, creations — yes.
       # A pure conversation turn (only staged lines + internal reads) — no.
-      # A contest-tagged resolve (the conversation runner's pre-roll) doesn't
-      # count either: its verdict is already rendered twice — the Ruby bracket
-      # line mechanically, and the NPC's staged line in-fiction — so such
-      # turns stay in the dialogue-only skip. Standalone resolves (lockpicks,
-      # perception) carry no tag and narrate as before.
+      # A contest-tagged resolve (the conversation runner's pre-roll `true`,
+      # the cast runner's control-contest "cast") doesn't count either: its
+      # verdict is already rendered by the Ruby bracket line, and the NPC's
+      # response arrives as a staged line or initiative beat. Standalone
+      # resolves (lockpicks, perception) carry no tag and narrate as before.
       FRAMING_TOOLS = %w[resolve transition mutate_character start_combat
                          propose_location propose_character propose_item].freeze
 

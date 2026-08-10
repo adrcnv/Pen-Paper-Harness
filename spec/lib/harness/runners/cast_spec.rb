@@ -47,6 +47,33 @@ RSpec.describe Harness::Runners::Cast do
     expect(Harness::Character::ActiveEffects.active_for(player.reload, now: 500)).to be_empty
   end
 
+  describe "contest tagging (narration renders bracket-only, no invented acceptance speech)" do
+    let(:charm_row) {
+      { "id" => "charm_word", "name" => "Charm Word", "effect_kind" => "control", "stat" => "charisma",
+        "description" => "A single sentence delivered with terrible warmth.",
+        "opposed_by" => "wisdom", "uses_per_rest" => 2, "uses_remaining" => 2 }
+    }
+    let!(:mark) { Npc.create!(name: "Bodil", location: yard, wisdom: 8, max_hp: 20, current_hp: 20) }
+
+    it "tags a person-targeted control contest" do
+      player.update!(abilities: [ charm_row ])
+      ctx = ctx_with { { "ability" => "charm_word", "target" => "Bodil" }.to_json }
+      out = described_class.new.run(context: ctx,
+                                    scene: { "present_characters" => [ { "id" => mark.id, "name" => "Bodil" } ] },
+                                    input: "cast charm word on Bodil", step: step("charms Bodil"))
+      resolve = out.tool_calls.find { |t| t["name"] == "resolve" }
+      expect(resolve["contest"]).to eq("cast")
+    end
+
+    it "leaves a self-cast untagged (nobody else voices it — the narrator must render it)" do
+      player.update!(abilities: [ bless_row ])
+      ctx = ctx_with { { "ability" => "bless", "target" => nil }.to_json }
+      out = described_class.new.run(context: ctx, scene: { "present_characters" => [] }, input: "cast bless", step: step)
+      resolve = out.tool_calls.find { |t| t["name"] == "resolve" }
+      expect(resolve["contest"]).to be_nil
+    end
+  end
+
   describe "stage-2 atom blocks" do
     # Content-sniffing stub: the cast runner makes a bind emit, then (for
     # compose/volatile spells) a composer call — tell them apart by prompt.

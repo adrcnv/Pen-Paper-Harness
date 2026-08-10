@@ -49,8 +49,15 @@ RSpec.describe Obligation do
       expect(described_class.parse_due("within the hour", now)).to eq(now + 60)
     end
 
-    it "returns nil for condition-dues and blanks" do
+    it "parses 'N units from now' (the wording the reflection actually emits)" do
+      expect(described_class.parse_due("7 hours from now", now)).to eq(now + 420)
+      expect(described_class.parse_due("seven hours from now", now)).to eq(now + 420)
+      expect(described_class.parse_due("a day from now", now)).to eq(now + 1440)
+    end
+
+    it "returns nil for condition-dues, blanks, and bare units" do
       expect(described_class.parse_due("after the barge is loaded", now)).to be_nil
+      expect(described_class.parse_due("hour", now)).to be_nil
       expect(described_class.parse_due(nil, now)).to be_nil
       expect(described_class.parse_due("", now)).to be_nil
     end

@@ -4,7 +4,8 @@ RSpec.describe "Harness::Tools" do
   let(:city)   { Location.create!(name: "Saltmere") }
   let(:tavern) { Location.create!(name: "Tavern", parent: city) }
   let(:forest) { Location.create!(name: "Forest") }
-  let(:context) { Harness::Turn::Context.new(player_location: tavern) }
+  # Noon, so venue door gates (barred outside hours) don't trip tool tests.
+  let(:context) { Harness::Turn::Context.new(player_location: tavern, game_time: 720) }
 
   describe Harness::Tools::QueryScene do
     it "returns snapshot of the current scene" do

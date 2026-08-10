@@ -171,10 +171,7 @@ module Harness
               name:          mech_name,
               subrole:       e["subrole"],
               location_id:   location.id,
-              # Residents (settlement dwellers, lair occupants like bandits/
-              # hermits) live where they're spawned; NPCs filling a social
-              # waypoint / open wild stay homeless (evicted/culled on exit).
-              home_location_id: (location.residence? ? location.id : nil),
+              home_location_id: spawn_home_for(location),
               properties:    props,
               prose_context: ctx_parts.any? ? ctx_parts.join("\n") : nil
             )
@@ -183,6 +180,19 @@ module Harness
 
         logger.info { "[Scene::Materializer] reused=#{reused.size} spawned=#{spawned.size}" }
         { reused: reused, spawned: spawned }
+      end
+
+      # Where an LLM-cast spawn belongs. At a MANIFEST venue (stub carries
+      # properties.trade) the cast are PATRONS — townsfolk homed at the
+      # settlement root, drawn back by schedule, evicted home on exit;
+      # staffing there is the StaffSeeder's mechanical invariant, never a
+      # casting outcome. Elsewhere the old rule: residences (settlement
+      # dwellers, lair occupants) live where they're spawned; social
+      # waypoints / open wild stay homeless (evicted/culled on exit).
+      def spawn_home_for(location)
+        props = location.properties.is_a?(Hash) ? location.properties : {}
+        return location.parent_id if props["trade"].present? && location.parent_id
+        location.residence? ? location.id : nil
       end
 
       def call_with_retries(location:, parent:, already:, candidates:, target_count:, slots_to_fill:)

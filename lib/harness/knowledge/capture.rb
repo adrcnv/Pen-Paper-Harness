@@ -221,7 +221,7 @@ module Harness
             debtor: debtor, creditor: creditor, kind: d["kind"].to_s, amount: amount,
             terms: d["terms"].to_s.strip[0, 300], due: d["due"].presence,
             due_time: ::Obligation.parse_due(d["due"], @game_time),
-            status: "open", game_time: @game_time.to_i, location_id: @location&.id
+            status: "open", game_time: @game_time.to_i, location_id: deal_location_id(d["where"])
           )
           pairs << pair
           @logger.info { "[Knowledge::Capture] OBLIGATION ##{row.id} #{debtor.name} owes #{creditor.name} (#{row.kind}#{amount ? " #{amount}" : ''}): #{row.terms}" }
@@ -229,6 +229,27 @@ module Harness
           @logger.warn { "[Knowledge::Capture] deal write failed: #{e.class}: #{e.message}" }
         end
         pairs.uniq
+      end
+
+      # Meeting place: a spoken place naming an EXISTING location beats the
+      # struck-location proxy (AppointmentPin keys on this). Link-only —
+      # deals never mint places; unknown or absent → where the deal was struck.
+      def deal_location_id(where)
+        nm = where.to_s.strip
+        unless nm.empty?
+          loc = ::Location.where("LOWER(name) = ?", nm.downcase).first
+          return loc.id if loc
+        end
+        @location&.id
+      end
+
+      # Both members of a deal pair struck this pass named in the sentence
+      # (first names, word-bounded) → the fact is the deal re-described.
+      def deal_owns_content?(content)
+        Array(@deal_pairs).any? do |pair|
+          names = ::Character.where(id: pair).pluck(:name)
+          names.size == 2 && names.all? { |n| content.match?(/\b#{::Regexp.escape(n.split.first)}\b/i) }
+        end
       end
 
       def deal_party(name)
@@ -333,6 +354,14 @@ module Harness
       # / nothing-new revision).
       def write_knowledge(fact)
         content     = fact["content"].strip
+        # Knowledge-side arm of one-writer-per-claim-class: with concerns
+        # under-filled, a deal re-description routes here instead of the
+        # event path and its pair guard. Knowledge rows carry no
+        # participants, so the pair is matched by name in the sentence.
+        if deal_owns_content?(content)
+          @logger.info { "[Knowledge::Capture] SKIP knowledge fact — deal owns pair (both parties named) :: #{content}" }
+          return nil
+        end
         # Trade facet CUT for conversation-sourced facts (2026-07-07): the
         # speaker-POV reflection stamped the speaker's OWN trade on every
         # fact (3/3 in play), starving recall for everyone else — and a

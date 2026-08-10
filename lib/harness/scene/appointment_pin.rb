@@ -11,15 +11,30 @@ module Harness
     class AppointmentPin
       LEAD = 120
 
+      # Open meets involving the player falling due at this location — early
+      # by LEAD, late within the breach grace. Shared by the pin itself and
+      # the barred-door exemption (Tools::Transition): the keeper expecting
+      # you opens the door.
+      def self.due_meets_at(location, now, player)
+        window = (now.to_i - ::Obligation::BREACH_GRACE)..(now.to_i + LEAD)
+        ::Obligation.open_now.where(kind: "meet", location_id: location.id)
+          .involving(player.id).where(due_time: window)
+      end
+
+      def self.due_here?(location, game_time)
+        player = ::Player.first
+        return false unless location && game_time && player
+        due_meets_at(location, game_time, player).exists?
+      rescue ::StandardError
+        false
+      end
+
       def self.pin!(location, game_time, logger: Rails.logger)
         return [] unless location && game_time
         player = ::Player.first
         return [] unless player
 
-        now = game_time.to_i
-        window = (now - ::Obligation::BREACH_GRACE)..(now + LEAD)
-        ::Obligation.open_now.where(kind: "meet", location_id: location.id)
-          .involving(player.id).where(due_time: window)
+        due_meets_at(location, game_time, player)
           .filter_map do |ob|
             other_id = ob.debtor_id == player.id ? ob.creditor_id : ob.debtor_id
             npc = ::Npc.find_by(id: other_id)

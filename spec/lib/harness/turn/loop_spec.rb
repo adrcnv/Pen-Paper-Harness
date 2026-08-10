@@ -9,7 +9,9 @@ RSpec.describe Harness::Turn::Loop do
   # Reasoning input now includes the player's id so the model can tag itself
   # as a participant. Production guarantees Player.first exists (bin/play asserts).
   let!(:player) { Player.create!(name: "Hero", subrole: "adventurer", location: tavern) }
-  let(:context) { Harness::Turn::Context.new(player_location: tavern) }
+  # Noon: day phase, so classified venues (the Warehouse) are open and the
+  # barred-door gate stays out of these mechanics tests' way.
+  let(:context) { Harness::Turn::Context.new(player_location: tavern, game_time: 720) }
 
   # mode defaults to :agentic — this harness scripts REASONING-LOOP tool
   # sequences through FakeAdapter#start_turn, which only the agentic loop

@@ -78,18 +78,22 @@ RSpec.describe Harness::Scene::Assembler do
         expect(snap.present_characters).to include(barkeep)
       end
 
-      it "hides home-rooted residents everywhere at night" do
+      it "keeps the tavern keeper at NIGHT (the always-open refuge is staffed)" do
+        snap = described_class.for(location: alehouse, game_time: NIGHT_T)
+        expect(snap.present_characters).to include(barkeep)
+      end
+
+      it "hides home-rooted residents of unstaffed places at night" do
         townsman = Npc.create!(name: "Townsman", location: city, home_location: city)
-        expect(described_class.for(location: alehouse, game_time: NIGHT_T).present_characters).to be_empty
         expect(described_class.for(location: city, game_time: NIGHT_T).present_characters).to be_empty
         expect(townsman.reload.location_id).to eq(city.id) # hidden, not moved
       end
 
-      it "keeps visitors (home elsewhere) and followers" do
+      it "keeps visitors (home elsewhere) and followers at a shut venue" do
         visitor  = Npc.create!(name: "Visitor", location: alehouse, home_location: city)
         follower = Npc.create!(name: "Shadow", location: alehouse, home_location: alehouse,
                                properties: { "following_player" => true })
-        snap = described_class.for(location: alehouse, game_time: NIGHT_T)
+        snap = described_class.for(location: alehouse, game_time: MORNING_T)
         expect(snap.present_characters).to contain_exactly(visitor, follower)
       end
 

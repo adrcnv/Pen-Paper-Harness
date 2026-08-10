@@ -801,7 +801,7 @@ module Harness
         raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
           llm(context).complete(system: preamble, user: user)
         end
-        payload = ::Harness::LLM::JsonResponse.parse(raw)
+        payload = parse_reflection(raw)
         # One correction bounce, mirroring voice_one's: the tail's schema
         # override is flaky on the compressed quant — when the model answers
         # in the dialogue shape (or garbage), re-ask once with the defect
@@ -811,7 +811,7 @@ module Harness
           raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
             llm(context).complete(system: preamble, user: "#{user}\n\n#{reflection_retry_tail(defect, raw)}")
           end
-          payload = ::Harness::LLM::JsonResponse.parse(raw)
+          payload = parse_reflection(raw)
           if (still = reflection_defect(payload))
             @logger.warn { "[Runner conversation] reflection for #{speaker} #{still} on retry — claims dropped" }
             return
@@ -886,6 +886,15 @@ module Harness
         @reflection_template ||= File.read(REFLECTION_PROMPT_PATH)
                                      .sub("<<SUBROLES>>") { ::Harness::Vocations.all.join(", ") }
         @reflection_template.sub("<<SAID>>") { prose }
+      end
+
+      # Malformed JSON must reach the bounce as a nil payload ("unparseable"),
+      # not raise past it into reflect_knowledge's blanket rescue — that path
+      # dropped a spoken deal with zero retries (the Bodil charm-meet).
+      def parse_reflection(raw)
+        ::Harness::LLM::JsonResponse.parse(raw)
+      rescue ::JSON::ParserError
+        nil
       end
 
       def reflection_defect(payload)

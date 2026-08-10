@@ -36,6 +36,19 @@ module Harness
           return { "error" => "destination=#{dest.name} is not reachable from #{context.player_location.name} via transition (use `travel` for inter-city movement)" }
         end
 
+        # Barred doors: a classified venue outside its staffed hours refuses
+        # entry (taverns never bar — the always-open refuge). A due-now
+        # appointment at the destination opens the door: the keeper expects
+        # you (same window AppointmentPin uses).
+        if context.game_time
+          phase = ::Harness::Clock.phase(context.game_time)
+          if ::Harness::Scene::VenueHours.barred?(dest, phase) &&
+             !::Harness::Scene::AppointmentPin.due_here?(dest, context.game_time)
+            return { "refused" => "closed",
+                     "error"   => "#{dest.name} is shut and barred at this hour" }
+          end
+        end
+
         from = context.player_location
         followers = followers_at(from)
 

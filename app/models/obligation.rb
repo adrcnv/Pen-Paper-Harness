@@ -45,8 +45,8 @@ class Obligation < ApplicationRecord
     return nil if s.empty?
     now = now.to_i
     day_start = now - (now % DAY)
-    # "in two hours" / "within the hour" / "in 3 days"
-    if (m = s.match(/\A(?:in|within)\s+(?:the\s+)?(\d+|#{WORD_NUMBERS.keys.join('|')})?\s*(#{DUE_UNITS.keys.join('|')})s?\z/))
+    # "in two hours" / "within the hour" / "in 3 days" / "7 hours from now"
+    if (m = s.match(/\A(?:(?:in|within)\s+)?(?:the\s+)?(\d+|#{WORD_NUMBERS.keys.join('|')})?\s*(#{DUE_UNITS.keys.join('|')})s?(?:\s+from\s+now)?\z/)) && (m[1] || s.start_with?("in", "within"))
       n = m[1] ? (WORD_NUMBERS[m[1]] || m[1].to_i) : 1
       return now + n * DUE_UNITS[m[2]]
     end

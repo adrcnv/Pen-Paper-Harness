@@ -8,7 +8,7 @@ RSpec.describe Harness::Runners::Movement do
 
   # context.llm_nuance is a StubLLM whose block returns canned JSON.
   def context_with(&block)
-    Harness::Turn::Context.new(player_location: tavern, llm_nuance: StubLLM.new(&block), game_time: 100)
+    Harness::Turn::Context.new(player_location: tavern, llm_nuance: StubLLM.new(&block), game_time: 720)
   end
 
   def step(intent = "go") = Harness::Dispatcher::Step.new(runner: "movement", intent: intent, args: {})
@@ -23,6 +23,19 @@ RSpec.describe Harness::Runners::Movement do
     expect(outcome.status).to eq(:ok)
     expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transition" ])
     expect(player.reload.location_id).to eq(smithy.id)
+  end
+
+  it "skips (chain survives) when the destination's door is barred — a shut smithy at night" do
+    smithy
+    ctx = context_with { { "action" => "transition", "target_id" => smithy.id, "place_name" => nil }.to_json }
+    ctx.game_time = 23 * 60
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "go to the smithy", step: step)
+
+    expect(outcome.status).to eq(:skipped)
+    expect(outcome.note).to match(/shut and barred/)
+    expect(player.reload.location_id).to eq(tavern.id)
   end
 
   it "HALTS the turn (no transition) when the player declines the scene-change gate" do
@@ -99,7 +112,7 @@ RSpec.describe Harness::Runners::Movement do
   describe "create-then-enter handoff (executor-resolved destination)" do
     it "transitions into a chain-created sublocation, no LLM decision needed" do
       smithy
-      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100) # no llm: proves decide() is skipped
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 720) # no llm: proves decide() is skipped
       s = Harness::Dispatcher::Step.new(runner: "movement", intent: "enter",
         args: { "_resolved_destination" => { "id" => smithy.id, "type" => "sublocation", "name" => "Smithy" } })
       scene = Harness::Tools::QueryScene.build(ctx)
@@ -114,7 +127,7 @@ RSpec.describe Harness::Runners::Movement do
 
     it "routes a chain-created wilderness_leaf to travel (not transition)" do
       forest = Location.create!(name: "The Blackwood", x: 50.0, y: 50.0, biome: "lowland")
-      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100)
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 720)
       s = Harness::Dispatcher::Step.new(runner: "movement", intent: "enter",
         args: { "_resolved_destination" => { "id" => forest.id, "type" => "wilderness_leaf", "name" => "The Blackwood" } })
       scene = Harness::Tools::QueryScene.build(ctx)
