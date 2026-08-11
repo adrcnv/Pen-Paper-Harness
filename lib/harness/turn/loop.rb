@@ -8,31 +8,26 @@ module Harness
     # over this. The loop knows nothing about where input came from.
     #
     # Per turn:
-    #   1. Build reasoning context (scene + input + recent history).
-    #   2. Run the reasoning loop: LLM calls tool → resolver dispatches →
-    #      result fed back to LLM → repeat until the LLM stops.
+    #   1. Enter/rebuild the scene.
+    #   2. Dispatch the input to an ordered plan and run its chained runners
+    #      (or drive the structured combat slot mid-fight).
     #   3. Build narration context (outcome + scene + conversation history).
     #   4. LLM narrates.
     #   5. Persist a TurnLog transcript.
     #   6. Optionally snapshot the SQLite file.
     #   7. Rebuild the scene on the next turn if scene_dirty was set.
     #
-    # The reasoning loop and the narration step are asymmetric. The reasoning
-    # loop owns all state mutation, all entity creation, all queries — most
-    # of the per-turn cost. The narration step is a small render: take the
-    # committed outcome, write 2-4 sentences. They share "lives in the same
-    # turn"; that's about it.
+    # The execution phase and the narration step are asymmetric. The runners
+    # own all state mutation, all entity creation, all queries — most of the
+    # per-turn cost. The narration step is a small render: take the committed
+    # outcome, write 2-4 sentences. They share "lives in the same turn";
+    # that's about it.
     class Loop
-      REASONING_PREAMBLE_PATH = Rails.root.join("lib/harness/prompts/reasoning.txt")
       NARRATION_PREAMBLE_PATH = Rails.root.join("lib/harness/prompts/narration.txt")
 
-      # Hard cap on prior narration turns handed to the reasoning loop. Loose
+      # Hard cap on prior narration turns handed to the narration step. Loose
       # for now — tighten when we measure token usage against a real adapter.
       DEFAULT_HISTORY_CAP = 50
-
-      # Maximum number of tool calls the reasoning loop can make per turn.
-      # Guard against a misbehaving model looping forever.
-      DEFAULT_MAX_TOOL_CALLS = 20
 
       # How many times a single turn may re-dispatch when a runner reports its
       # plan went stale under the world (:redispatch). On exhaustion the turn
@@ -40,39 +35,23 @@ module Harness
       # #3), and the guard against re-dispatch becoming its own runaway (#6).
       REDISPATCH_CAP = 2
 
-      # Turn execution mode.
-      #   :state_machine — dispatcher → ordered plan → chained runners (default).
-      #   :agentic       — the legacy single big tool-use loop, FROZEN. Kept as
-      #                    a dev/escape toggle, NOT a routing fallback. Tuning
-      #                    goes to the state machine.
-      # Resolved from arg > ENV[HARNESS_MODE] > :state_machine.
-      def self.resolve_mode(arg)
-        (arg || ENV["HARNESS_MODE"] || "state_machine").to_s.strip.downcase.to_sym
-      end
-
-      attr_reader :logger, :mode
+      attr_reader :logger
 
       def initialize(
         adapter:,
         context:,
-        tools: Resolver::DEFAULT_TOOLS,
         history_cap: DEFAULT_HISTORY_CAP,
-        max_tool_calls: DEFAULT_MAX_TOOL_CALLS,
         snapshot_dir: nil,
         scene_manager: nil,
-        mode: nil,
         registry: nil,
         logger: Rails.logger
       )
         @adapter              = adapter
         @context              = context
-        @tools                = tools
         @history_cap          = history_cap
-        @max_tool_calls       = max_tool_calls
         @snapshot_dir         = snapshot_dir
         @logger               = logger
         @scene_manager        = scene_manager || ::Harness::Scene::Manager.new(context: context, logger: logger)
-        @mode                 = self.class.resolve_mode(mode)
 
         # Runner registry. Only built runners live here; a plan step naming
         # anything else degrades to a safe inspection step (the agentic
@@ -99,7 +78,7 @@ module Harness
         @dispatcher = ::Harness::Dispatcher.new(
           context: context, scene_manager: @scene_manager, registry: @registry, logger: logger
         )
-        logger.info { "[Turn::Loop] mode=#{@mode} runners=[#{@registry.keys.join(', ')}]" }
+        logger.info { "[Turn::Loop] runners=[#{@registry.keys.join(', ')}]" }
       end
 
       # Returns the Transcript for the turn (already persisted).
@@ -118,7 +97,7 @@ module Harness
         ::Harness::RNG.reset!(turn_seed)
 
         # Tools reach the LLM via context.llm_grunt (small-model, hot path
-        # for materialization) or context.llm_nuance (reasoning loop).
+        # for materialization) or context.llm_nuance (runner emits).
         # If neither is set, fall back to the adapter — same .call interface
         # — and wire both tiers to it. Single-adapter setups Just Work;
         # two-tier setups configure both before run_turn.
@@ -140,9 +119,7 @@ module Harness
         logger.info { "[Turn::Loop] input=#{input.inspect} location=#{@context.player_location.name}" }
 
         begin
-          if @mode == :agentic
-            run_reasoning(input, transcript)
-          elsif @scene_manager.active&.in_combat?
+          if @scene_manager.active&.in_combat?
             # Already mid-fight: the player's input IS their combat slot. Skip
             # the dispatcher (it would route to the combat ENTRY runner, get
             # "already in combat", and re-dispatch to the cap) and drive the
@@ -158,8 +135,8 @@ module Harness
 
           # Combat hand-off. While scene.in_combat?, Combat::Loop processes
           # NPC slots around the player's slot. The loop YIELDS at fresh
-          # player slots (end_reason: :yielded) so the next turn's reasoning
-          # loop can drive the player's next combat slot. On real termination
+          # player slots (end_reason: :yielded) so the next turn can drive
+          # the player's next combat slot. On real termination
           # (:victory / :player_died / :player_fled / :all_fled / :round_cap_reached)
           # combat ends and scene_dirty is raised by the loop.
           combat_result = nil
@@ -172,7 +149,7 @@ module Harness
           # and next turn's payloads see the breach. Non-fatal inside.
           ::Obligation.sweep_breaches!(@context.game_time, logger: logger)
 
-          # If the reasoning loop fired a transition / travel / threshold-
+          # If the turn fired a transition / travel / threshold-
           # crossing pass_time, rebuild the scene NOW — before narration —
           # so this turn's narration is recorded against the destination
           # scene's narration log. Without this, record_narration writes to
@@ -305,41 +282,10 @@ module Harness
         "( ⚙ Out of character — held your place; nothing happened#{tail}. Say plainly where you want to go, e.g. \"go to the mending shed\", or keep doing what you were doing. )"
       end
 
-      def run_reasoning(input, transcript)
-        ::Harness::CostTracker.in_subsystem(:reasoning_loop) do
-          resolver = Resolver.new(context: @context, tools: Resolver.tools_for(@context, normal_tools: @tools), logger: logger)
-          system   = reasoning_preamble
-          user     = reasoning_user_message(input)
-
-          transcript.reasoning_prompt = user
-
-          turn = @adapter.start_turn(system: system, user: user, tools: resolver.schemas)
-          calls_made = 0
-
-          until turn.complete?
-            if calls_made >= @max_tool_calls
-              logger.warn { "[Turn::Loop] reasoning loop hit max_tool_calls=#{@max_tool_calls}; aborting" }
-              break
-            end
-
-            call = turn.next_tool_call
-            break if call.nil?
-
-            result = resolver.execute(call)
-            transcript.record_tool_call(call, result)
-            turn.feed_result(result)
-            calls_made += 1
-          end
-
-          logger.info { "[Turn::Loop] reasoning done: #{calls_made} tool call(s)" }
-        end
-      end
-
       # State-machine turn: dispatch → ordered plan → chained runners.
-      # The agentic loop is NOT reachable from here anymore (it persisted
-      # invented dialogue as events — the Ilyrra flail). Every failure shape
-      # degrades to a safe inspection step instead, LOUD in the log; the loop
-      # survives only behind the explicit :agentic mode toggle.
+      # The agentic loop is GONE (deleted 2026-08-11; it persisted invented
+      # dialogue as events — the Ilyrra flail). Every failure shape degrades
+      # to a safe inspection step instead, LOUD in the log.
       def run_state_machine(input, transcript)
         plan = @dispatcher.plan(input)
 
@@ -627,108 +573,6 @@ module Harness
         parts.reject(&:empty?).join("\n\n")
       end
 
-      def reasoning_user_message(input)
-        recent = scene_history.last(@history_cap)
-        player = ::Player.first
-        # Scene state is deliberately NOT injected here. The reasoning loop
-        # opens each turn by calling query_scene (see reasoning.txt "OPEN
-        # EVERY TURN"). This restores the iterative tool-use reflex that the
-        # scene-injection optimization removed: across three playtest sessions
-        # the silent-turn rate (0% → 29% → 44%) and the runaway-turn rate
-        # tracked the injection — removing the "call query_scene first" anchor
-        # appears to have removed the model's structural cue to engage with
-        # tools at all (see execution_flows_observed.md). This is the A/B:
-        # restore the anchor, hold everything else, measure whether the
-        # bimodal failure collapses back toward S1's clean baseline.
-        #
-        # recent_events_here / dormant_historicals_here STAY as INPUT data —
-        # they're orthogonal bugfixes (propose_event dup-prevention; binding
-        # role-names in old event prose to dormant character_ids, the "Warden
-        # ghost" fix), not scene snapshots, and don't bear on the reflex.
-        payload = {
-          "player_input"   => input,
-          "player"         => { "id" => player.id, "name" => player.name },
-          # Recent events committed at the player's current location — gives
-          # the model a structural cue for "what's already been written" so
-          # it doesn't re-emit propose_event with the same prose multiple
-          # times in a single turn.
-          "recent_events_here" => recent_events_here_payload,
-          "recent_history" => recent
-        }
-        # Surface dormant historical figures at this location so the LLM
-        # can map role-names in past events ("the Warden") to row ids.
-        # Omitted entirely when none exist here.
-        dormant = dormant_historicals_payload
-        payload["dormant_historicals_here"] = dormant if dormant.any?
-        # Lead with the player identity in plain prose so it's the FIRST thing
-        # the model sees, not buried in the JSON payload. Cuts wasted
-        # query_character round-trips against the player's own id.
-        header = "YOU ARE PLAYING: #{player.name} (character_id=#{player.id}). Use this id directly — no need to query for it.\n\n"
-
-        "#{header}INPUT:\n#{JSON.pretty_generate(payload)}"
-      end
-
-      # Dormant historical figures at the current location — characters
-      # genesis spawned at first-entry (sealed with properties.dormant=true)
-      # who are filtered out of present_characters but ARE structurally tied
-      # to past events at this location ("The Warden ordered the walls
-      # built..."). Without this surfacing the LLM has no path to map the
-      # role-name in event prose ("the Warden", "the mason") to a real
-      # character_id, and ends up treating those figures as ghosts —
-      # narration deploys them as present, no transition/wake gets
-      # committed, spatial state diverges. Each entry includes the first
-      # event the figure participates in at this location, which is the
-      # bridge the model needs to bind a role-name in prose to a row id.
-      def dormant_historicals_payload
-        loc_id = @context.player_location&.id
-        return [] unless loc_id
-        dormant = ::Npc.where(location_id: loc_id).select { |c|
-          c.properties.is_a?(Hash) && c.properties["dormant"] == true
-        }
-        return [] if dormant.empty?
-        dormant.map { |c|
-          first_event = ::Event.joins(:event_participants)
-                               .where(location_id: loc_id, event_participants: { character_id: c.id })
-                               .order(:game_time).first
-          summary = if first_event
-            d = first_event.details.is_a?(Hash) ? first_event.details : {}
-            d["summary"].presence ||
-              d["trigger"].presence ||
-              (d["narrative"].is_a?(Hash) ? d["narrative"]["summary"] : nil).presence
-          end
-          {
-            "id"                 => c.id,
-            "name"               => c.name,
-            "subrole"            => c.subrole,
-            "state"              => "dormant",
-            "first_event_summary" => summary.to_s[0, 120]
-          }
-        }
-      end
-
-      # Last N events committed at the player's current location, freshest
-      # first. Each entry carries the event id, game_time, scope, and a short
-      # summary (the trigger line, falling back to the first chunk of details
-      # prose). The model uses this to see what's already in the log at this
-      # location so it doesn't re-emit propose_event with the same prose. Cap
-      # is intentionally small (5) — enough for "did I just commit this?"
-      # without burning tokens on deep history (that's what query_events is
-      # for when the model genuinely needs to dig).
-      RECENT_EVENTS_HERE_CAP = 5
-
-      def recent_events_here_payload
-        loc_id = @context.player_location&.id
-        return [] unless loc_id
-        ::Event.where(location_id: loc_id).order(id: :desc).limit(RECENT_EVENTS_HERE_CAP).map { |e|
-          d = e.details.is_a?(Hash) ? e.details : {}
-          summary = d["trigger"].presence ||
-                    d["summary"].presence ||
-                    (d["narrative"].is_a?(Hash) ? d["narrative"]["trigger"] : nil).presence ||
-                    "(no summary)"
-          { "id" => e.id, "t" => e.game_time, "scope" => e.scope, "summary" => summary.to_s[0, 100] }
-        }
-      end
-
       # The player character's identity for the narration step (name + gender).
       # nil-safe: returns name-only if gender unset, {} if no player row.
       def player_identity
@@ -973,10 +817,6 @@ module Harness
         logger.warn { "[Turn::Loop] snapshot failed: #{e.message}" }
       end
 
-
-      def reasoning_preamble
-        @reasoning_preamble ||= File.read(REASONING_PREAMBLE_PATH)
-      end
 
       def narration_preamble
         @narration_preamble ||= File.read(NARRATION_PREAMBLE_PATH)

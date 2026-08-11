@@ -6,8 +6,7 @@ module Harness
     # via Tools::Pickup.
     #
     # Coins stay on the deceased character row (they're a column, not an
-    # Item). The reasoning loop loots coins via Tools::TransferCoins
-    # against the corpse — see the ECONOMY section of reasoning.txt.
+    # Item). Coins are looted via Tools::TransferCoins against the corpse.
     module Loot
       class << self
         # Detach all items from `deceased` and anchor them to the

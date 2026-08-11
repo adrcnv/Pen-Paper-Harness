@@ -46,7 +46,7 @@ module Harness
 
       # Append pre-built tool_call records ({name:, args:, result:} hashes) —
       # the shape runners return in their Outcome. Used by the state-machine
-      # executor; the agentic loop uses record_tool_call (ToolCall + result).
+      # executor; the combat player slot uses record_tool_call (ToolCall + result).
       def record_tool_calls(calls)
         @tool_calls.concat(Array(calls))
       end

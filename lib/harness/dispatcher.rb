@@ -63,15 +63,14 @@ module Harness
     end
 
     # Retired labels a weak model may still emit from habit, remapped to safe
-    # runners so the turn never falls through to the frozen agentic loop:
+    # runners:
     #   dice    — a roll belongs INSIDE an interaction, not as its own step
     #             (movement-as-a-dice-step was the founding bug) → environment.
-    #   agentic — VAPORIZED as a routing target (2026-07-24): the frozen loop
-    #             persisted invented dialogue as events and scripted whole
-    #             mini-scenes (the Ilyrra flail). The label is gone from the
-    #             planner prompt; a habit emission lands on inspection —
-    #             read-only, fails soft. The loop itself survives only behind
-    #             the explicit :agentic dev mode.
+    #   agentic — VAPORIZED as a routing target (2026-07-24), code deleted
+    #             (2026-08-11): the loop persisted invented dialogue as events
+    #             and scripted whole mini-scenes (the Ilyrra flail). The label
+    #             is gone from the planner prompt; a habit emission lands on
+    #             inspection — read-only, fails soft.
     RETIRED_RUNNER_REMAP = { "dice" => "environment", "agentic" => "inspection" }.freeze
     def normalize_runner(label)
       mapped = RETIRED_RUNNER_REMAP[label.to_s]
@@ -81,9 +80,7 @@ module Harness
     end
 
     # A runner is "built" if the registry has a real implementation for it.
-    # Unbuilt labels (movement/conversation/... before they land) signal the
-    # executor to run the whole turn agentically — a BUILD-TIME scaffold, not
-    # a per-step fallback. Shrinks to nothing as runners are added.
+    # Unbuilt labels degrade to a safe inspection step in the executor.
     def built?(label)
       @registry.key?(label.to_s)
     end

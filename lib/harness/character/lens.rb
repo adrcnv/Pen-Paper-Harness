@@ -3,8 +3,8 @@ module Harness
     # Interpretation lens — the structural bias through which a character
     # reads the world. Set once at Hatchery time, lives on
     # `properties.lens`, surfaced inline on query_scene.present_characters
-    # and query_character so the reasoning loop can color the NPC's voice
-    # when sourcing speech (see the NPC VOICE section in reasoning.txt).
+    # and query_character so the voicing can color the NPC's voice when
+    # sourcing speech.
     #
     # Why this exists: the LLM averages toward "obvious correct
     # interpretation" — a cynic, a romantic, a paranoid all end up sounding

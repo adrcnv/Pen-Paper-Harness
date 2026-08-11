@@ -23,9 +23,9 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     end
   end
 
-  def build_loop(registry:, mode: :state_machine, narration: "(n)")
-    adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: narration)
-    [ Harness::Turn::Loop.new(adapter: adapter, context: context, registry: registry, mode: mode), adapter ]
+  def build_loop(registry:, narration: "(n)")
+    adapter = Harness::LLM::FakeAdapter.new(narration: narration)
+    [ Harness::Turn::Loop.new(adapter: adapter, context: context, registry: registry), adapter ]
   end
 
   def stub_plan(*runner_labels, parse_error: nil)
@@ -39,28 +39,25 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     )
   end
 
-  it "routes a built single-runner plan through the chain (no agentic)" do
+  it "routes a built single-runner plan through the chain" do
     stub_plan("inspection")
     loop_obj, adapter = build_loop(registry: { "inspection" => Harness::Runners::Inspection.new })
 
     transcript = loop_obj.run_turn(input: "look around")
 
     expect(transcript.tool_calls.map { |t| t["name"] }).to eq([ "query_scene" ])
-    expect(adapter.reasoning_calls).to be_empty            # agentic loop did NOT run
     expect(transcript.narration).to eq("(n)")
     expect(transcript.runners_ran).to eq([ "inspection" ]) # the executor records which runner ran
   end
 
-  # The agentic loop is no longer routable (vaporized 2026-07-24) — every
-  # failure shape degrades to a safe inspection step instead, and the loop
-  # survives only behind the explicit :agentic mode.
-  it "degrades an unknown-runner step to inspection instead of the agentic loop" do
+  # Every failure shape degrades to a safe inspection step (the agentic
+  # loop is deleted).
+  it "degrades an unknown-runner step to inspection" do
     stub_plan("movement")                                   # movement not in registry
     loop_obj, adapter = build_loop(registry: { "inspection" => Harness::Runners::Inspection.new })
 
     transcript = loop_obj.run_turn(input: "go to the docks")
 
-    expect(adapter.reasoning_calls).to be_empty            # agentic did NOT run
     expect(transcript.runners_ran).to eq([ "inspection" ])
   end
 
@@ -70,7 +67,6 @@ RSpec.describe "Harness::Turn::Loop state machine" do
 
     transcript = loop_obj.run_turn(input: "???")
 
-    expect(adapter.reasoning_calls).to be_empty
     expect(transcript.runners_ran).to eq([ "inspection" ])
   end
 
@@ -153,14 +149,13 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     end
 
     adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "You step in and speak.")
-    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context, mode: :state_machine)
+    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context)
 
     transcript = loop_obj.run_turn(input: "go to the tavern and ask the barkeep about work")
 
     expect(player.reload.location_id).to eq(tavern.id)           # the move happened
     names = transcript.tool_calls.map { |t| t["name"] }
     expect(names).to include("transition", "propose_event")      # move committed; conversation staged a line
-    expect(adapter.reasoning_calls).to be_empty                  # never touched the agentic loop
     # The handoff proof: the staged dialogue names the barkeep, who only became
     # visible to conversation AFTER the move materialized the tavern scene.
     # (Dialogue is staged, not persisted — so we read it off the tool_call.)
@@ -189,7 +184,7 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     end
 
     adapter  = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "You heave at the door.")
-    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context, mode: :state_machine)
+    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context)
 
     transcript = loop_obj.run_turn(input: "force the door open")
 
@@ -197,7 +192,6 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(resolve).not_to be_nil, "environment runner did not fire resolve — dice never rolled"
     expect(resolve["result"]["outcome"]).to be_present              # the engine actually resolved
     expect(resolve["result"]).to include("roll", "against")          # real d20 numbers exist
-    expect(adapter.reasoning_calls).to be_empty                      # state machine, not agentic
     expect(transcript.narration).to match(/\[force the stuck door .* Strength \d+ vs \d+/) # bracket rendered
   end
 
@@ -223,7 +217,7 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     end
 
     adapter  = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(combat owns narration)")
-    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context, mode: :state_machine)
+    loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context)
 
     transcript = loop_obj.run_turn(input: "attack Vek")
 
@@ -232,17 +226,6 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(start_combat["result"]["error"]).to be_nil, "start_combat errored: #{start_combat['result']['error']}"
     expect(transcript.combat).to be_a(Harness::Combat::Loop::Result)   # the driver actually ran
     expect(transcript.combat.end_reason).to eq(:victory)
-    expect(adapter.reasoning_calls).to be_empty                        # state machine, not agentic
   end
 
-  it "skips the dispatcher entirely in :agentic mode" do
-    expect(Harness::Planner).not_to receive(:plan_for)
-    loop_obj, adapter = build_loop(
-      registry: { "inspection" => Harness::Runners::Inspection.new }, mode: :agentic
-    )
-
-    loop_obj.run_turn(input: "anything")
-
-    expect(adapter.reasoning_calls.size).to eq(1)
-  end
 end

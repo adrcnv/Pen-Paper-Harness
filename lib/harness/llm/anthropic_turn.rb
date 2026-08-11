@@ -1,6 +1,6 @@
 module Harness
   module LLM
-    # Wraps the agentic reasoning-loop conversation with Anthropic.
+    # Wraps the tool-loop conversation with Anthropic (combat slots).
     #
     # Responsibilities:
     #   - Keep the running `messages` array across multiple API roundtrips.

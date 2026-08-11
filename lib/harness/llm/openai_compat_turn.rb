@@ -1,6 +1,6 @@
 module Harness
   module LLM
-    # Wraps the agentic reasoning-loop conversation with an OpenAI-compatible
+    # Wraps the tool-loop conversation with an OpenAI-compatible
     # server. Mirrors AnthropicTurn's contract (next_tool_call / feed_result /
     # complete? / final_text) but in OpenAI Chat Completions shape.
     #

@@ -1,9 +1,9 @@
 module Harness
-  # Dispatches reasoning-loop tool calls to their Tool classes and guarantees
-  # the loop never sees a raised exception. Every error comes back as
+  # Dispatches runner tool calls to their Tool classes and guarantees the
+  # caller never sees a raised exception. Every error comes back as
   # {"error" => "..."} so the LLM can try a different tool or recover.
   #
-  # Held registry is the set of tools the reasoning loop is allowed to call this turn.
+  # Held registry is the set of tools the caller is allowed to call this turn.
   # Narrower registries are fine (e.g. a "talk-only" scene that omits
   # transition). The default registry is the full set.
   class Resolver
@@ -40,21 +40,6 @@ module Harness
       ::Harness::Combat::Tools::StartCombat
     ].freeze
 
-    # Combat-mode registry. While scene.in_combat? is true, the reasoning
-    # loop sees this narrowed surface only — no transitions, no proposals
-    # for new entities, no general queries. The round driver (Combat::Loop)
-    # picks this set when invoking the reasoning loop on the player's slot.
-    # See COMBAT_DESIGN.md "Combat-mode tool surface (narrow)" for the rule.
-    COMBAT_TOOLS = [
-      Tools::QueryScene,
-      Tools::Resolve,
-      Tools::MutateCharacter,
-      Tools::ProposeEvent,
-      ::Harness::Combat::Tools::MoveTo,
-      ::Harness::Combat::Tools::EndTurn,
-      ::Harness::Combat::Tools::Escape
-    ].freeze
-
     # NPC-slot registry — strictly the action tools an NPC needs to decide
     # their slot. No QueryScene (their payload already has every id, hp,
     # position, ability, and engagement — querying just wastes the slot on
@@ -69,15 +54,6 @@ module Harness
 
     def self.default_schemas
       DEFAULT_TOOLS.map(&:schema)
-    end
-
-    # Returns the right tool registry for this turn's mode. Caller passes the
-    # turn context; reads context.active_scene&.in_combat?. In combat,
-    # COMBAT_TOOLS; otherwise the supplied normal-mode registry (defaults to
-    # DEFAULT_TOOLS).
-    def self.tools_for(context, normal_tools: DEFAULT_TOOLS)
-      return COMBAT_TOOLS if context&.active_scene&.in_combat?
-      normal_tools
     end
 
     def initialize(context:, tools: DEFAULT_TOOLS, logger: Rails.logger)
@@ -114,7 +90,7 @@ module Harness
     # Models occasionally regress to legacy XML tool-call format mid-call,
     # leaking '<parameter name="x">value</parameter>' or 'antml:parameter'
     # syntax inside string fields when they meant to pass a separate top-level
-    # arg. Catches the leak so the agentic loop sees an error and retries
+    # arg. Catches the leak so the calling model sees an error and retries
     # cleanly instead of committing the malformed prose to the database.
     # Returns the offending key path on detection, nil otherwise.
     XML_LEAK_PATTERN = /<\s*\/?\s*parameter\b|antml:parameter|<\s*\/?\s*invoke\b/i

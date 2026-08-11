@@ -7,10 +7,10 @@ module Harness
     # - Combat persists across turns via scene.combat. One player turn drives
     #   one combat slot — the player's. The round driver processes NPC slots
     #   around it.
-    # - On each turn that scene.in_combat?, the reasoning loop fires with
-    #   COMBAT_TOOLS active. The player calls resolve/move_to/escape/end_turn;
+    # - On each turn that scene.in_combat?, Combat::PlayerTurn drives the
+    #   player's slot (resolve/move_to/escape/end_turn over NPC_TURN_TOOLS);
     #   those tools record into state.current_round_actions and mark tokens.
-    # - After the reasoning loop returns, Turn::Loop calls Combat::Loop.run,
+    # - After the player's slot, Turn::Loop calls Combat::Loop.run,
     #   which:
     #     1. Pre-flight termination check (caught: player_died from a self-
     #        inflicted resolve, player_fled via escape, victory if the player

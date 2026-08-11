@@ -92,51 +92,10 @@ RSpec.describe Harness::Resolver do
     end
   end
 
-  describe ".tools_for" do
-    it "returns DEFAULT_TOOLS when no active scene" do
-      ctx = Harness::Turn::Context.new(player_location: location)
-      expect(Harness::Resolver.tools_for(ctx)).to eq(Harness::Resolver::DEFAULT_TOOLS)
-    end
-
-    it "returns DEFAULT_TOOLS when scene is not in combat" do
-      ctx = Harness::Turn::Context.new(player_location: location)
-      ctx.active_scene = Harness::Scene::Active.new(
-        location: location, snapshot: nil, narrations: [], internal_state: {}, agendas: {},
-        extras: [], entered_at_game_time: 0
-      )
-      expect(Harness::Resolver.tools_for(ctx)).to eq(Harness::Resolver::DEFAULT_TOOLS)
-    end
-
-    it "returns COMBAT_TOOLS when scene is in combat" do
-      ctx = Harness::Turn::Context.new(player_location: location)
-      ctx.active_scene = Harness::Scene::Active.new(
-        location: location, snapshot: nil, narrations: [], internal_state: {}, agendas: {},
-        extras: [], entered_at_game_time: 0
-      )
-      ctx.active_scene.start_combat!
-      expect(Harness::Resolver.tools_for(ctx)).to eq(Harness::Resolver::COMBAT_TOOLS)
-    end
-
-    it "passes the supplied normal_tools registry through when not in combat" do
-      ctx = Harness::Turn::Context.new(player_location: location)
-      custom = [ Harness::Tools::QueryScene ]
-      expect(Harness::Resolver.tools_for(ctx, normal_tools: custom)).to eq(custom)
-    end
-  end
-
   describe "registry contents" do
     it "DEFAULT_TOOLS includes start_combat (entry into combat mode)" do
       expect(Harness::Resolver::DEFAULT_TOOLS).to include(Harness::Combat::Tools::StartCombat)
     end
 
-    it "COMBAT_TOOLS excludes transitions, propose_*, and the bulk of queries" do
-      names = Harness::Resolver::COMBAT_TOOLS.map(&:tool_name)
-      expect(names).to include("query_scene", "resolve", "mutate_character", "propose_event")
-      expect(names).to include("move_to", "end_turn")
-      expect(names).not_to include("transition", "travel", "pass_time")
-      expect(names).not_to include("propose_character", "propose_faction", "propose_location", "propose_item")
-      expect(names).not_to include("query_character", "query_events", "query_faction", "query_item")
-      expect(names).not_to include("start_combat") # already in combat
-    end
   end
 end

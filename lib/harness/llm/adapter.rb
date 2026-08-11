@@ -1,10 +1,9 @@
 module Harness
   module LLM
     # Abstract adapter. Two shapes:
-    #   reasoning (agentic)   — start_turn yields tool calls; caller feeds
-    #                           results back until the model stops calling
-    #                           tools.
-    #   narration (completion) — plain prompt → string.
+    #   tool loop  — start_turn yields tool calls; caller feeds results back
+    #                until the model stops calling tools (combat slots).
+    #   completion — plain prompt → string.
     # Real HTTP adapters (Anthropic, OpenAI, Ollama) implement this.
     class Adapter
       def start_turn(system:, user:, tools:)
