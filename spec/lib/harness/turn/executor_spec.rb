@@ -70,6 +70,21 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(transcript.runners_ran).to eq([ "inspection" ])
   end
 
+  it "perturbs the sampler seed per redispatch replan (pinned seed = deterministic rerun otherwise)" do
+    seeds = []
+    allow(Harness::Planner).to receive(:plan_for) do
+      seeds << Harness::LLM::Seed.current
+      { "plan" => [ { "runner" => "boom", "reason" => "r", "args" => {} } ],
+        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {} }
+    end
+    boom = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :redispatch))
+    loop_obj, = build_loop(registry: { "boom" => boom })
+    loop_obj.run_turn(input: "heal her ribs", seed: 1000)
+
+    expect(seeds).to eq([ 1000, 1001, 1002 ])          # initial + two genuinely re-rolled replans
+    expect(Harness::LLM::Seed.current).to eq(1000)     # turn seed restored after the chain
+  end
+
   it "treats :combat as a hard terminator and aborts remaining steps" do
     combat_step = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :combat))
     after_step  = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :ok))

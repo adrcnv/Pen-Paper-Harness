@@ -15,9 +15,13 @@ module Harness
     PROMPT_PATH = Rails.root.join("lib/harness/prompts/planner.txt")
     RECENT_HISTORY_CAP = 4
 
+    # The grammar's label alphabet — the sampler can ONLY emit these. Retired
+    # labels (dice, agentic) are deliberately ABSENT: pre-grammar they stayed
+    # listed as habit-emission tolerance for the dispatcher remap; post-grammar
+    # a listed label is an OFFER, not a tolerance. Don't throw the ball.
     VALID_RUNNERS = %w[
       inspection movement conversation worldbuilding
-      inventory dice time-skip combat meta agentic
+      inventory environment cast time-skip combat meta
     ].freeze
 
     # Grammar contract for the plan emit (llama.cpp json_schema → GBNF): the
@@ -31,12 +35,17 @@ module Harness
         "reasoning" => { "type" => "string" },
         "plan" => { "type" => "array", "items" => {
           "type" => "object",
+          # reason BEFORE runner, grammar-enforced: the label is sampled
+          # immediately after the step's own description of the act (the
+          # mending-light brawl: label-first let the model commit "combat"
+          # then write "this is a cast step. Wait," — deliberation after a
+          # decision it couldn't take back).
           "properties" => {
-            "runner" => { "type" => "string", "enum" => VALID_RUNNERS },
             "reason" => { "type" => "string" },
+            "runner" => { "type" => "string", "enum" => VALID_RUNNERS },
             "args"   => { "type" => "object" }
           },
-          "required" => %w[runner reason args],
+          "required" => %w[reason runner args],
           "additionalProperties" => false
         } }
       },

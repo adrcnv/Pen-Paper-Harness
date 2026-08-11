@@ -28,14 +28,14 @@ RSpec.describe Harness::Dispatcher do
       expect(plan.steps.first.args).to eq("dest" => "docks")
     end
 
-    # Regression: the standalone "dice" runner was retired (a roll belongs
-    # inside an interaction, not its own step). A weak local model may still
-    # emit "dice" from habit; it must remap to "environment" so the turn does
-    # NOT fall back to agentic on an unbuilt label.
-    it "remaps a retired 'dice' step to 'environment'" do
+    # Retired labels (dice/agentic) are gone from the grammar enum — the
+    # sampler cannot emit them. A stray label (unconstrained-fallback path
+    # only) passes through untouched; the EXECUTOR degrades unbuilt labels
+    # to inspection (see executor_spec).
+    it "passes an unknown label through for the executor to degrade" do
       stub_planner(plan: [ { "runner" => "dice", "reason" => "climb the wall", "args" => {} } ])
       plan = dispatcher.plan("climb the wall")
-      expect(plan.steps.map(&:runner)).to eq(%w[environment])
+      expect(plan.steps.map(&:runner)).to eq(%w[dice])
     end
 
     it "flags a parse failure without raising" do

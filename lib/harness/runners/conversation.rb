@@ -420,14 +420,14 @@ module Harness
         sent_user = "#{sent_user}\n\n#{frame}" if frame
         who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
         emit = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
-          raw = llm(context).complete(system: preamble, user: sent_user)
+          raw = llm(context).complete(system: preamble, user: sent_user, schema: VOICING_SCHEMA)
           e1  = parse_emit(raw)
           # One correction bounce: a malformed emit (bad JSON, or a speaker with
           # no line — the "pro"-for-"prose" class) goes back to the model with
           # the defect named. Same prefix, so the retry is KV-cache-hot.
           if (defect = emit_defect(e1))
             @logger.warn { "[Runner conversation] #{who} emit malformed (#{defect}) — retrying once" }
-            raw = llm(context).complete(system: preamble, user: "#{sent_user}\n\n#{retry_tail(defect, raw)}")
+            raw = llm(context).complete(system: preamble, user: "#{sent_user}\n\n#{retry_tail(defect, raw)}", schema: VOICING_SCHEMA)
             e1  = parse_emit(raw)
             if (still = emit_defect(e1))
               @logger.warn { "[Runner conversation] #{who} emit still malformed (#{still}) — dropped" }
@@ -450,6 +450,10 @@ module Harness
         dlg   = emit["dialogue"]
         prose = dlg.is_a?(::Hash) ? dlg["prose"].to_s.strip : ""
         if emit["speak"] && prose.empty? && !emit["resolve_call"] && !emit["ignorance"] && !emit["memorable"]
+          # Explicit prose: "" is the grammar's escape hatch — a break-off,
+          # handled (and logged) by apply_emit. Absent/null dialogue is
+          # format loss of a line that likely existed — worth one bounce.
+          return nil if dlg.is_a?(::Hash) && dlg["prose"].is_a?(::String)
           return "\"speak\" is true but dialogue.prose is missing"
         end
         nil
@@ -485,6 +489,11 @@ module Harness
           "thought=#{emit['thought'].to_s[0, 120].inspect}"
         end
         return false unless engaged
+        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["resolve_call"] && !emit["ignorance"] && !emit["memorable"]
+          who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
+          @logger.info { "[Runner conversation] #{who} spoke-empty (in-grammar break-off) — treated as silence" }
+          return false
+        end
 
         actor_id = actor_id_for(v, emit, resolver, context, scene, promo, tcs)
         return false unless actor_id
@@ -801,6 +810,44 @@ module Harness
       # lands in Knowledge::Capture.ingest (routing, realizers, dedup,
       # revision — unchanged). Speaker attribution is structural, not
       # model-reported. Non-fatal.
+      # Grammar contract for the voicing emit. required = thought + speak
+      # ONLY: decliners stop after "speak": false exactly as the prompt
+      # instructs, and speak-true-with-dialogue-absent stays GRAMMATICAL on
+      # purpose — that shape is format loss of real content (the Rolf flake)
+      # and keeps its one correction bounce. The deliberate escape hatch is
+      # explicit prose: "" — a constrained emit backing out mid-object reads
+      # as a break-off, not a defect (see apply_emit / emit_defect).
+      VOICING_SCHEMA = {
+        "type" => "object",
+        "properties" => {
+          "thought" => { "type" => "string" },
+          "speak"   => { "type" => "boolean" },
+          "dialogue" => { "anyOf" => [ { "type" => "null" }, {
+            "type" => "object",
+            "properties" => { "summary" => { "type" => "string" }, "prose" => { "type" => "string" } },
+            "required" => %w[summary prose], "additionalProperties" => false
+          } ] },
+          "resolve_call" => { "anyOf" => [ { "type" => "null" }, {
+            "type" => "object",
+            "properties" => {
+              "stat" => { "type" => "string" }, "action" => { "type" => "string" },
+              "difficulty" => { "type" => "string", "enum" => %w[easy moderate hard] }
+            },
+            "required" => %w[stat action difficulty], "additionalProperties" => false
+          } ] },
+          "ignorance" => { "anyOf" => [ { "type" => "null" }, {
+            "type" => "object", "properties" => { "topic" => { "type" => "string" } },
+            "required" => %w[topic], "additionalProperties" => false
+          } ] },
+          "memorable" => { "anyOf" => [ { "type" => "null" }, {
+            "type" => "object", "properties" => { "gist" => { "type" => "string" } },
+            "required" => %w[gist], "additionalProperties" => false
+          } ] }
+        },
+        "required" => %w[thought speak],
+        "additionalProperties" => false
+      }.freeze
+
       # Grammar contract for the reflection emit (llama.cpp json_schema →
       # GBNF). The sampler cannot answer in the dialogue schema, emit prose,
       # or truncate mid-object — the bounce becomes a dead backstop instead

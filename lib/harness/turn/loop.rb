@@ -63,11 +63,10 @@ module Harness
           "conversation" => ::Harness::Runners::Conversation.new(logger: logger),
           "worldbuilding" => ::Harness::Runners::Worldbuilding.new(logger: logger),
           # No "dice" runner — a roll is a mechanism INSIDE an interaction, not
-          # its own step. The planner must never emit a standalone dice step;
-          # each runner rolls when its own action is contested (conversation →
-          # persuasion, environment → climb/force/lockpick, inventory → loot a
-          # container). Movement NEVER rolls. A stray "dice" label from the
-          # planner is remapped to environment by the Dispatcher.
+          # its own step. Each runner rolls when its own action is contested
+          # (conversation → persuasion, environment → climb/force/lockpick,
+          # inventory → loot a container). Movement NEVER rolls. The grammar's
+          # label enum no longer offers "dice" at all.
           "environment"  => ::Harness::Runners::Environment.new(logger: logger),
           "inventory"    => ::Harness::Runners::Inventory.new(logger: logger),
           "cast"         => ::Harness::Runners::Cast.new(logger: logger),
@@ -387,7 +386,19 @@ module Harness
               break
             end
             logger.info { "[Executor] step #{step_no} #{step.runner} went stale → re-dispatch #{redispatches}/#{REDISPATCH_CAP}" }
-            replan = @dispatcher.plan(input)
+            # A pinned turn seed makes an identical replan DETERMINISTIC — the
+            # mending-light loop re-planned [movement → combat] three times
+            # verbatim and burned the cap on guaranteed reruns. Perturb the
+            # sampler seed per attempt (derived from the turn seed, so replays
+            # still reproduce) to make each replan a genuine second sample;
+            # the turn seed is restored for everything after.
+            base_seed = ::Harness::LLM::Seed.current
+            begin
+              ::Harness::LLM::Seed.current = base_seed + redispatches if base_seed
+              replan = @dispatcher.plan(input)
+            ensure
+              ::Harness::LLM::Seed.current = base_seed
+            end
             if replan.failed? || replan.empty?
               logger.warn { "[Executor] re-dispatch produced no usable plan; hard stop" }
               transcript.unresolved = step.intent

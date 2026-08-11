@@ -37,7 +37,11 @@ module Harness
       end
 
       steps = Array(res["plan"]).map { |s|
-        Step.new(runner: normalize_runner(s["runner"]), intent: s["reason"], args: s["args"] || {})
+        # No label normalization: the grammar's enum can't emit retired labels
+        # (the old dice/agentic remap died with them), and anything else — the
+        # unconstrained-fallback path only — degrades to inspection in the
+        # executor via built?.
+        Step.new(runner: s["runner"], intent: s["reason"], args: s["args"] || {})
       }
       plan = Plan.new(
         steps:       steps,
@@ -60,23 +64,6 @@ module Harness
         @logger.debug { "[Dispatcher] unbuilt runners in plan: #{unbuilt.inspect}" } if unbuilt.any?
       end
       plan
-    end
-
-    # Retired labels a weak model may still emit from habit, remapped to safe
-    # runners:
-    #   dice    — a roll belongs INSIDE an interaction, not as its own step
-    #             (movement-as-a-dice-step was the founding bug) → environment.
-    #   agentic — VAPORIZED as a routing target (2026-07-24), code deleted
-    #             (2026-08-11): the loop persisted invented dialogue as events
-    #             and scripted whole mini-scenes (the Ilyrra flail). The label
-    #             is gone from the planner prompt; a habit emission lands on
-    #             inspection — read-only, fails soft.
-    RETIRED_RUNNER_REMAP = { "dice" => "environment", "agentic" => "inspection" }.freeze
-    def normalize_runner(label)
-      mapped = RETIRED_RUNNER_REMAP[label.to_s]
-      return label unless mapped
-      @logger.info { "[Dispatcher] remapped retired runner #{label.to_s.inspect} → '#{mapped}'" }
-      mapped
     end
 
     # A runner is "built" if the registry has a real implementation for it.

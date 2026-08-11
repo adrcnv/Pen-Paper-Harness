@@ -6,7 +6,7 @@ You output STRICT JSON and nothing else:
   "reasoning": "<dependency check — see below. Keep it to one or two clauses, 60 words MAX>",
   "args_note": "(reasoning comes FIRST, before plan, on purpose)",
   "plan": [
-    { "runner": "<one runner label>", "reason": "<one tight sentence: WHAT the player is doing in this step — the act itself ('offers healing services to the room', 'asks the barkeep about work', 'demands passage north') — not who is present or why the label fits>", "args": { } }
+    { "reason": "<one tight sentence: WHAT the player is doing in this step — the act itself ('offers healing services to the room', 'asks the barkeep about work', 'demands passage north') — not who is present or why the label fits>", "runner": "<one runner label>", "args": { } }
   ]
 }
 
@@ -26,8 +26,8 @@ RUNNER LABELS (pick from this closed set only):
 - inventory     — take / drop / give / buy / sell / pay coins or items, OR open/loot a CONTAINER (a chest/strongbox/cache/coffer shown in present_items with container=true). ("pocket the locket", "give her 5 coins", "drop the sword", "open the chest", "loot the strongbox", "pick the lock on the chest"). The open action runs its OWN lock check — no separate roll step.
 - environment   — player physically acts on / against the world: acting on a scene OBJECT or feature that is NOT a character (smash, burn, blast, search, pry, dig, cut, barricade, move it), OR a bare athletic / stealth attempt against the terrain (climb, swim, leap, balance, sneak past, force). May yield an item or persistently alter the place. ("blast the tree for firewood", "search the rubble", "bar the door", "smash the crate open", "climb the wall", "swim the river", "stealth past the guard", "leap the chasm")
 - time-skip     — player chooses to let time pass, idle OR occupied. ("rest", "wait until dusk", "sleep till morning", "sit and watch", "help/work alongside until the task is done", "practice spells until evening")
-- combat        — player initiates or continues a fight. ("attack the bandit", "swing at him", "cast firebolt at the wolf")
-- cast          — player invokes one of INPUT.player_abilities OUTSIDE a fight, on themselves or someone present ("cast shield up", "bless Maren", "heal myself"). Casting AT someone to start violence is combat; pressuring someone with an ability mid-conversation is conversation (bind the check).
+- combat        — player initiates or continues a fight. ("attack the bandit", "swing at him")
+- cast          — player invokes one of INPUT.player_abilities OUTSIDE a fight, on themselves or someone present ("cast shield up", "bless Maren", "heal myself"). Casting AT someone to start violence is combat; pressuring someone with a SOCIAL ability (charm and kin) mid-conversation is conversation (bind the check). Healing or blessing someone is ALWAYS cast, whatever the room is doing.
 - meta          — NOT an in-fiction action: an out-of-character comment, a joke, table-talk, a reaction aimed at you-the-engine, or noise. ("nice plot twist", "huh?", "lol", "wait what just happened"). Route here so no character answers it.
 
 HARD RULES:

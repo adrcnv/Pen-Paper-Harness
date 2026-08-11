@@ -826,6 +826,51 @@ RSpec.describe Harness::Runners::Conversation do
     end
   end
 
+  describe "voicing grammar (schema + the empty-prose break-off)" do
+    it "passes VOICING_SCHEMA on the voicing call" do
+      ctx = context_with do
+        { "speak" => false }.to_json
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+      described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+      expect(ctx.llm_nuance.schema_calls.compact.first).to eq(described_class::VOICING_SCHEMA)
+    end
+
+    it "treats explicit empty prose as a break-off: no bounce, no staged line, silence marked" do
+      voicing_calls = 0
+      ctx = context_with do |full|
+        next({ "relevant" => [] }.to_json) if full.include?("filter stored facts")
+        voicing_calls += 1
+        { "thought" => "Tomas thinks better of it.", "speak" => true,
+          "dialogue" => { "summary" => "breaks off", "prose" => "" } }.to_json
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+      expect(voicing_calls).to eq(1)                                            # no retry burned
+      expect(outcome.tool_calls.find { |t| t["name"] == "propose_event" }).to be_nil
+      expect(outcome.tool_calls.find { |t| t["name"] == "conversation_silence" }).to be_present
+    end
+
+    it "still bounces speak-true with dialogue null (format loss keeps its retry)" do
+      voicing_calls = 0
+      ctx = context_with do |full|
+        next({ "facts" => [], "people" => [], "places" => [] }.to_json) if full.include?("WORLD MEMORY") || full.include?("TAKING STOCK")
+        next({ "relevant" => [] }.to_json) if full.include?("filter stored facts")
+        voicing_calls += 1
+        if full.include?("--- RETRY ---")
+          { "thought" => "t", "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Aye, what of it?" } }.to_json
+        else
+          { "thought" => "t", "speak" => true, "dialogue" => nil }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
+      expect(voicing_calls).to eq(2)
+      say = outcome.tool_calls.find { |t| t["name"] == "propose_event" }
+      expect(say.dig("args", "details")).to eq("Aye, what of it?")
+    end
+  end
+
   describe "recall gating (likely speakers only)" do
     # recall() is the per-NPC gate door; spy on it to see who pays for it.
     def run_spying(input, npcs)
