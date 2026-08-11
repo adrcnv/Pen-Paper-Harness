@@ -826,6 +826,40 @@ RSpec.describe Harness::Runners::Conversation do
     end
   end
 
+  describe "recall gating (likely speakers only)" do
+    # recall() is the per-NPC gate door; spy on it to see who pays for it.
+    def run_spying(input, npcs)
+      runner = described_class.new
+      recalled = []
+      allow(runner).to receive(:recall).and_wrap_original do |orig, ctx, npc_row, topic|
+        recalled << npc_row.name
+        orig.call(ctx, npc_row, topic)
+      end
+      ctx = context_with do |full|
+        if full.include?("filter stored facts")
+          { "relevant" => [] }.to_json
+        else
+          { "speak" => false }.to_json
+        end
+      end
+      scene = Harness::Tools::QueryScene.build(ctx)
+      runner.run(context: ctx, scene: scene, input: input, step: step("asks the room"))
+      recalled
+    end
+
+    it "skips the recall gate for un-addressed bystanders when someone is named" do
+      Npc.create!(name: "Maud", subrole: "fishwife", location: tavern)
+      recalled = run_spying("Tomas, what news from the docks?", nil)
+      expect(recalled).to eq([ "Tomas" ])
+    end
+
+    it "keeps recall for everyone on an open-mic input (nobody named)" do
+      Npc.create!(name: "Maud", subrole: "fishwife", location: tavern)
+      recalled = run_spying("anyone hear anything strange lately?", nil)
+      expect(recalled).to contain_exactly("Tomas", "Maud")
+    end
+  end
+
   describe "knowledge reflection (per-speaker capture)" do
     it "writes a fact the speaker's reflection reports" do
       ctx = context_with do |full|

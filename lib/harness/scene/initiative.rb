@@ -60,6 +60,13 @@ module Harness
         end
 
         with_agenda = candidates.count { |c| !@active.agenda_for(c.id).to_s.strip.empty? }
+        # Hard pre-check (mechanical): the selector's only decision inputs are
+        # agenda, debts, and a non-neutral disposition. When NO candidate has
+        # any of them, the call is ritual — it selects nobody every time. Skip
+        # the LLM entirely; a quiet room stays quiet for free.
+        unless candidates.any? { |c| initiative_material?(c) }
+          return skip("no candidate with agenda/debts/disposition — selector skipped")
+        end
         @logger.info { "[Scene::Initiative] selecting over #{candidates.size} candidate(s), #{with_agenda} with agenda: #{candidates.map(&:name).join(', ')}" }
 
         spec = decide(candidates, player)
@@ -181,6 +188,13 @@ module Harness
       # Outstanding obligations from the candidate's seat — mechanical grounds
       # for a beat ("the stranger owes them coin and is standing right there"),
       # broken ones included.
+      def initiative_material?(c)
+        return true unless @active.agenda_for(c.id).to_s.strip.empty?
+        return true if debt_lines(c.id)
+        disp = @active.disposition_for(c.id)
+        !disp.nil? && disp != "neutral"
+      end
+
       def debt_lines(id)
         ::Obligation.outstanding.involving(id).order(id: :desc).limit(2)
                     .map { |o| o.line_for(id, now: @context.game_time) }.presence

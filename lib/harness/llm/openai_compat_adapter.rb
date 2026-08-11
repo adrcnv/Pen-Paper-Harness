@@ -91,12 +91,21 @@ module Harness
         )
       end
 
-      def complete(system:, user:)
+      def complete(system:, user:, schema: nil)
         messages = []
         messages << { "role" => "system", "content" => system } if system.is_a?(String) && !system.empty?
         messages << { "role" => "user",   "content" => user }
 
-        response = post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete)
+        response = begin
+          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete, schema: schema)
+        rescue APIError => e
+          # A schema the server's grammar compiler rejects must not silently
+          # kill the call site (reflection's rescue would eat the claims).
+          # Fall back to the unconstrained request, LOUD in the log.
+          raise unless schema
+          @logger.warn { "[OpenAICompatAdapter] json_schema rejected (#{e.message.to_s[0, 160]}) — retrying unconstrained" }
+          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete)
+        end
         extract_text(response)
       end
 
@@ -148,13 +157,23 @@ module Harness
       }.freeze
 
       # Public so OpenAICompatTurn can call back in.
-      def post_chat(messages:, tools: nil, enable_thinking: nil)
+      def post_chat(messages:, tools: nil, enable_thinking: nil, schema: nil)
         payload = {
           "model"      => @model,
           "max_tokens" => @max_tokens,
           "messages"   => messages
         }.merge(DRY_SAMPLING)
         payload["tools"] = tools if tools.is_a?(Array) && !tools.empty?
+        # Grammar-constrained output: llama.cpp compiles the JSON schema to a
+        # GBNF sampler constraint — the model CANNOT emit the wrong shape.
+        # Kills the whole retry economy (schema-collision bounces, truncated
+        # JSON, stray prose) at the sampler, not in Ruby.
+        if schema
+          payload["response_format"] = {
+            "type" => "json_schema",
+            "json_schema" => { "name" => "emit", "schema" => schema }
+          }
+        end
         # Per-turn sampler seed (replay rig). llama.cpp honors it; servers
         # that don't just ignore the field.
         payload["seed"] = ::Harness::LLM::Seed.current if ::Harness::LLM::Seed.current

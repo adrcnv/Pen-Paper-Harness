@@ -9,7 +9,7 @@ RSpec.describe Harness::Planner do
   # Minimal adapter double: complete(system:, user:) returns a canned body.
   def adapter(body, model: "fake-model")
     Class.new do
-      define_method(:complete) { |system:, user:| body.respond_to?(:call) ? body.call(user) : body }
+      define_method(:complete) { |system:, user:, schema: nil| body.respond_to?(:call) ? body.call(user) : body }
       define_method(:display_model) { model }
     end.new
   end
@@ -166,7 +166,7 @@ RSpec.describe Harness::Planner do
   describe "failure isolation" do
     it "captures a raised adapter error instead of propagating" do
       boom = Class.new do
-        def complete(system:, user:) = raise "network down"
+        def complete(system:, user:, schema: nil) = raise "network down"
         def display_model = "boom"
       end.new
       result = plan_for(model: boom, location: tavern, sm: scene_manager_for(tavern), input: "look")

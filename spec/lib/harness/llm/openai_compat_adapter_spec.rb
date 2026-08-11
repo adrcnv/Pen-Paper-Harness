@@ -75,6 +75,20 @@ RSpec.describe Harness::LLM::OpenAICompatAdapter do
       expect(body["chat_template_kwargs"]).to eq({ "enable_thinking" => false })
     end
 
+    it "passes a schema through as json_schema response_format (grammar constraint)" do
+      http = stub_http([ chat_response(text_message("{}")) ])
+      schema = { "type" => "object", "properties" => { "x" => { "type" => "string" } } }
+      adapter(http).complete(system: "s", user: "u", schema: schema)
+      rf = http.calls.first[:body]["response_format"]
+      expect(rf).to eq("type" => "json_schema", "json_schema" => { "name" => "emit", "schema" => schema })
+    end
+
+    it "sends no response_format without a schema" do
+      http = stub_http([ chat_response(text_message("ok")) ])
+      adapter(http).complete(system: "s", user: "u")
+      expect(http.calls.first[:body]).not_to have_key("response_format")
+    end
+
     it "omits the system message when empty" do
       http = stub_http([ chat_response(text_message("ok")) ])
       adapter(http).complete(system: "", user: "u")

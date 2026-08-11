@@ -20,6 +20,30 @@ module Harness
       inventory dice time-skip combat meta agentic
     ].freeze
 
+    # Grammar contract for the plan emit (llama.cpp json_schema → GBNF): the
+    # sampler cannot emit prose, markdown fences, or an unknown runner label —
+    # parse_error stops being a failure mode on the constrained path. The
+    # retired labels (dice/agentic) stay IN the enum: the dispatcher remap is
+    # the habit-tolerance, the grammar only fences the alphabet.
+    PLAN_SCHEMA = {
+      "type" => "object",
+      "properties" => {
+        "reasoning" => { "type" => "string" },
+        "plan" => { "type" => "array", "items" => {
+          "type" => "object",
+          "properties" => {
+            "runner" => { "type" => "string", "enum" => VALID_RUNNERS },
+            "reason" => { "type" => "string" },
+            "args"   => { "type" => "object" }
+          },
+          "required" => %w[runner reason args],
+          "additionalProperties" => false
+        } }
+      },
+      "required" => %w[reasoning plan],
+      "additionalProperties" => false
+    }.freeze
+
     # The dispatcher's single-plan entry. ONE model call (the session model via
     # llm_nuance, falling back to llm_grunt). Returns:
     #   { "model","duration_ms","raw","reasoning","plan","parse_error","world" }
@@ -44,7 +68,7 @@ module Harness
 
     def call_one(adapter, user)
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      raw = adapter.complete(system: preamble, user: user)
+      raw = adapter.complete(system: preamble, user: user, schema: PLAN_SCHEMA)
       elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
 
       parsed = parse_plan(raw)

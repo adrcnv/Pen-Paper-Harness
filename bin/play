@@ -578,7 +578,13 @@ loop do
     children = Location.where(parent_id: loc.id).to_a
     parent_loc = loc.parent
 
-    puts "── #{loc.name} ──"
+    if (t = context.game_time)
+      t = t.to_i
+      clock = format("day %d, %02d:%02d (%s)", t / 1440, (t % 1440) / 60, t % 60, Harness::Clock.phase(t))
+      puts "── #{loc.name} — #{clock} ──"
+    else
+      puts "── #{loc.name} ──"
+    end
     puts "  #{loc.description}" if loc.description.present?
     if chars.any? || extras.any?
       puts "  here:"

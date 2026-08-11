@@ -25,7 +25,7 @@ module Harness
         @last_turn = FakeTurn.new(@reasoning_script)
       end
 
-      def complete(system:, user:)
+      def complete(system:, user:, schema: nil)
         @narration_calls << { system: system, user: user }
         @narration.respond_to?(:call) ? @narration.call(user) : @narration
       end

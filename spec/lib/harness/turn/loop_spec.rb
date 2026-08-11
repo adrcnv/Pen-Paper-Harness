@@ -643,7 +643,7 @@ RSpec.describe Harness::Turn::Loop do
         def start_turn(system:, user:, tools:)
           raise "adapter exploded"
         end
-        def complete(system:, user:)
+        def complete(system:, user:, schema: nil)
           raise "adapter exploded"
         end
       end.new

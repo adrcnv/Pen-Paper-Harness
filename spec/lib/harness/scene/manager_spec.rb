@@ -222,6 +222,31 @@ RSpec.describe Harness::Scene::Manager do
       expect(materializer_double).not_to have_received(:materialize)
     end
 
+    it "fires Materializer when the only occupant is the venue's mechanical keeper (staff-blind count)" do
+      tavern.update!(properties: { "trade" => "barkeep" })
+      maren  # the keeper StaffSeeder guarantees — a lone barkeep is an empty tavern
+      mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
+      mgr.ensure_entered
+      expect(materializer_double).to have_received(:materialize).with(location: tavern, target_count: be_between(3, 6))
+      expect(tavern.reload.properties["materialized"]).to be(true)   # stamped — one-time device
+    end
+
+    it "never re-fires a stamped venue, even when eviction left only the keeper" do
+      tavern.update!(properties: { "trade" => "barkeep", "materialized" => true })
+      maren
+      mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
+      mgr.ensure_entered
+      expect(materializer_double).not_to have_received(:materialize)
+    end
+
+    it "stamps an already-populated unstamped venue so a later eviction can't open a second cast" do
+      maren   # non-staff population (tavern has no trade property here)
+      mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
+      mgr.ensure_entered
+      expect(materializer_double).not_to have_received(:materialize)
+      expect(tavern.reload.properties["materialized"]).to be(true)
+    end
+
     it "fires Materializer for untagged top-level locations (worldgen cities promote class-2 founders + spawn locals)" do
       # Pre-class-2-revival, Genesis materialized founders directly at the
       # city tier so Materializer was redundant here. With class-2 default,

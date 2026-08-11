@@ -10,7 +10,7 @@ module Harness
         raise NotImplementedError
       end
 
-      def complete(system:, user:)
+      def complete(system:, user:, schema: nil)
         raise NotImplementedError
       end
 

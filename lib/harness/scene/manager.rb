@@ -240,8 +240,23 @@ module Harness
         ::Harness::Scene::Materializer
           .new(llm_client: @context.llm_grunt, logger: logger)
           .materialize(location: loc, target_count: target)
+        mark_materialized!(loc)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] auto-materialize failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # One-time stamp: the Materializer is a FIRST-ENTRY device. Its old
+      # proxy for "first entry" was zero NPCs anchored — StaffSeeder broke
+      # that (the mechanical keeper spawns BEFORE the cast, so every trade
+      # venue read as populated and capped out at keeper + extras). The stamp
+      # is the honest signal, and it also stops re-entry inflation: patrons
+      # are root-homed and evicted on exit, so a bare population count would
+      # re-fire the cast every visit. Drift-back-in is LocalDraw's job.
+      def mark_materialized!(loc)
+        props = loc.properties.is_a?(Hash) ? loc.properties : {}
+        loc.update!(properties: props.merge("materialized" => true))
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] materialized stamp failed for #{loc.name}: #{e.message}" }
       end
 
       # Keep populated towns from freezing: occasionally a resident of another
@@ -357,15 +372,26 @@ module Harness
       end
 
       def auto_target_for(loc)
-        # "Already populated" = at least one ACTIVE (non-dormant) Npc here.
-        # Genesis spawns dormant historicals at the city tier; they're row-shaped
+        return nil if loc.properties.is_a?(Hash) && loc.properties["materialized"]
+
+        # "Already populated" = at least one ACTIVE (non-dormant) Npc here,
+        # NOT counting the venue's mechanical keeper (StaffSeeder runs first;
+        # a lone barkeep is an empty tavern, not a cast). Genesis spawns
+        # dormant historicals at the city tier; they're row-shaped
         # placeholders, not inhabitants yet — the Materializer's job is to
         # wake the ones who plausibly fit and spawn fresh public-facing locals.
+        staff_trade = loc.properties.is_a?(Hash) ? loc.properties["trade"].presence : nil
         any_active = ::Npc.where(location_id: loc.id).any? { |c|
           props = c.properties
-          !(props.is_a?(Hash) && props["dormant"] == true)
+          next false if props.is_a?(Hash) && props["dormant"] == true
+          !(staff_trade && c.subrole.to_s == staff_trade)
         }
-        return nil if any_active
+        # Populated without a stamp (pre-stamp save): stamp it so eviction
+        # can't open the door to a second cast later.
+        if any_active
+          mark_materialized!(loc)
+          return nil
+        end
 
         if loc.properties.is_a?(Hash) && loc.properties["kind"] == "wilderness_leaf"
           # Wilderness leaves get NO materialized resident cast — they're

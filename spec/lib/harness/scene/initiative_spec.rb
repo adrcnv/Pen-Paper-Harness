@@ -14,7 +14,7 @@ RSpec.describe Harness::Scene::Initiative do
   # The stub serves all four surfaces by prompt sniffing.
   def stub_llm(selector:, line: nil, speak: true)
     Class.new do
-      define_method(:complete) do |system:, user:|
+      define_method(:complete) do |system:, user:, schema: nil|
         full = "#{system}\n#{user}"
         if full.include?("TAKING STOCK")
           { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
@@ -58,6 +58,54 @@ RSpec.describe Harness::Scene::Initiative do
   end
 
   def names(t) = t.tool_calls.map { |tc| tc["name"] }
+
+  describe "hard pre-check (mechanical selector skip)" do
+    it "skips the selector LLM entirely when no candidate has agenda, debts, or disposition" do
+      selector_called = false
+      probe = Class.new do
+        define_method(:complete) do |system:, user:, schema: nil|
+          selector_called = true
+          { "actor" => nil }.to_json
+        end
+      end.new
+      context.llm_nuance = probe
+      a = active_with(present: [ npc(name: "Idle Bo") ])   # no agenda, no debts, neutral
+      expect(run(a, transcript)).to be_nil
+      expect(selector_called).to be(false)
+    end
+
+    it "still consults the selector when a candidate has an agenda" do
+      called = false
+      probe = Class.new do
+        define_method(:complete) do |system:, user:, schema: nil|
+          called = true
+          { "actor" => nil }.to_json
+        end
+      end.new
+      context.llm_nuance = probe
+      bo = npc(name: "Driven Bo")
+      a = active_with(present: [ bo ], agendas: { bo.id => "wants to close the deal" })
+      run(a, transcript)
+      expect(called).to be(true)
+    end
+
+    it "counts an outstanding debt as material" do
+      bo = npc(name: "Owed Bo")
+      Obligation.create!(debtor: player, creditor: bo, kind: "coins", amount: 3,
+                         terms: "Three coins for the room", game_time: 90)
+      called = false
+      probe = Class.new do
+        define_method(:complete) do |system:, user:, schema: nil|
+          called = true
+          { "actor" => nil }.to_json
+        end
+      end.new
+      context.llm_nuance = probe
+      a = active_with(present: [ bo ])
+      run(a, transcript)
+      expect(called).to be(true)
+    end
+  end
 
   it "settles on the arrival turn (cooldown nil) without firing" do
     maren = npc(name: "Maren")
@@ -161,7 +209,7 @@ RSpec.describe Harness::Scene::Initiative do
     voicing_prompt = nil
     a = active_with(present: [ maren, gerd ], agendas: { gerd.id => "wants the flooding dealt with" })
     context.llm_nuance = Class.new do
-      define_method(:complete) do |system:, user:|
+      define_method(:complete) do |system:, user:, schema: nil|
         full = "#{system}\n#{user}"
         if full.include?("TAKING STOCK")
           { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
@@ -200,7 +248,7 @@ RSpec.describe Harness::Scene::Initiative do
                        terms: "For the mended cloak", game_time: 0)
     selector_prompt = nil
     context.llm_nuance = Class.new do
-      define_method(:complete) do |system:, user:|
+      define_method(:complete) do |system:, user:, schema: nil|
         selector_prompt = user unless user.include?("You voice ONE character")
         { "actor" => nil, "cause" => "" }.to_json
       end

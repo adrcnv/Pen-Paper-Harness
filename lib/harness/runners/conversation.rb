@@ -72,9 +72,18 @@ module Harness
 
         spoken     = 0
         parsed_any = false
-        poll_order(present, extras, input, step).each do |v|
+        order = poll_order(present, extras, input, step)
+        # Recall is for SPEECH: when the input names someone, un-addressed
+        # bystanders skip the recall gate (they keep their raw recent events —
+        # a chime-in grounds in the exchange, not deep lore). An open-mic
+        # input (nobody named) keeps recall for everyone: any of them may be
+        # the addressee. Contest targets always recall.
+        any_addressed = order.any? { |v| v[:addressed] }
+        order.each do |v|
           break if spoken >= MAX_SPEAKERS
-          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest)
+          recall_gate = !any_addressed || v[:addressed] ||
+                        (contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id])
+          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest, recall_gate: recall_gate)
           next unless emit
           parsed_any = true
           if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
@@ -118,6 +127,7 @@ module Harness
         hay = "#{input} #{step&.intent}".downcase
         npcs = present.map { |c| { kind: :npc, char: c } }
         named, rest = npcs.partition { |v| addressed_by_name?(v[:char], hay) }
+        named.each { |v| v[:addressed] = true }
         # Extras are ambient narration FLAVOR, not filler speakers. Poll one ONLY
         # when the player's input actually ENGAGES it ("talk to the recruit") —
         # engagement is what promotes an unnamed figure into a character. NEVER
@@ -355,7 +365,7 @@ module Harness
 
       private
 
-      def voice_one(context, input, step, player, v, roster, thread, nearby, wares, resolver, tcs, active, contest = nil, frame: nil)
+      def voice_one(context, input, step, player, v, roster, thread, nearby, wares, resolver, tcs, active, contest = nil, frame: nil, recall_gate: true)
         you =
           if v[:kind] == :extra
             { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }
@@ -367,13 +377,12 @@ module Harness
         if contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
           you = you.merge("contest" => contest[:payload])
         end
-        # EVERY polled NPC recalls: knowledge facts AND their own memories
-        # through one relevance gate (the substantive/banter split is dead —
-        # defensive design against a scarecrow that never materialized). The
-        # gated-relevant memories (plus a small recency floor for continuity)
-        # REPLACE the raw event dump; relevant facts land in `knowledge`.
-        # Empty candidate pool → no gate call, so an empty world stays free.
-        if v[:kind] == :npc && (npc_row = ::Npc.find_by(id: v[:char]["id"]))
+        # Recall (likely speakers only — see run's recall_gate): knowledge
+        # facts AND own memories through one relevance gate. The gated-relevant
+        # memories (plus a small recency floor for continuity) REPLACE the raw
+        # event dump; relevant facts land in `knowledge`. Empty candidate pool
+        # → no gate call. Skipped pollees keep the raw event dump untouched.
+        if v[:kind] == :npc && recall_gate && (npc_row = ::Npc.find_by(id: v[:char]["id"]))
           # Topic = input + planner intent. A thin input ("who?", "go on")
           # embeds as nearly nothing; the intent already describes what's
           # being sought — free query expansion, no extra LLM call.
@@ -792,6 +801,58 @@ module Harness
       # lands in Knowledge::Capture.ingest (routing, realizers, dedup,
       # revision — unchanged). Speaker attribution is structural, not
       # model-reported. Non-fatal.
+      # Grammar contract for the reflection emit (llama.cpp json_schema →
+      # GBNF). The sampler cannot answer in the dialogue schema, emit prose,
+      # or truncate mid-object — the bounce becomes a dead backstop instead
+      # of a 3-second tax. Shape mirrors knowledge_reflection.txt exactly.
+      NULLABLE_STR = { "type" => %w[string null] }.freeze
+      REFLECTION_SCHEMA = {
+        "type" => "object",
+        "properties" => {
+          "facts" => { "type" => "array", "items" => {
+            "type" => "object",
+            "properties" => {
+              "content"  => { "type" => "string" },
+              "concerns" => { "type" => "array", "items" => { "type" => "string" } },
+              "scope"    => { "type" => "string", "enum" => %w[local world] },
+              "min_int"  => { "type" => %w[integer null] },
+              "when"     => NULLABLE_STR
+            },
+            "required" => %w[content concerns scope min_int when],
+            "additionalProperties" => false
+          } },
+          "people" => { "type" => "array", "items" => {
+            "type" => "object",
+            "properties" => {
+              "name" => { "type" => "string" }, "subrole" => NULLABLE_STR,
+              "gist" => { "type" => "string" }, "at_location" => NULLABLE_STR
+            },
+            "required" => %w[name subrole gist at_location],
+            "additionalProperties" => false
+          } },
+          "places" => { "type" => "array", "items" => {
+            "type" => "object",
+            "properties" => { "name" => { "type" => "string" }, "about" => { "type" => "string" } },
+            "required" => %w[name about],
+            "additionalProperties" => false
+          } },
+          "deals" => { "type" => "array", "items" => {
+            "type" => "object",
+            "properties" => {
+              "who_owes" => { "type" => "string" }, "owed_to" => { "type" => "string" },
+              "kind"     => { "type" => "string", "enum" => %w[coins deed meet] },
+              "amount"   => { "type" => %w[integer null] },
+              "terms"    => { "type" => "string" },
+              "due"      => NULLABLE_STR, "where" => NULLABLE_STR
+            },
+            "required" => %w[who_owes owed_to kind amount terms due where],
+            "additionalProperties" => false
+          } }
+        },
+        "required" => %w[facts people places deals],
+        "additionalProperties" => false
+      }.freeze
+
       def reflect_knowledge(context, v, emit, voicing_user)
         prose = emit.dig("dialogue", "prose").to_s.strip
         return if prose.empty? || voicing_user.nil?
@@ -799,7 +860,7 @@ module Harness
         speaker = v[:char]["name"]
         user    = "#{voicing_user}\n\n#{reflection_tail(prose)}"
         raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
-          llm(context).complete(system: preamble, user: user)
+          llm(context).complete(system: preamble, user: user, schema: REFLECTION_SCHEMA)
         end
         payload = parse_reflection(raw)
         # One correction bounce, mirroring voice_one's: the tail's schema
@@ -809,7 +870,7 @@ module Harness
         if (defect = reflection_defect(payload))
           @logger.warn { "[Runner conversation] reflection for #{speaker} #{defect} — retrying once" }
           raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
-            llm(context).complete(system: preamble, user: "#{user}\n\n#{reflection_retry_tail(defect, raw)}")
+            llm(context).complete(system: preamble, user: "#{user}\n\n#{reflection_retry_tail(defect, raw)}", schema: REFLECTION_SCHEMA)
           end
           payload = parse_reflection(raw)
           if (still = reflection_defect(payload))

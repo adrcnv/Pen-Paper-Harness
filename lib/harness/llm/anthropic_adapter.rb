@@ -68,7 +68,9 @@ module Harness
         )
       end
 
-      def complete(system:, user:)
+      # schema: accepted for interface parity; Anthropic has no
+      # response_format — shape discipline stays prompt-side there.
+      def complete(system:, user:, schema: nil)
         response = post_messages(
           system:   system,
           messages: [ { "role" => "user", "content" => user } ],
