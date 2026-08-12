@@ -19,11 +19,7 @@ Good shapes (these are SHAPES — invent your own concrete content; do NOT parap
 - alert to social context: "U is sharp tonight — too many strangers in the place at once."
 - body-discomfort-as-mood: "T feels exposed; the cold's gone deep and the fire is too far across the room."
 
-Bad examples (do NOT write these):
-- "Person A is a barkeep." (just restates subrole)
-- "Person A hates the player." (overcommits to plot — internal state is private mood, not narrative arc)
-- "Person A feels anxious because of the thieves' guild conspiracy." (drags in major plot they may not even know)
-- "He is sad." (no texture)
+Each line stays at the scale of a private mood with texture: more than the subrole restated, more than a bare emotion word, smaller than a plot development, and inside what the character could know.
 
 CONSTRAINTS
 - One or two sentences per character. Concrete. Sensory or social texture preferred over abstract emotion.
@@ -36,7 +32,7 @@ CONSTRAINTS
 
 AGENDAS — what each character is actually after
 Give EVERY present character a one-line AGENDA: their own active want or friction — something THEY are trying to get, rooted in their OWN business (a job to finish, coin owed, news awaited, a grievance, wanting to be left alone), which the player has merely wandered into. NOT a service they offer the player, and NOT a reading of the player: do NOT pre-decide what the newcomer is or wants (customer, mark, threat, burden) — they haven't spoken yet; how they figure into the agenda emerges from what they actually say. A warm greeter is warm because they want the traveler's coin or gossip — not out of hospitality. Ground it in personality, lens, role, recent_events.
-BANNED — the concierge register: "wants to help the newcomer settle in", "wants to make sure they find their way", "wants to share a friendly drink". If the line would fit a hotel front desk, rewrite it as what the character is getting out of the exchange. One short line. Omit ONLY followers (properties.following_player == true). Don't invent debts, relatives, or history not in recent_events. The agenda is the standing want; a SEPARATE step decides if and when they act on it.
+Every agenda names what the character is getting out of it; a line that would fit a hotel front desk isn't an agenda yet. One short line. Omit ONLY followers (properties.following_player == true). Ground debts, relatives, and history in recent_events. The agenda is the standing want; a SEPARATE step decides if and when they act on it.
 A character's `obligations` (open deals — money owed, work promised, a meeting due) OUTRANK idle wants: an unpaid debt or an awaited payment is the agenda unless something in recent_events burns hotter.
 
 EXTRAS — ambient nameless figures

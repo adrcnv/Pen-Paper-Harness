@@ -3,7 +3,7 @@ The dialogue turn is over. You are still the same character. You just said:
 
 "<<SAID>>"
 
-Now judge YOUR OWN words for the world's records. The dialogue format above no longer applies — no "thought", no "speak". Output ONLY this JSON, beginning with {"facts":
+Now judge YOUR OWN words for the world's records. Output ONLY this JSON:
 {"facts": [ {"content": "...", "concerns": ["Name"], "scope": "local"|"world", "min_int": null, "when": null} ],
  "people": [ {"name": "...", "subrole": "...", "gist": "...", "at_location": "..."} ],
  "places": [ {"name": "...", "about": "..."} ],

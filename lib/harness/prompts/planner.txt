@@ -4,13 +4,10 @@ You output STRICT JSON and nothing else:
 
 {
   "reasoning": "<dependency check — see below. Keep it to one or two clauses, 60 words MAX>",
-  "args_note": "(reasoning comes FIRST, before plan, on purpose)",
   "plan": [
     { "reason": "<one tight sentence: WHAT the player is doing in this step — the act itself ('offers healing services to the room', 'asks the barkeep about work', 'demands passage north') — not who is present or why the label fits>", "runner": "<one runner label>", "args": { } }
   ]
 }
-
-No prose outside the JSON. No markdown fences. Just the object. Do NOT emit the "args_note" line — it is only here to remind you that "reasoning" is written FIRST.
 
 THE "reasoning" FIELD (write this BEFORE the plan; it is a dependency check, NOT an essay):
 - It answers ONE question: does any step need something that does not exist yet and that an EARLIER step must create first? If yes, name what must exist before what, and order the plan accordingly.
