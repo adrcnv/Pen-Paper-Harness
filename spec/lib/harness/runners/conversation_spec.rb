@@ -488,7 +488,7 @@ RSpec.describe Harness::Runners::Conversation do
       outcome = described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
 
       expect(voiced.first).to include('"contest"')
-      expect(voiced.first).to include('"result": "success"')
+      expect(voiced.first).to include("you lost — it went the player's way")
       contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
       expect(contest_record).to be_present
       # Tagged so the narration step keeps contest turns in the dialogue-only
@@ -506,7 +506,47 @@ RSpec.describe Harness::Runners::Conversation do
       runner.run(context: ctx, scene: scene, input: "press Tomas", step: contest_step("target" => "Tomas"))
       runner.run(context: ctx, scene: scene, input: "press Tomas HARDER", step: contest_step("target" => "Tomas"))
 
-      expect(voiced.last).to include('"result": "failure"') # verdict re-served, not rerolled
+      expect(voiced.last).to include("you won — the player's attempt failed") # verdict re-served, not rerolled
+    end
+
+    it "binds a planner stat as a symmetric opposed game, ledger-keyed by stat" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "beat Tomas at knuckle-bones", step: contest_step("target" => "Tomas", "stat" => "dexterity"))
+
+      contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
+      expect(contest_record.dig("args", "stat")).to eq("dexterity")
+      expect(contest_record.dig("args", "target_stat")).to eq("dexterity")
+      # a dex game and a persuasion press are different ledger questions
+      expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:dexterity" ])
+      expect(voiced.first).to include("dexterity contest")
+    end
+
+    it "maps a planner-bound \"luck\" to a symmetric dexterity game" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", margin: "narrow", critical: false))
+      ctx, _voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "play knuckle-bones with Tomas", step: contest_step("target" => "Tomas", "stat" => "luck"))
+
+      contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
+      expect(contest_record.dig("args", "stat")).to eq("dexterity")
+      expect(contest_record.dig("args", "target_stat")).to eq("dexterity")
+    end
+
+    it "falls back to the persuasion default on an unknown bound stat" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "failure", margin: "narrow", critical: false))
+      ctx, _voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "outdrink Tomas", step: contest_step("target" => "Tomas", "stat" => "moxie"))
+
+      contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
+      expect(contest_record.dig("args", "stat")).to eq("charisma")
+      expect(contest_record.dig("args", "target_stat")).to eq("wisdom")
+      expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:social" ])
     end
 
     it "skips the contest entirely when the named target is not present" do

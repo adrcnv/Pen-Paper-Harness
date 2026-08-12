@@ -169,6 +169,12 @@ module Harness
       # ability with no fallback, or a resolve error → nil, plain conversation.
       SOCIAL_ABILITY_KINDS = %w[control utility].freeze
 
+      # A planner-bound stat turns the contest from persuasion into an opposed
+      # game of skill or chance (knuckle-bones, arm-wrestling): both sides
+      # roll the SAME faculty. Absent or unknown stat → persuasion default
+      # (player charisma vs target wisdom).
+      BOUND_STATS = %w[strength dexterity constitution intelligence wisdom charisma].freeze
+
       def run_contest(context, step, player, present, resolver, tcs, active)
         spec = step&.args&.dig("check")
         return nil unless spec.is_a?(::Hash)
@@ -190,11 +196,19 @@ module Harness
           @logger.info { "[Runner conversation] contest ability #{ability['name'].inspect} (#{ability['effect_kind']}) is not social — downgraded to persuasion" }
           ability = nil
         end
-        kind    = ability ? ability["id"].to_s : "social"
+        stat = spec["stat"].to_s.downcase
+        # The planner reads pure-chance games as testing "luck" — no such
+        # column exists. Bones ride the throwing hand: dexterity, symmetric.
+        stat = "dexterity" if stat == "luck"
+        stat = nil unless BOUND_STATS.include?(stat)
+        # kind separates ledger keys: a dexterity game against someone is a
+        # different question from persuading them — a failed charm doesn't
+        # pre-settle the dice game, and vice versa.
+        kind    = ability ? ability["id"].to_s : (stat || "social")
         key     = "#{target['id']}:#{kind}"
 
         if (prior = active&.contest_for(key))
-          @logger.info { "[Runner conversation] contest #{key} already settled this scene (#{prior['result']}) — reusing verdict" }
+          @logger.info { "[Runner conversation] contest #{key} already settled this scene (#{prior['verdict'] || prior['result']}) — reusing verdict" }
           return { target_id: target["id"], payload: prior }
         end
 
@@ -203,6 +217,9 @@ module Harness
         if ability
           # resolve's lookup matches on display name, not id
           args["ability_name"] = ability["name"]
+        elsif stat
+          args["stat"]        = stat
+          args["target_stat"] = stat
         else
           args["stat"]        = "charisma"
           args["target_stat"] = "wisdom"
@@ -220,10 +237,17 @@ module Harness
           return nil
         end
 
-        payload = { "kind" => (ability ? ability["name"] : "persuasion"), "result" => res["outcome"] }
-        if ability && %w[success critical_success].include?(res["outcome"])
-          payload["effect"] = ability["description"]
-        end
+        player_won = %w[success critical_success].include?(res["outcome"])
+        grade = (res["margin"].to_s == "decisive" || res["critical"]) ? ", decisively" : ""
+        payload = {
+          "kind"    => (ability ? ability["name"] : (stat ? "#{stat} contest" : "persuasion")),
+          # Seat-relative verdict, rendered in Ruby. Handed the player-centric
+          # outcome ("critical_failure"), the voicing model flipped ownership
+          # (Leofstan conceding a game he'd won — deixis inversion). Who won
+          # is computed here, never inferred by the model.
+          "verdict" => (player_won ? "you lost — it went the player's way#{grade}" : "you won — the player's attempt failed#{grade}")
+        }
+        payload["effect"] = ability["description"] if ability && player_won
         active&.record_contest!(key, payload)
         @logger.info { "[Runner conversation] contest #{key} → #{res['outcome']}#{res['xp_gained'] ? " (+#{res['xp_gained']}xp)" : ""}" }
         { target_id: target["id"], payload: payload }

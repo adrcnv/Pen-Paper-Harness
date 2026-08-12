@@ -38,6 +38,28 @@ RSpec.describe Harness::Runners::Inventory do
     expect(outcome.status).to eq(:skipped)
   end
 
+  it "records a no-recipient stake as an event without moving coins" do
+    ctx = context_with { { "action" => "transfer_coins", "amount" => 5, "reason" => "the knuckle-bones stake" }.to_json }
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "put 5 coins on the table", step: step)
+
+    expect(outcome.status).to eq(:ok)
+    expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "propose_event" ])
+    expect(player.reload.coins).to eq(20)
+    expect(Event.joins(:event_participants).where(event_participants: { character_id: player.id })).to exist
+  end
+
+  it "skips a stake the player cannot cover" do
+    ctx = context_with { { "action" => "transfer_coins", "amount" => 500, "reason" => "bluff" }.to_json }
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "put 500 coins on the table", step: step)
+
+    expect(outcome.status).to eq(:skipped)
+    expect(Event.count).to eq(0)
+  end
+
   it "skips a pickup of an item that exists only in fiction (the phantom ale)" do
     ctx = context_with { { "action" => "pickup", "item_id" => nil, "reason" => "no ale item present" }.to_json }
     scene = Harness::Tools::QueryScene.build(ctx)

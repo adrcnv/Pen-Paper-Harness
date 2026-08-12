@@ -33,8 +33,23 @@ module Harness
           return skip("give without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "give_item", { "item_id" => spec["item_id"], "from_id" => from, "to_id" => spec["to_id"], "reason" => spec["reason"] }, into: tcs)
         when "transfer_coins"
-          return skip("transfer without to_id/amount", tcs) unless spec["to_id"] && spec["amount"]
-          execute_tool(resolver, "transfer_coins", { "from_id" => from, "to_id" => spec["to_id"], "amount" => spec["amount"], "reason" => spec["reason"] }, into: tcs)
+          return skip("transfer without amount", tcs) unless spec["amount"]
+          if spec["to_id"]
+            execute_tool(resolver, "transfer_coins", { "from_id" => from, "to_id" => spec["to_id"], "amount" => spec["amount"], "reason" => spec["reason"] }, into: tcs)
+          else
+            # No recipient resolved ("put 5 coins on the table"): a stake or
+            # show of coin, not a transfer. No ledger movement — coins change
+            # hands only when a real payee exists. Recorded as a personal
+            # event so voicing/initiative see the stake as committed truth
+            # instead of confabulating its fate.
+            return skip("stake exceeds carried coins", tcs) if player.coins.to_i < spec["amount"].to_i
+            execute_tool(resolver, "propose_event", {
+              "scope"        => "personal",
+              "trigger"      => "coins set out openly",
+              "details"      => "#{player.name} set out #{spec['amount']} coins openly#{spec['reason'].to_s.strip.empty? ? '' : " — #{spec['reason']}"}.",
+              "participants" => [ { "character_id" => player.id, "role" => "actor" } ]
+            }, into: tcs)
+          end
         when "buy"
           return skip("buy without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "buy_item", { "item_id" => spec["item_id"], "merchant_id" => spec["to_id"], "buyer_id" => player.id }, into: tcs)
