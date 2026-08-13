@@ -5,7 +5,8 @@ module Harness
     # Ruby calls pass_time (which advances the clock and may rebuild the scene
     # when it crosses the in-scene threshold).
     class TimeSkip < Base
-      PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/time_skip.txt")
+      PROMPT_PATH          = Rails.root.join("lib/harness/prompts/runners/time_skip.txt")
+      FRAGMENT_PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/time_skip_fragment.txt")
       VALID_INTENTS = %w[rest wait sleep linger practice].freeze
 
       def run(context:, scene:, input:, step:)
@@ -20,6 +21,14 @@ module Harness
         tcs = []
         _, ok = execute_tool(resolver, "pass_time", { "intent" => intent, "duration_minutes" => minutes }, into: tcs)
         return redispatch("pass_time failed", tcs) unless ok
+
+        # The stretch of time's own prose island — one or two lived sentences.
+        emit_fragment(context, FRAGMENT_PROMPT_PATH, {
+          "doing"   => intent,
+          "minutes" => minutes,
+          "place"   => context.player_location&.name,
+          "now"     => ::Harness::Clock.phase(context.game_time.to_i).to_s
+        }, tcs, subsystem: :runner_time_skip_fragment)
 
         Outcome.new(tool_calls: tcs, scene_dirty: context.scene_dirty, status: :ok)
       end

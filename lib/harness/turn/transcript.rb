@@ -7,6 +7,10 @@ module Harness
       attr_accessor :input, :reasoning_prompt, :narration, :narration_prompt,
                     :location_id, :error, :combat, :unresolved, :notice, :halted,
                     :llm_seed
+      # Typed display parts ({kind:, text:}) built by Turn::Parts — the
+      # presenter styles by kind; `narration` is their plain-text join (what
+      # scene history and the TurnLog store).
+      attr_accessor :parts
       attr_reader :tool_calls
       # Names of the runners that executed this turn (state-machine path), in
       # order. Lets post-turn consumers know what kind of turn this was — e.g.
@@ -34,6 +38,7 @@ module Harness
         # refusal, and can rephrase. The frontend prints it after narration.
         @notice           = nil
         @runners_ran      = []
+        @parts            = []
       end
 
       def record_tool_call(call, result)

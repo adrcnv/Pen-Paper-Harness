@@ -11,7 +11,8 @@ module Harness
     # Social-pressure casts mid-conversation stay with the conversation
     # runner's contest binding.
     class Cast < Base
-      PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/cast.txt")
+      PROMPT_PATH          = Rails.root.join("lib/harness/prompts/runners/cast.txt")
+      FRAGMENT_PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/cast_fragment.txt")
 
       def run(context:, scene:, input:, step:)
         player = ::Player.first
@@ -47,15 +48,6 @@ module Harness
         unless ok && res.is_a?(::Hash) && res["outcome"]
           return redispatch("cast failed: #{res.is_a?(::Hash) ? res['error'] : 'unparseable resolve'}", tcs)
         end
-        # Tag a person-targeted CONTROL contest (charm and kin) so narration
-        # renders bracket-only: untagged, the narrator re-dramatized the
-        # verdict and put invented acceptance speech in the target's mouth
-        # ahead of the initiative beat (the charm-word double-acceptance).
-        # Physical/self casts stay narratable — nobody else voices those.
-        if target && ability["effect_kind"] == "control" && tcs.last && tcs.last["name"] == "resolve"
-          tcs.last["contest"] = "cast"
-        end
-
         # Stage-2 composed magic: on a successful cast, an ability with an
         # atom block (authored, cached, or composed now) commits it.
         scene_dirty = false
@@ -79,6 +71,20 @@ module Harness
           applied = res["effect_applied"] ? " → #{res['effect_applied']['name']} on #{res['effect_applied']['on']}" : ""
           healed  = res["healed"] ? " healed=#{res['healed']}" : ""
           "[Runner cast] #{ability['id']} target=#{target&.dig('name').inspect} #{res['outcome']}#{applied}#{healed}"
+        end
+
+        # The cast's own prose island — the spell landing, rendered by the
+        # organ that cast it. Control contests on a person are the exception:
+        # their physical effect IS the target's compliance, which belongs to
+        # the target's voice (initiative), so those stay bracket-only.
+        unless target && ability["effect_kind"] == "control"
+          emit_fragment(context, FRAGMENT_PROMPT_PATH, {
+            "ability" => { "name" => ability["name"], "description" => ability["description"] },
+            "target"  => target&.dig("name"),
+            "outcome" => res["outcome"],
+            "margin"  => res["margin"],
+            "healed"  => res["healed"]
+          }.compact, tcs, subsystem: :runner_cast_fragment)
         end
         Outcome.new(tool_calls: tcs, scene_dirty: scene_dirty, status: :ok)
       end

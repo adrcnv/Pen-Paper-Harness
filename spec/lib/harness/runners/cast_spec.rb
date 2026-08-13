@@ -47,7 +47,7 @@ RSpec.describe Harness::Runners::Cast do
     expect(Harness::Character::ActiveEffects.active_for(player.reload, now: 500)).to be_empty
   end
 
-  describe "contest tagging (narration renders bracket-only, no invented acceptance speech)" do
+  describe "fragment suppression on control casts" do
     let(:charm_row) {
       { "id" => "charm_word", "name" => "Charm Word", "effect_kind" => "control", "stat" => "charisma",
         "description" => "A single sentence delivered with terrible warmth.",
@@ -55,22 +55,27 @@ RSpec.describe Harness::Runners::Cast do
     }
     let!(:mark) { Npc.create!(name: "Bodil", location: yard, wisdom: 8, max_hp: 20, current_hp: 20) }
 
-    it "tags a person-targeted control contest" do
+    it "emits no fragment for a person-targeted control cast" do
       player.update!(abilities: [ charm_row ])
       ctx = ctx_with { { "ability" => "charm_word", "target" => "Bodil" }.to_json }
       out = described_class.new.run(context: ctx,
                                     scene: { "present_characters" => [ { "id" => mark.id, "name" => "Bodil" } ] },
                                     input: "cast charm word on Bodil", step: step("charms Bodil"))
-      resolve = out.tool_calls.find { |t| t["name"] == "resolve" }
-      expect(resolve["contest"]).to eq("cast")
+      # A control contest's effect IS the target's compliance — that voice
+      # belongs to initiative, so no fragment renders here.
+      expect(out.tool_calls.map { |t| t["name"] }).to include("resolve")
+      expect(out.tool_calls.map { |t| t["name"] }).not_to include("display_fragment")
     end
 
-    it "leaves a self-cast untagged (nobody else voices it — the narrator must render it)" do
+    it "renders a self-cast's own fragment (the cast's prose island)" do
       player.update!(abilities: [ bless_row ])
-      ctx = ctx_with { { "ability" => "bless", "target" => nil }.to_json }
+      ctx = ctx_with { |full|
+        full.include?("render ONE spellcast") ? "Light settles over you." :
+          { "ability" => "bless", "target" => nil }.to_json
+      }
       out = described_class.new.run(context: ctx, scene: { "present_characters" => [] }, input: "cast bless", step: step)
-      resolve = out.tool_calls.find { |t| t["name"] == "resolve" }
-      expect(resolve["contest"]).to be_nil
+      frag = out.tool_calls.find { |t| t["name"] == "display_fragment" }
+      expect(frag&.dig("args", "text")).to eq("Light settles over you.")
     end
   end
 
@@ -82,6 +87,9 @@ RSpec.describe Harness::Runners::Cast do
         if full.include?("casting intent")
           calls << :bind
           { "ability" => ability_id, "target" => nil }.to_json
+        elsif full.include?("render ONE spellcast")
+          calls << :fragment
+          "The magic settles."
         else
           calls << :compose
           composed.to_json
@@ -110,7 +118,7 @@ RSpec.describe Harness::Runners::Cast do
       out = described_class.new.run(context: ctx, scene: { "present_characters" => [] }, input: "cast sanctify", step: step)
 
       expect(out.status).to eq(:ok)
-      expect(calls).to eq([ :bind ])  # authored block never composes
+      expect(calls).to eq([ :bind, :fragment ])  # authored block never composes
       expect(yard.reload.properties["alterations"]).to include("the ground is consecrated")
       expect(Harness::Character::ActiveEffects.roll_modifier(player.reload, now: 500)).to eq(1)
       expect(Event.order(:id).last.details.dig("narrative", "details")).to eq("the ground takes the blessing")
@@ -127,7 +135,7 @@ RSpec.describe Harness::Runners::Cast do
       ctx = ctx_with(&two_stage_stub("boon", composed_coins(7), calls).method(:call))
 
       described_class.new.run(context: ctx, scene: { "present_characters" => [] }, input: "cast boon", step: step)
-      expect(calls).to eq([ :bind, :compose ])
+      expect(calls).to eq([ :bind, :compose, :fragment ])
       cached = player.reload.abilities.first
       expect(cached["atoms"].first["delta"]).to eq(7)
       expect(cached["atoms_narrative"]).to match(/coin condenses/)
@@ -135,7 +143,7 @@ RSpec.describe Harness::Runners::Cast do
       expect(player.coins.to_i).to eq(7)
 
       described_class.new.run(context: ctx, scene: { "present_characters" => [] }, input: "cast boon", step: step)
-      expect(calls).to eq([ :bind, :compose, :bind ])  # cached — no second composition
+      expect(calls).to eq([ :bind, :compose, :fragment, :bind, :fragment ])  # cached — no second composition
       expect(player.reload.coins.to_i).to eq(14)
     end
 
@@ -152,7 +160,7 @@ RSpec.describe Harness::Runners::Cast do
       described_class.new.run(context: ctx, scene: { "present_characters" => [] }, input: "I wish for pocket money", step: step)
       described_class.new.run(context: ctx, scene: { "present_characters" => [] }, input: "I wish for pocket money", step: step)
 
-      expect(calls).to eq([ :bind, :compose, :bind, :compose ])
+      expect(calls).to eq([ :bind, :compose, :fragment, :bind, :compose, :fragment ])
       expect(player.reload.abilities.first).not_to have_key("atoms")
       # The worded wish reaches the composer (volatile context, not spell prose alone).
       compose_input = stub.user_calls.find { |u| u.include?("pocket money") }

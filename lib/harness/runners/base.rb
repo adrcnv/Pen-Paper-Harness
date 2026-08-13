@@ -58,6 +58,28 @@ module Harness
         context.llm_nuance || context.llm_grunt
       end
 
+      # Per-runner display fragment (the delta-prose island): the organ that
+      # committed a change renders its OWN delta as a few short sentences and
+      # ships it through the tool-call stream as a display record — Parts
+      # renders {name: "display_fragment"} as a :fragment part in causal
+      # order, and /debug shows exactly what was rendered. Failure-isolated:
+      # a flaked call adds nothing and the mechanical parts carry the turn.
+      FRAGMENT_MAX_TOKENS = 160
+
+      def emit_fragment(context, prompt_path, payload, tcs, subsystem:)
+        text = ::Harness::CostTracker.in_subsystem(subsystem) do
+          llm(context).complete(
+            system:     File.read(prompt_path),
+            user:       "INPUT:\n#{JSON.pretty_generate(payload)}",
+            max_tokens: FRAGMENT_MAX_TOKENS
+          ).to_s.strip
+        end
+        return if text.empty?
+        tcs << { "name" => "display_fragment", "args" => { "text" => text }, "result" => { "rendered" => true } }
+      rescue StandardError => e
+        @logger.warn { "[Runner #{name}] fragment failed (#{e.class}: #{e.message}) — mechanical parts carry the turn" }
+      end
+
       # Tolerant JSON parse for structured-emit output (fences, stray prose).
       # Returns a Hash, or nil on total failure.
       def parse_emit(raw)

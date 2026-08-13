@@ -19,10 +19,23 @@ RSpec.describe Harness::Runners::Environment do
 
   def names(out) = out.tool_calls.map { |t| t["name"] }
 
-  it "pure flavor (all null) emits nothing but succeeds" do
+  it "pure flavor (all null) emits nothing but succeeds — no delta, no fragment" do
     out = run(ctx_emitting("action" => "kick the locked gate", "roll" => nil, "yields_item" => nil, "location_change" => nil), "kick the gate")
     expect(out.status).to eq(:ok)
     expect(out.tool_calls).to be_empty
+  end
+
+  it "renders its own fragment after committing a delta" do
+    ctx = Harness::Turn::Context.new(player_location: loc, game_time: 100,
+      llm_nuance: StubLLM.new { |full|
+        full.include?("render ONE physical act") ? "The branches snap clean." :
+          { "action" => "snap dry branches", "roll" => nil,
+            "yields_item" => { "name" => "bundle of firewood", "subrole" => "firewood" }, "location_change" => nil }.to_json
+      })
+    out = run(ctx, "gather firewood")
+    frag = out.tool_calls.last
+    expect(frag["name"]).to eq("display_fragment")
+    expect(frag.dig("args", "text")).to eq("The branches snap clean.")
   end
 
   it "spawns a collectible item anchored to the current location" do

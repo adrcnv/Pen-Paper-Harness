@@ -14,7 +14,8 @@ module Harness
     # Consequences (item / alteration) are gated on the roll NOT failing, so a
     # botched blast yields no firewood and no lasting damage.
     class Environment < Base
-      PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/environment.txt")
+      PROMPT_PATH          = Rails.root.join("lib/harness/prompts/runners/environment.txt")
+      FRAGMENT_PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/environment_fragment.txt")
 
       def run(context:, scene:, input:, step:)
         player = ::Player.first
@@ -54,6 +55,20 @@ module Harness
           # critical failure commits the pre-declared botch mark instead, so
           # the damage narration renders is real world-state, not prose-only.
           alter_location(resolver, spec["location_change_on_botch"], context, tcs)
+        end
+
+        # The act's own prose island — rendered only when something was
+        # actually committed (a delta exists). A pure-flavor poke that emitted
+        # nothing stays blank by ruling.
+        if tcs.any?
+          rolled = tcs.find { |t| t["name"] == "resolve" }&.dig("result")
+          emit_fragment(context, FRAGMENT_PROMPT_PATH, {
+            "act"           => action,
+            "place"         => context.player_location&.name,
+            "outcome"       => (rolled && { "result" => rolled["outcome"], "margin" => rolled["margin"] }),
+            "yielded"       => tcs.find { |t| t["name"] == "propose_item" }&.dig("args", "name"),
+            "place_changed" => tcs.find { |t| t["name"] == "mutate_location" }&.dig("args", "alteration")
+          }.compact, tcs, subsystem: :runner_environment_fragment)
         end
 
         Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)

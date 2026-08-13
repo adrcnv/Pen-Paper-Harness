@@ -4,27 +4,27 @@ require "json"
 module Harness
   module Turn
     # Skeleton of the runtime turn. One call = one player input in, one
-    # narration string out. The caller (TTY, web handler, spec, REPL) loops
-    # over this. The loop knows nothing about where input came from.
+    # rendered turn out (typed parts + their plain-text join). The caller
+    # (TTY, web handler, spec, REPL) loops over this. The loop knows nothing
+    # about where input came from.
     #
     # Per turn:
     #   1. Enter/rebuild the scene.
     #   2. Dispatch the input to an ordered plan and run its chained runners
     #      (or drive the structured combat slot mid-fight).
-    #   3. Build narration context (outcome + scene + conversation history).
-    #   4. LLM narrates.
-    #   5. Persist a TurnLog transcript.
-    #   6. Optionally snapshot the SQLite file.
-    #   7. Rebuild the scene on the next turn if scene_dirty was set.
+    #   3. Render the committed tool calls MECHANICALLY into typed parts
+    #      (Turn::Parts — no model call; the narrator is dead). Staged
+    #      dialogue and the initiative beat are the only LLM-authored text,
+    #      and each renders verbatim from its own organ.
+    #   4. Persist a TurnLog transcript.
+    #   5. Optionally snapshot the SQLite file.
+    #   6. Rebuild the scene on the next turn if scene_dirty was set.
     #
-    # The execution phase and the narration step are asymmetric. The runners
-    # own all state mutation, all entity creation, all queries — most of the
-    # per-turn cost. The narration step is a small render: take the committed
-    # outcome, write 2-4 sentences. They share "lives in the same turn";
-    # that's about it.
+    # The law: causal authority = rendering authority. The organ that
+    # committed a change describes it (or Ruby does, from its tool result);
+    # no voice renders another voice's output; nothing describes what
+    # didn't happen.
     class Loop
-      NARRATION_PREAMBLE_PATH = Rails.root.join("lib/harness/prompts/narration.txt")
-
       # Hard cap on prior narration turns handed to the narration step. Loose
       # for now — tighten when we measure token usage against a real adapter.
       DEFAULT_HISTORY_CAP = 50
@@ -163,15 +163,6 @@ module Harness
             @context.clear_scene_dirty!
           end
 
-          # Pick narration source:
-          # - Combat with content (rounds processed OR a player-fled wrap-up):
-          #   render the combat narration.
-          # - Combat yielded with NO content (bootstrap turn that fired
-          #   start_combat but yielded before any NPC slot ran): fall back to
-          #   the regular narration step. The player's pre-combat actions
-          #   and the start_combat event are still in transcript.tool_calls
-          #   and the regular narration handles them.
-          # - No combat: regular narration.
           # Player declined a scene change at the confirmation gate. The turn is
           # a no-op: narrate nothing, run no initiative, record nothing to scene
           # history or conversation memory — it leaves no trace, as if the input
@@ -182,13 +173,20 @@ module Harness
             return transcript   # `ensure` still persists the TurnLog + snapshots
           end
 
-          narration = if combat_result && (combat_result.round_summaries.any? || combat_result.player_fled_resolution)
-            combat_narration = assemble_combat_narration(combat_result)
-            transcript.narration = combat_narration
-            combat_narration
+          # Render the turn MECHANICALLY: typed parts from the committed tool
+          # calls, in causal order (Parts module — no model call). The narrator
+          # is dead; the law is causal authority = rendering authority. Combat
+          # with content replaces the list (its round driver owns its prose).
+          transcript.parts = if combat_result && (combat_result.round_summaries.any? || combat_result.player_fled_resolution)
+            [ { kind: :combat, text: assemble_combat_narration(combat_result) } ]
           else
-            run_narration(input, transcript)
+            ::Harness::Turn::Parts.compose(
+              transcript: transcript, context: @context, scene: @scene_manager.active
+            )
           end
+          transcript.parts.each { |p| p[:text] = scrub_player_reference(p[:text]) }
+          narration = join_parts(transcript.parts)
+          transcript.narration = narration
 
           # Character initiative — runs AFTER narration on purpose, so the
           # consumer reads what just happened and appends ONE present NPC's
@@ -197,31 +195,30 @@ module Harness
           # combat (it owns its own beats) and when the player is leaving the
           # scene (the agenda belongs to the scene being left).
           # Initiative is the world piping up on a turn the player did NOT spend
-          # talking. When the player was already in conversation this turn, the
-          # NPCs have just had their say through the conversation runner —
+          # talking. When NPCs actually SPOKE this turn, they've had their say —
           # bolting an unprompted beat on top is the "goober forced to speak"
-          # noise. So skip initiative on conversation turns; let it fire on the
-          # quiet turns (look around, move, examine) where the room would
-          # otherwise be silent.
-          player_conversed = transcript.runners_ran.include?("conversation")
+          # noise. But a polled-and-declined turn (the coin-trick class: the
+          # conversation runner ran, every voice stayed silent) is exactly the
+          # quiet room initiative exists for — someone MAY react to the act.
+          # So the gate is "a staged line exists", not "the runner ran".
+          player_conversed = Array(transcript.tool_calls).any? { |tc|
+            tc["name"] == "propose_event" && tc.dig("result", "staged")
+          }
           unless combat_result || @context.scene_dirty || @scene_manager.active&.in_combat? || player_conversed
             beat = maybe_run_initiative(transcript, narration)
             if beat && !beat.empty?
-              narration = "#{narration}\n\n#{beat}"
+              # The beat prose is the voicing organ's own output; scrub the
+              # engine word "the player" like every other part.
+              transcript.parts << { kind: :beat, text: scrub_player_reference(beat) }
+              narration = join_parts(transcript.parts)
               transcript.narration = narration
             end
           end
 
-          # The weak model sometimes writes the engine word "the player" into
-          # prose (staged dialogue beats especially) instead of the name it was
-          # handed. Scrub it mechanically to the real name — BEFORE recording, so
-          # the leak never reaches the scene thread / next turn's context either.
-          narration = scrub_player_reference(narration)
-          transcript.narration = narration
-
           # Record only the diegetic narration to scene history (keeps the
-          # fiction record clean). The OOC notice below is display-only.
-          @scene_manager.record_narration(input, narration)
+          # fiction record clean). The OOC notice below is display-only. A turn
+          # with nothing diegetic to say (a meta-only no-op) records nothing.
+          @scene_manager.record_narration(input, narration) unless narration.to_s.strip.empty?
           @context.append_turn(input: input, narration: narration)
           transcript.notice = unresolved_notice(transcript.unresolved) if transcript.unresolved
           trim_history!
@@ -421,112 +418,11 @@ module Harness
         logger.debug { "[Executor] chain done: #{transcript.tool_calls.size} total tool call(s)" }
       end
 
-      def run_narration(input, transcript)
-        ::Harness::CostTracker.in_subsystem(:narration) do
-          dialogue = staged_dialogue_lines(transcript.tool_calls)
-          # Dialogue-only turn: the staged line IS the whole narration. Render
-          # it directly and DON'T call the model. Handed a line to narrate, the
-          # weak tier drops it and echoes the prior room description from
-          # recent_history verbatim (the observed bug). Nothing else this turn
-          # needs prose, so skipping the call also saves it. Mixed turns still
-          # narrate — the dialogue is stripped to a marker (sanitize) and
-          # rendered verbatim here, so it can neither be dropped nor doubled.
-          prose =
-            if dialogue.any? && !other_narratable?(transcript.tool_calls)
-              ""
-            # A cast-contest turn with NO staged dialogue (charm and kin):
-            # the Ruby bracket carries the verdict; the target's response, if
-            # any, arrives as the initiative beat AFTER narration. Handed the
-            # gap, the model invents the target's acceptance speech (the
-            # charm-word double-acceptance) — so the turn renders bracket-only.
-            # Conversation contests keep their model call when silent (the
-            # non-response beat); their tag is `true`, not "cast".
-            elsif dialogue.empty? && !other_narratable?(transcript.tool_calls) &&
-                  Array(transcript.tool_calls).any? { |tc| tc["contest"] == "cast" }
-              ""
-            else
-              user = narration_user_message(input, transcript)
-              transcript.narration_prompt = user
-              @adapter.complete(system: narration_preamble, user: user)
-            end
-          transcript.narration = compose_narration(prose, transcript.tool_calls, dialogue)
-        end
-      end
-
-      # The dice bracket line is a MECHANICAL outcome — like /map, it's rendered
-      # by Ruby from the real resolve result, NEVER written by the narration
-      # model. The model used to be asked to surface it; it fabricated rolls for
-      # turns that never rolled (movement "[Transition — Movement 1 vs 0]",
-      # inspection "[Scrutinize — Wisdom 16 vs 10]") and even invented failures
-      # that contradicted what the engine did (narrating a failed move the
-      # player had actually completed). The roll is now stripped from the
-      # model's context entirely (see sanitize_tool_calls_for_narration), so it
-      # has nothing to fabricate from; any `[...]` it emits anyway is discarded
-      # here and replaced by the authoritative Ruby-rendered lines.
-      # Assemble the final narration from three sources, in reading order:
-      #   1. resolve brackets  — mechanical dice lines (Ruby-rendered)
-      #   2. body              — the narration model's connective prose (empty
-      #                          on a dialogue-only turn, where no call was made)
-      #   3. staged dialogue   — the NPCs' actual spoken lines, verbatim
-      # Dialogue last so a framing beat (body) leads into the line. Both the
-      # brackets and the dialogue are authoritative Ruby, never the model's.
-      def compose_narration(prose, tool_calls, dialogue = nil)
-        body     = strip_leading_brackets(prose.to_s)
-        dialogue ||= staged_dialogue_lines(tool_calls)
-        parts = resolve_bracket_lines(tool_calls)
-        parts << body unless body.strip.empty?
-        parts.concat(dialogue)
-        parts.join("\n\n")
-      end
-
-      # The NPC lines staged this turn (the conversation runner marks each
-      # result.staged). Rendered verbatim, like the resolve bracket — `details`
-      # already reads as full prose (a physical beat + the quote).
-      def staged_dialogue_lines(tool_calls)
-        Array(tool_calls).filter_map do |tc|
-          next unless tc["name"] == "propose_event" && tc.dig("result", "staged")
-          line = tc.dig("args", "details").to_s.strip
-          line.empty? ? nil : line
-        end
-      end
-
-      # Does the turn hold anything BESIDES staged dialogue that the narration
-      # model needs to render? Rolls, movement, world changes, creations — yes.
-      # A pure conversation turn (only staged lines + internal reads) — no.
-      # A contest-tagged resolve (the conversation runner's pre-roll `true`,
-      # the cast runner's control-contest "cast") doesn't count either: its
-      # verdict is already rendered by the Ruby bracket line, and the NPC's
-      # response arrives as a staged line or initiative beat. Standalone
-      # resolves (lockpicks, perception) carry no tag and narrate as before.
-      FRAMING_TOOLS = %w[resolve transition mutate_character start_combat
-                         propose_location propose_character propose_item].freeze
-
-      def other_narratable?(tool_calls)
-        Array(tool_calls).any? { |tc| FRAMING_TOOLS.include?(tc["name"]) && !tc["contest"] }
-      end
-
-      def strip_leading_brackets(text)
-        lines = text.lines
-        lines.shift while lines.first&.strip&.match?(/\A\[.*\]\z/)
-        lines.shift while lines.first && lines.first.strip.empty?
-        lines.join
-      end
-
-      # Authoritative bracket line per real `resolve` call, built from the raw
-      # result. Combat narration is assembled separately (its round driver
-      # renders its own lines) and never routes through here.
-      def resolve_bracket_lines(tool_calls)
-        Array(tool_calls).filter_map do |tc|
-          next unless tc["name"] == "resolve"
-          r = tc["result"]
-          next unless r.is_a?(Hash) && r["outcome"]
-          label   = r["ability_name"].to_s.strip
-          label   = r["stat"].to_s.capitalize if label.empty?
-          nums    = (r["roll"] && r["against"]) ? " #{r['roll']} vs #{r['against']}" : ""
-          tail    = [ r["outcome"], r["margin"] ].compact.reject { |s| s.to_s.empty? }
-          tail << "critical" if r["critical"]
-          "[#{r['action']} — #{label}#{nums}: #{tail.join(', ')}]"
-        end
+      # Join typed parts into the plain narration string recorded to scene
+      # history and the session log. Colors/styling never happen here — the
+      # presenter (Render.parts) styles by kind; the buffer stores plain text.
+      def join_parts(parts)
+        Array(parts).map { |p| p[:text].to_s }.reject { |t| t.strip.empty? }.join("\n\n")
       end
 
       # Character-initiative consumer (post-narration). Asks whether ONE present
@@ -584,197 +480,6 @@ module Harness
         parts.reject(&:empty?).join("\n\n")
       end
 
-      # The player character's identity for the narration step (name + gender).
-      # nil-safe: returns name-only if gender unset, {} if no player row.
-      def player_identity
-        pl = ::Player.first
-        return {} unless pl
-        g = pl.properties.is_a?(::Hash) ? pl.properties["gender"] : nil
-        # `carrying` closes the phantom-axe class: with no inventory in view,
-        # the narrator dresses tool-implying actions with a plausible invented
-        # implement ("gripping your axe" on a caster who owns a scepter).
-        { "name" => pl.name, "gender" => g, "carrying" => pl.items.map(&:name).presence }.compact
-      end
-
-      def narration_user_message(input, transcript)
-        here_id = @context.player_location.id
-        kept_calls, discoveries = partition_offscene_creations(transcript.tool_calls, here_id)
-        # First narration of a scene gets the full static set-dressing (location
-        # description + present_extras prose) so it can establish the room. Every
-        # turn AFTER that, the room is already established and lives in
-        # recent_history — re-feeding the static prose just invites the model to
-        # reprint it verbatim (the repeated-narration failure). So later turns
-        # get only the location NAME and the present SET (who/what is here, which
-        # narration still needs for the no-invent / no-strand rules). scene_history
-        # is empty on the first narration of a scene (it's appended after this
-        # runs, and wiped on scene transition).
-        establishing = scene_history.empty?
-        loc = @context.player_location
-        location_payload = { "id" => here_id, "name" => loc.name }
-        location_payload["description"] = loc.description if establishing
-        payload = {
-          "player_input"   => input,
-          # Who the player IS — the "you" of the narration. Without this the
-          # narrator has no name for the player, so when an NPC addresses them
-          # aloud it grabs a present character's name ("Maud, if you're hunting
-          # ghosts," Maud says — to the player). Surfaced so dialogue can name
-          # the player correctly (or use an epithet) instead of borrowing an NPC.
-          "player"         => player_identity,
-          "location"       => location_payload,
-          "tool_calls"     => sanitize_tool_calls_for_narration(kept_calls),
-          # current_scene is what's TRUE NOW. tool_calls captures what the
-          # reasoning loop SAW during its turn — but the scene may have
-          # rebuilt between then and now (when transition fires mid-turn,
-          # the limbo fix runs Manager.exit + ensure_entered before
-          # narration so the materializer populates the destination scene).
-          # Any query_scene result in tool_calls captured BEFORE that
-          # rebuild reflects the empty pre-materialization state. Narration
-          # should trust current_scene for who/what is present; tool_calls
-          # for what HAPPENED (resolve outcomes, propose_event prose, etc).
-          "current_scene"  => current_scene_payload(include_extras: establishing),
-          "recent_history" => scene_history.last(@history_cap)
-        }
-        payload["discovered_nearby"] = discoveries if discoveries.any?
-        payload["unresolved"] = transcript.unresolved if transcript.unresolved
-        "INPUT:\n#{JSON.pretty_generate(payload)}"
-      end
-
-      # Tool calls that create world content. A runner can create entities or
-      # events at a DIFFERENT location than the player stands in (a tavern the
-      # player asked about but did not walk to, its proprietor, its founding
-      # event). Those records used to reach narration verbatim, and this model
-      # tier renders them as the PRESENT scene — teleporting the player into
-      # the new place and staging its inhabitants greeting them. Reconciling
-      # "created, but the player isn't there" is judgment the weak model does
-      # not have to spare, so we make it structural rather than a prompt rule.
-      CREATION_TOOLS = %w[propose_location propose_character propose_item propose_event].freeze
-
-      # Split tool_calls into [kept, discoveries]. Any creation call whose
-      # target location is NOT the player's current location is removed from
-      # what narration sees. New PLACES surface as flat discoveries (name +
-      # description only — never staged kickoff prose) so narration can say
-      # "you become aware these exist nearby" without arrival. Off-scene
-      # characters / items / events are dropped entirely; the player meets them
-      # only by actually going there, where the scene assembler surfaces them.
-      def partition_offscene_creations(tool_calls, here_id)
-        discoveries = []
-        kept = tool_calls.reject { |tc|
-          name = tc["name"]
-          next false unless CREATION_TOOLS.include?(name)
-
-          if name == "propose_location"
-            loc_id = tc.dig("result", "location_id") || tc.dig("result", "id")
-            next false if loc_id && loc_id == here_id # created AT the player's location → keep
-            discoveries << {
-              "name"        => tc.dig("args", "name"),
-              "description" => tc.dig("args", "description")
-            }.compact
-            true
-          else
-            loc_id = tc.dig("args", "location_id")
-            loc_id.present? && loc_id != here_id # off-scene character / item / event → hide
-          end
-        }
-        [ kept, discoveries ]
-      end
-
-      # `include_extras` is false after the first narration of a scene: the
-      # ambient figures (present_extras prose) are static set-dressing already
-      # established in the opening narration, and re-feeding their descriptions
-      # every turn is a prime driver of repeated narration. The present
-      # CHARACTER set is always sent — narration needs it for the no-invent /
-      # no-strand rules — but it's minimal (id/name/subrole), not prose.
-      def current_scene_payload(include_extras: true)
-        active = @scene_manager.active
-        return { "present_characters" => [], "present_items" => [], "present_corpses" => [], "present_extras" => [] } unless active
-        {
-          "present_characters" => active.present_characters.map { |c|
-            entry = { "id" => c.id, "name" => c.name, "subrole" => c.subrole }
-            # Carry gender so narration uses the right pronouns. It's stored once
-            # at spawn (Hatchery#ensure_gender!) and is otherwise invisible to the
-            # narration step — which then guesses from the name and flips a
-            # feminine-stored "Dushka" to "he". Not a reasoning failure; the model
-            # was never told. Now it is.
-            entry["gender"] = c.properties["gender"] if c.properties.is_a?(Hash) && c.properties["gender"]
-            # Appearance rides EVERY turn (unlike location description/extras,
-            # which are establishing-only) so a "look at her" turn mid-scene
-            # has something to render. Known risk: static prose re-fed each
-            # turn is the repeated-narration driver — if the model starts
-            # reprinting these verbatim, scale back to establishing-only.
-            if c.properties.is_a?(Hash)
-              look = c.properties["appearance"] || c.properties["physical"]
-              entry["appearance"] = look if look.is_a?(String) && !look.strip.empty?
-            end
-            entry
-          },
-          "present_items"      => active.present_items.map { |i| { "id" => i.id, "name" => i.name } },
-          "present_corpses"    => active.present_corpses.map { |c| { "id" => c.id, "name" => c.name } },
-          "present_extras"     => include_extras ? active.present_extras : []
-        }
-      end
-
-      # Strip reasoning-loop-only flavor (internal_state, agenda) from
-      # query_scene results before forwarding to the narration step. These
-      # fields are scene-entry mood snapshots intended
-      # to inform the LLM's JUDGMENT — they are NOT meant to be rendered
-      # verbatim in prose. Without this filter the narrator regurgitates
-      # "Rask drums his axe handle" for the rest of the scene even after
-      # Rask has been struck and is bleeding, because internal_state is
-      # generated once at scene entry and never refreshed mid-scene.
-      # Narration should render NPC state from what JUST happened (the
-      # other tool results — resolve outcomes, mutate_character calls,
-      # propose_event details) plus recent_history, not from the cached
-      # mood line.
-      NARRATION_HIDDEN_FIELDS = %w[internal_state agenda].freeze
-
-      # A character's staged line is rendered verbatim by compose_narration.
-      # The model must never see the words — handed them, it drops, rewords, or
-      # echoes them. Leave a marker it can write connective tissue around.
-      STAGED_DIALOGUE_MARKER =
-        "(spoke aloud — their exact line is rendered separately; do NOT repeat, reword, or invent it)".freeze
-
-      def sanitize_tool_calls_for_narration(tool_calls)
-        tool_calls.map { |tc|
-          if tc["name"] == "propose_event" && tc.dig("result", "staged")
-            args = (tc["args"] || {}).merge("details" => STAGED_DIALOGUE_MARKER)
-            # Drop the result's debug summary ("[dialogue — rendered, not
-            # persisted]") too: shaped like a game bracket line, the model
-            # echoes it verbatim into prose. It never sees it, it can't leak.
-            next tc.merge("args" => args, "result" => { "staged" => true })
-          end
-          next tc unless tc["name"] == "query_scene"
-          chars = tc.dig("result", "present_characters")
-          next tc unless chars.is_a?(Array)
-
-          stripped_chars = chars.map { |c|
-            c.is_a?(Hash) ? c.reject { |k, _| NARRATION_HIDDEN_FIELDS.include?(k) } : c
-          }
-          new_result = tc["result"].merge("present_characters" => stripped_chars)
-          tc.merge("result" => new_result)
-        }
-      end
-
-      # Scene-scoped narration history. Both the reasoning loop and the
-      # narration step read from this — NOT from @context.history. The
-      # global @context.history persists for /history debug + session log
-      # but never leaks into prompts.
-      #
-      # Why scene-scoped: the architectural pillar is that NPCs in a new
-      # scene shouldn't have access to dialogue from a prior scene that
-      # they weren't in. Theory of mind is structural — what an NPC knows
-      # comes from event participation + belief materialization, never
-      # from "I overheard the player tell another character" by way of
-      # the LLM's conversation context. Scene transition drops the active
-      # scene; the next scene starts with empty narrations.
-      #
-      # Cold-start cost: tonal continuity is lost across transitions. The
-      # narrator comes in fresh after a scene change. If felt, mitigations
-      # include passing a one-line "you just left X" hint — not built
-      # today; revisit if it bites in play.
-      def scene_history
-        @scene_manager.active&.narrations || []
-      end
-
       def trim_history!
         return if @context.history.size <= @history_cap
         overflow = @context.history.size - @history_cap
@@ -826,11 +531,6 @@ module Harness
         logger.debug { "[Turn::Loop] snapshot -> #{target}" }
       rescue StandardError => e
         logger.warn { "[Turn::Loop] snapshot failed: #{e.message}" }
-      end
-
-
-      def narration_preamble
-        @narration_preamble ||= File.read(NARRATION_PREAMBLE_PATH)
       end
     end
   end

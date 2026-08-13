@@ -91,20 +91,20 @@ module Harness
         )
       end
 
-      def complete(system:, user:, schema: nil)
+      def complete(system:, user:, schema: nil, max_tokens: nil)
         messages = []
         messages << { "role" => "system", "content" => system } if system.is_a?(String) && !system.empty?
         messages << { "role" => "user",   "content" => user }
 
         response = begin
-          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete, schema: schema)
+          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete, schema: schema, max_tokens: max_tokens)
         rescue APIError => e
           # A schema the server's grammar compiler rejects must not silently
           # kill the call site (reflection's rescue would eat the claims).
           # Fall back to the unconstrained request, LOUD in the log.
           raise unless schema
           @logger.warn { "[OpenAICompatAdapter] json_schema rejected (#{e.message.to_s[0, 160]}) — retrying unconstrained" }
-          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete)
+          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete, max_tokens: max_tokens)
         end
         extract_text(response)
       end
@@ -157,10 +157,10 @@ module Harness
       }.freeze
 
       # Public so OpenAICompatTurn can call back in.
-      def post_chat(messages:, tools: nil, enable_thinking: nil, schema: nil)
+      def post_chat(messages:, tools: nil, enable_thinking: nil, schema: nil, max_tokens: nil)
         payload = {
           "model"      => @model,
-          "max_tokens" => @max_tokens,
+          "max_tokens" => max_tokens || @max_tokens,
           "messages"   => messages
         }.merge(DRY_SAMPLING)
         payload["tools"] = tools if tools.is_a?(Array) && !tools.empty?

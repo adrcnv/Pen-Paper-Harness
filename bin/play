@@ -487,7 +487,12 @@ render_turn = lambda do |transcript|
   puts
   puts Harness::Render.rule(color: color)
   puts
-  puts Harness::Render.narration(transcript.narration, known_names: Harness::Render.entity_names, color: color)
+  rendered = if transcript.respond_to?(:parts) && transcript.parts&.any?
+    Harness::Render.parts(transcript.parts, known_names: Harness::Render.entity_names, color: color)
+  else
+    Harness::Render.narration(transcript.narration, known_names: Harness::Render.entity_names, color: color)
+  end
+  puts rendered
   if transcript.notice
     puts
     puts transcript.notice

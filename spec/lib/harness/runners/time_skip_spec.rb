@@ -9,13 +9,17 @@ RSpec.describe Harness::Runners::TimeSkip do
     Harness::Turn::Context.new(player_location: inn, llm_nuance: StubLLM.new(&block), game_time: 100)
   end
 
-  it "advances the clock via pass_time" do
-    ctx = context_with { { "intent" => "sleep", "duration_minutes" => 480 }.to_json }
+  it "advances the clock via pass_time and renders the stretch as its own fragment" do
+    ctx = context_with { |full|
+      full.include?("TIME PASSING") ? "The night passes in dreamless sleep." :
+        { "intent" => "sleep", "duration_minutes" => 480 }.to_json
+    }
     scene = Harness::Tools::QueryScene.build(ctx)
 
     outcome = described_class.new.run(context: ctx, scene: scene, input: "sleep until morning", step: step)
     expect(outcome.status).to eq(:ok)
-    expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "pass_time" ])
+    expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "pass_time", "display_fragment" ])
+    expect(outcome.tool_calls.last.dig("args", "text")).to eq("The night passes in dreamless sleep.")
     expect(ctx.game_time).to be >= 580 # 100 + 480
   end
 

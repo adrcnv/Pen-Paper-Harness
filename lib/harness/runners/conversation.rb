@@ -226,12 +226,6 @@ module Harness
         end
 
         res, ok = execute_tool(resolver, "resolve", args, into: tcs)
-        # Tag the record: this resolve is a conversation contest whose verdict
-        # the voicing renders in-fiction. The narration step reads the tag to
-        # keep such turns in the dialogue-only skip — a narrator handed a
-        # social verdict re-dramatizes it (invented quotes, contradicted
-        # beats) ahead of the NPC's actual line.
-        tcs.last["contest"] = true if tcs.last && tcs.last["name"] == "resolve"
         unless ok && res.is_a?(::Hash) && res["outcome"]
           @logger.warn { "[Runner conversation] contest roll failed (#{res.inspect[0, 140]}) — voicing plainly" }
           return nil

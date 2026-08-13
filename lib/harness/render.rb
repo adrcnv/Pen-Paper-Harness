@@ -78,6 +78,25 @@ module Harness
       color ? "#{RULE_COLOR}#{line}#{RESET}" : line
     end
 
+    CARD_COLOR = "\e[33m" # ochre — the mechanical arrival card
+
+    # Render a turn's typed parts ({kind:, text:}), one styled block per part.
+    # Kinds carry the styling: cards ochre, stock lines dim, everything else
+    # through narration() (quotes green, known names cyan, brackets painted).
+    # Styling lives HERE only — the buffer and every LLM payload store the
+    # plain join, never ANSI.
+    def parts(list, known_names: [], color: true)
+      Array(list).filter_map { |p|
+        text = (p[:text] || p["text"]).to_s
+        next nil if text.strip.empty?
+        case (p[:kind] || p["kind"]).to_s
+        when "card"  then color ? "#{CARD_COLOR}#{text}#{RESET}" : text
+        when "stock" then color ? "#{DIM}#{text}#{RESET}" : text
+        else narration(text, known_names: known_names, color: color)
+        end
+      }.join("\n\n")
+    end
+
     COMBAT_COLOR = "\e[1;31m" # bold red — you are in a fight
 
     # A mechanical "you are in combat" banner, shown after the turn's prose

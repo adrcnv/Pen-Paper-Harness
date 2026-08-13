@@ -45,48 +45,55 @@ RSpec.describe Harness::Turn::Loop do
     scripted_loop(reasoning, narration: narration).run_turn(input: "player input")
   end
 
+  # A scripted personal event is the mechanical floor's smallest visible
+  # render: its details become a :line part verbatim.
+  def event_call(details)
+    { tool: "propose_event", args: { "scope" => "personal", "trigger" => "beat", "details" => details } }
+  end
+
   describe "happy path" do
-    it "executes scripted runner tool calls through the resolver and narrates" do
+    it "executes scripted runner tool calls through the resolver; pure reads render nothing" do
       maren = Npc.create!(name: "Maren", subrole: "barkeep", location: tavern)
       transcript = run(
         reasoning: [
           { tool: "query_scene",     args: {} },
           { tool: "query_character", args: { "character_id" => maren.id } }
-        ],
-        narration: "You ask; Maren is evasive."
+        ]
       )
       expect(transcript.tool_calls.size).to eq(2)
       expect(transcript.tool_calls.first["name"]).to eq("query_scene")
       expect(transcript.tool_calls.last["result"]).to include("name" => "Maren")
-      expect(transcript.narration).to eq("You ask; Maren is evasive.")
+      # No narration model exists; reads produce no display parts.
+      expect(transcript.parts).to eq([])
+      expect(transcript.narration).to eq("")
     end
 
     it "persists a TurnLog row with the full trace" do
       expect {
-        run(reasoning: [ { tool: "query_scene", args: {} } ], narration: "narration")
+        run(reasoning: [ { tool: "query_scene", args: {} }, event_call("narration") ])
       }.to change(TurnLog, :count).by(1)
       row = TurnLog.last
       expect(row.narration).to eq("narration")
-      expect(row.reasoning_tool_calls.size).to eq(1)
+      expect(row.reasoning_tool_calls.size).to eq(2)
       expect(row.reasoning_tool_calls.first["name"]).to eq("query_scene")
       expect(row.turn_number).to eq(1)
     end
 
     it "increments turn_number across turns" do
-      run(reasoning: [], narration: "t1")
-      run(reasoning: [], narration: "t2")
+      run(reasoning: [])
+      run(reasoning: [])
       expect(TurnLog.pluck(:turn_number)).to eq([ 1, 2 ])
     end
 
     it "appends input/narration to the context history" do
-      run(reasoning: [], narration: "the tavern is dim")
+      run(reasoning: [ event_call("the tavern is dim") ])
       expect(context.history).to eq([ { "input" => "player input", "narration" => "the tavern is dim" } ])
     end
   end
 
   describe "replay rig (session state, snapshots, seeds)" do
     it "flushes the scene buffer + history to the session_states singleton at the turn boundary" do
-      run(reasoning: [], narration: "the tavern is dim")
+      run(reasoning: [ event_call("the tavern is dim") ])
       row = SessionState.current
       expect(row).to be_present
       expect(row.location_id).to eq(tavern.id)
@@ -180,77 +187,28 @@ RSpec.describe Harness::Turn::Loop do
     end
 
     it "drops conversation history at the scene boundary (theory-of-mind discipline)" do
-      # Turn 1 at the tavern accumulates a narration ("Tormund spilled the beans").
-      # Turn 2 transitions to the warehouse — narration follows the transition.
-      # Turn 3 happens at the warehouse and is what we're asserting against:
-      # its NARRATION prompt must NOT contain the tavern's prior narration.
-      run(reasoning: [], narration: "Tormund spilled the beans about a courier named Corren")
-      run(reasoning: [ { tool: "transition", args: { "destination_id" => warehouse.id } } ],
-          narration: "you walk over to the warehouse")
+      # Turn 1 at the tavern records a narration ("Tormund spilled the beans").
+      # Turn 2 transitions to the warehouse. The warehouse scene's buffer —
+      # what every voicing/recall consumer reads as recent history — must NOT
+      # carry the tavern's narration. Structural: narrations wipe at exit.
+      run(reasoning: [ event_call("Tormund spilled the beans about a courier named Corren") ])
+      run(reasoning: [ { tool: "transition", args: { "destination_id" => warehouse.id } } ])
 
-      loop3 = scripted_loop([], narration: "...")
-      loop3.run_turn(input: "look around the warehouse")
-      narration_input = loop3.instance_variable_get(:@adapter).narration_calls.last[:user]
-
-      # Tavern narration must not have leaked into the warehouse turn's input.
-      expect(narration_input).not_to include("Tormund")
-      expect(narration_input).not_to include("Corren")
-      # The structural marker: recent_history is empty at the new scene.
-      expect(narration_input).to match(/"recent_history":\s*\[\s*\]/)
+      buffer = context.active_scene.narrations.map { |n| n["narration"] }.join("\n")
+      expect(buffer).not_to include("Tormund")
+      expect(buffer).not_to include("Corren")
 
       # Global session history is preserved (for /history debug, session log).
-      expect(context.history.size).to eq(3)
+      expect(context.history.size).to eq(2)
       expect(context.history.map { |t| t["narration"] }).to include("Tormund spilled the beans about a courier named Corren")
     end
   end
 
-  describe "narration tool_call sanitization" do
+  describe "player reference scrub" do
     let(:loop_obj) {
       adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
       described_class.new(adapter: adapter, context: context)
     }
-
-    it "strips internal_state and agenda from query_scene present_characters" do
-      tcs = [ {
-        "name" => "query_scene", "args" => {},
-        "result" => {
-          "location" => { "id" => 1, "name" => "Tavern" },
-          "present_characters" => [
-            { "id" => 2, "name" => "Rask", "subrole" => "bandit",
-              "internal_state" => "drumming his axe handle",
-              "agenda" => "wants to demand toll",
-              "abilities" => [ { "name" => "Heavy Strike", "uses_remaining" => 3 } ] }
-          ]
-        }
-      } ]
-
-      out = loop_obj.send(:sanitize_tool_calls_for_narration, tcs)
-      char = out.first["result"]["present_characters"].first
-      expect(char.keys).to contain_exactly("id", "name", "subrole", "abilities")
-      expect(char).not_to have_key("internal_state")
-      expect(char).not_to have_key("agenda")
-    end
-
-    it "blanks the staged event's result summary so the narrator never sees the debug bracket" do
-      tcs = [ {
-        "name" => "propose_event",
-        "args" => { "details" => "Rhys wipes the bar. 'Paranoia, mostly.'" },
-        "result" => { "staged" => true, "summary" => "[dialogue — rendered, not persisted]" }
-      } ]
-      out = loop_obj.send(:sanitize_tool_calls_for_narration, tcs)
-      expect(out.first["result"]).to eq({ "staged" => true })
-      expect(out.first.to_json).not_to include("not persisted")
-      expect(out.first.to_json).not_to include("Paranoia")  # details swapped for the marker
-    end
-
-    it "leaves non-query_scene tool_calls untouched" do
-      tcs = [ {
-        "name" => "resolve", "args" => { "actor_id" => 1 },
-        "result" => { "outcome" => "success", "internal_state" => "should not strip" }  # contrived
-      } ]
-      out = loop_obj.send(:sanitize_tool_calls_for_narration, tcs)
-      expect(out).to eq(tcs)
-    end
 
     it "scrubs the engine phrase 'the player' to the player's name (incl. possessive)" do
       out = loop_obj.send(:scrub_player_reference,
@@ -263,21 +221,17 @@ RSpec.describe Harness::Turn::Loop do
       expect(out).to eq("two players roll dice; a lone player watches")
     end
 
-    it "leaves query_scene results without present_characters untouched" do
-      tcs = [ {
-        "name" => "query_scene", "args" => {},
-        "result" => { "location" => { "id" => 1, "name" => "Empty Hall" }, "present_characters" => [] }
-      } ]
-      out = loop_obj.send(:sanitize_tool_calls_for_narration, tcs)
-      expect(out).to eq(tcs)
+    it "builds an out-of-character notice from the unresolved reason" do
+      notice = loop_obj.send(:unresolved_notice, "destination 'forest' not found")
+      expect(notice).to match(/out of character/i)
+      expect(notice).to include("destination 'forest' not found")
+      expect(notice).to match(/rephras/i)
     end
   end
 
-  describe "staged dialogue rendering (structural)" do
-    let(:loop_obj) {
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "MODEL PROSE")
-      described_class.new(adapter: adapter, context: context)
-    }
+  # The mechanical floor: typed parts from committed tool calls, in causal
+  # order, no model call anywhere. Causal authority = rendering authority.
+  describe "mechanical parts (Turn::Parts)" do
     let(:staged) {
       { "name" => "propose_event",
         "args" => { "details" => "Bess doesn't stop moving. 'I just pour the ale, sir.'" },
@@ -288,293 +242,72 @@ RSpec.describe Harness::Turn::Loop do
         "result" => { "outcome" => "success", "action" => "press", "stat" => "charisma", "roll" => 15, "against" => 10 } }
     }
 
-    it "extracts staged dialogue lines verbatim, ignoring non-staged and reads" do
-      tcs = [ { "name" => "query_events", "args" => {}, "result" => {} },
-              staged,
-              { "name" => "propose_event", "args" => { "details" => "bookkeeping" }, "result" => {} } ]
-      lines = loop_obj.send(:staged_dialogue_lines, tcs)
-      expect(lines).to eq([ "Bess doesn't stop moving. 'I just pour the ale, sir.'" ])
+    def compose(tcs, unresolved: nil, runners: [])
+      t = Harness::Turn::Transcript.new(input: "x", location_id: tavern.id)
+      t.record_tool_calls(tcs)
+      t.unresolved = unresolved
+      t.runners_ran.concat(runners)
+      Harness::Turn::Parts.compose(transcript: t, context: context, scene: nil)
     end
 
-    it "composes brackets, then model body, then dialogue last" do
-      out = loop_obj.send(:compose_narration, "She relents.", [ resolve, staged ])
-      expect(out).to eq("[press — Charisma 15 vs 10: success]\n\nShe relents.\n\nBess doesn't stop moving. 'I just pour the ale, sir.'")
+    it "renders a staged line as a verbatim :dialogue part; reads render nothing" do
+      parts = compose([ { "name" => "query_events", "args" => {}, "result" => {} }, staged ])
+      expect(parts).to eq([ { kind: :dialogue, text: "Bess doesn't stop moving. 'I just pour the ale, sir.'" } ])
     end
 
-    it "renders dialogue alone when there is no model body (dialogue-only turn)" do
-      out = loop_obj.send(:compose_narration, "", [ staged ])
-      expect(out).to eq("Bess doesn't stop moving. 'I just pour the ale, sir.'")
+    it "renders bracket before dialogue, in tool-call order" do
+      parts = compose([ resolve, staged ])
+      expect(parts.map { |p| p[:kind] }).to eq([ :bracket, :dialogue ])
+      expect(parts.first[:text]).to eq("[press — Charisma 15 vs 10: success]")
     end
 
-    it "treats a pure conversation turn as NOT needing the narration model" do
-      expect(loop_obj.send(:other_narratable?, [ staged, { "name" => "query_events" } ])).to be(false)
-      expect(loop_obj.send(:other_narratable?, [ staged, resolve ])).to be(true)
-      expect(loop_obj.send(:other_narratable?, [ { "name" => "transition" } ])).to be(true)
+    it "labels the bracket with the capitalized stat and flags criticals" do
+      tcs = [ { "name" => "resolve", "args" => {}, "result" => {
+        "action" => "Climb the wall", "stat" => "strength", "roll" => 20, "against" => 10,
+        "outcome" => "critical_success", "margin" => "decisive", "critical" => true
+      } } ]
+      expect(compose(tcs).first[:text])
+        .to eq("[Climb the wall — Strength 20 vs 10: critical_success, decisive, critical]")
     end
 
-    it "keeps a contest-tagged resolve inside the dialogue-only skip (untagged resolves still narrate)" do
-      contest = resolve.merge("contest" => true)
-      expect(loop_obj.send(:other_narratable?, [ staged, contest ])).to be(false)
-      # The bracket line still renders — only the model call is skipped.
-      out = loop_obj.send(:compose_narration, "", [ contest, staged ])
-      expect(out).to eq("[press — Charisma 15 vs 10: success]\n\nBess doesn't stop moving. 'I just pour the ale, sir.'")
+    it "renders a short personal event as a :line, and drops a long one whole (no mid-string cuts)" do
+      short = { "name" => "propose_event", "args" => { "scope" => "personal", "details" => "a real event" }, "result" => {} }
+      long  = { "name" => "propose_event", "args" => { "scope" => "personal", "details" => "x" * 300 }, "result" => {} }
+      parts = compose([ short, long ])
+      expect(parts).to eq([ { kind: :line, text: "a real event" } ])
     end
 
-    it "hides the staged words from the model, leaving a marker" do
-      out = loop_obj.send(:sanitize_tool_calls_for_narration, [ staged ])
-      expect(out.first.dig("args", "details")).to eq(described_class::STAGED_DIALOGUE_MARKER)
-      expect(out.first.dig("args", "details")).not_to include("pour the ale")
+    it "renders an unresolved intent as a trailing :stock stall" do
+      parts = compose([ resolve ], unresolved: "walk into a forest")
+      expect(parts.last).to eq({ kind: :stock, text: "Nothing comes of it — walk into a forest." })
     end
 
-    it "leaves a non-staged propose_event untouched" do
-      ev = { "name" => "propose_event", "args" => { "details" => "a real event" }, "result" => { "staged" => false } }
-      expect(loop_obj.send(:sanitize_tool_calls_for_narration, [ ev ])).to eq([ ev ])
-    end
-  end
-
-  describe "player identity in narration" do
-    # Regression: the narration payload had no player identity, so when an NPC
-    # addressed the player aloud the model borrowed a present character's name
-    # ("Maud, if you're hunting ghosts," Maud says — to the player). The player
-    # is now surfaced so dialogue can name them correctly.
-    let(:loop_obj) {
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      described_class.new(adapter: adapter, context: context)
-    }
-
-    it "surfaces the player's name (and gender) to the narration step" do
-      player.update!(properties: (player.properties || {}).merge("gender" => "female"))
-      loop_obj.instance_variable_get(:@scene_manager).ensure_entered
-      transcript = Harness::Turn::Transcript.new(input: "ask about Harek", location_id: tavern.id)
-
-      msg = loop_obj.send(:narration_user_message, "ask about Harek", transcript)
-
-      expect(msg).to include("\"player\"")
-      expect(msg).to include("\"name\": \"Hero\"")
-      expect(msg).to include("\"gender\": \"female\"")
+    it "renders an off-scene propose_location as a discovery line, and skips one entered via the chain" do
+      offscene = { "name" => "propose_location",
+                   "args" => { "name" => "The Muddy Pint", "description" => "A smoke-choked dockside tavern." },
+                   "result" => { "location_id" => tavern.id + 999 } }
+      here     = { "name" => "propose_location", "args" => { "name" => "Cellar" },
+                   "result" => { "location_id" => tavern.id } }
+      parts = compose([ offscene, here ])
+      expect(parts).to eq([ { kind: :line, text: "You learn of The Muddy Pint — A smoke-choked dockside tavern." } ])
     end
 
-    it "surfaces what the player is carrying (the phantom-axe guard), omitting the key when empty-handed" do
-      # Empty inventory → no `carrying` key at all: absence is the signal the
-      # prompt reads as bare hands.
-      loop_obj.instance_variable_get(:@scene_manager).ensure_entered
-      transcript = Harness::Turn::Transcript.new(input: "chop the tree", location_id: tavern.id)
-      expect(loop_obj.send(:narration_user_message, "chop the tree", transcript)).not_to include("\"carrying\"")
-
-      Item.create!(name: "gnarled scepter", subrole: "weapon", character: player)
-      Item.create!(name: "traveling cloak", subrole: "clothing", character: player)
-      msg = loop_obj.send(:narration_user_message, "chop the tree", transcript)
-      expect(msg).to include("\"carrying\"")
-      expect(msg).to include("gnarled scepter", "traveling cloak")
-    end
-  end
-
-  describe "off-scene creation partitioning for narration" do
-    # Regression: "look for a tavern" makes a runner create a sublocation +
-    # its proprietor + a kickoff event at the NEW location while the player
-    # stays put. Those creation tool_calls used to reach narration verbatim
-    # and the weak model rendered them as the present scene — teleporting the
-    # player in and staging the proprietor's greeting. The partition strips
-    # off-scene creations before narration; new places surface only as a flat
-    # `discovered_nearby` list, off-scene characters/events are dropped.
-    let(:loop_obj) {
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      described_class.new(adapter: adapter, context: context)
-    }
-    let(:here_id) { tavern.id }
-    let(:elsewhere) { tavern.id + 999 } # a location that is not where the player stands
-
-    it "collapses an off-scene propose_location into discovered_nearby (name + description only)" do
-      tcs = [ {
-        "name" => "propose_location",
-        "args" => { "name" => "The Muddy Pint", "description" => "A smoke-choked dockside tavern.", "type" => "sublocation" },
-        "result" => { "location_id" => elsewhere }
-      } ]
-      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
-      expect(kept).to be_empty
-      expect(discoveries).to eq([ { "name" => "The Muddy Pint", "description" => "A smoke-choked dockside tavern." } ])
+    it "renders a runner's display_fragment verbatim and travel legs as lines" do
+      frag = { "name" => "display_fragment", "args" => { "text" => "The bark splits." }, "result" => { "rendered" => true } }
+      trav = { "name" => "travel", "args" => {},
+               "result" => { "outcome" => "arrived", "destination" => { "id" => 9, "name" => "Oarhaven" }, "minutes" => 300 } }
+      parts = compose([ frag, trav ])
+      expect(parts).to eq([
+        { kind: :fragment, text: "The bark splits." },
+        { kind: :line, text: "The road brings you to Oarhaven — 5 hours traveled." }
+      ])
     end
 
-    it "drops off-scene propose_character and propose_event entirely (no discovery, not kept)" do
-      tcs = [
-        { "name" => "propose_character", "args" => { "name" => "Garrick", "location_id" => elsewhere }, "result" => { "character_id" => 7 } },
-        { "name" => "propose_event", "args" => { "location_id" => elsewhere, "details" => "Garrick looks up as you enter." }, "result" => { "event_id" => 9 } }
-      ]
-      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
-      expect(kept).to be_empty
-      expect(discoveries).to be_empty
-    end
-
-    it "keeps creation calls AT the player's current location" do
-      tcs = [
-        { "name" => "propose_location", "args" => { "name" => "Cellar" }, "result" => { "location_id" => here_id } },
-        { "name" => "propose_event", "args" => { "location_id" => here_id, "details" => "Maren slams the tankard down." }, "result" => { "event_id" => 3 } }
-      ]
-      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
-      expect(kept).to eq(tcs)
-      expect(discoveries).to be_empty
-    end
-
-    it "leaves non-creation tool_calls untouched" do
-      tcs = [
-        { "name" => "query_scene", "args" => {}, "result" => { "present_characters" => [] } },
-        { "name" => "resolve", "args" => { "actor_id" => 1 }, "result" => { "outcome" => "success" } }
-      ]
-      kept, discoveries = loop_obj.send(:partition_offscene_creations, tcs, here_id)
-      expect(kept).to eq(tcs)
-      expect(discoveries).to be_empty
-    end
-  end
-
-  describe "narration sees current_scene after a mid-turn rebuild" do
-    # Regression: when a turn fires transition + query_scene in one pass,
-    # query_scene returns the destination's PRE-materialization
-    # state (empty). The limbo fix rebuilds the scene before narration, but
-    # the tool_calls in narration's input still capture the empty result.
-    # Without current_scene, narration would render an empty room. With it,
-    # narration sees the populated post-rebuild scene.
-    it "current_scene reflects the populated destination after transition" do
-      # Pre-seed the destination with NPCs so the assembler returns them
-      # post-rebuild (no materializer needed for this regression test).
-      Npc.create!(name: "Bram", subrole: "owner", location: warehouse, current_hp: 5, max_hp: 5)
-      Npc.create!(name: "Silt", subrole: "bartender", location: warehouse, current_hp: 5, max_hp: 5)
-
-      loop_obj = scripted_loop([ { tool: "transition", args: { "destination_id" => warehouse.id } } ],
-                               narration: "(rendered)")
-      loop_obj.run_turn(input: "go to the warehouse")
-      captured_narration_user = loop_obj.instance_variable_get(:@adapter).narration_calls.last[:user]
-
-      expect(captured_narration_user).to include("\"current_scene\"")
-      expect(captured_narration_user).to include("Bram")
-      expect(captured_narration_user).to include("Silt")
-    end
-
-    it "sends static set-dressing only on the establishing narration of a scene" do
-      # Repeated-narration driver: re-feeding the location description + extras
-      # prose every turn invites the model to reprint them. They go out only on
-      # the first narration of a scene (narrations empty); later turns get the
-      # name + present set only.
-      tannery = Location.create!(name: "Tannery", description: "The reek of lye and wet hide hangs over the vats.")
-      context.player_location = tannery
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      loop_inst = described_class.new(adapter: adapter, context: context)
-      sm = loop_inst.instance_variable_get(:@scene_manager)
-      transcript = Harness::Turn::Transcript.new(input: "x", location_id: tannery.id)
-
-      establishing_scene = Harness::Scene::Active.new(
-        location: tannery, snapshot: Harness::Scene::Assembler.for(location: tannery),
-        narrations: [], extras: [ "a vat of foul brown liquid" ]
-      )
-      sm.instance_variable_set(:@active, establishing_scene)
-      first = loop_inst.send(:narration_user_message, "look around", transcript)
-      expect(first).to include("The reek of lye and wet hide") # description present
-      expect(first).to include("a vat of foul brown liquid")   # extras present
-
-      later_scene = Harness::Scene::Active.new(
-        location: tannery, snapshot: Harness::Scene::Assembler.for(location: tannery),
-        narrations: [ { "input" => "look around", "narration" => "(already established)" } ],
-        extras: [ "a vat of foul brown liquid" ]
-      )
-      sm.instance_variable_set(:@active, later_scene)
-      later = loop_inst.send(:narration_user_message, "wait a beat", transcript)
-      expect(later).to include("Tannery")                          # name still present
-      expect(later).not_to include("The reek of lye and wet hide") # description dropped
-      expect(later).not_to include("a vat of foul brown liquid")   # extras dropped
-    end
-
-    it "surfaces an `unresolved` field to narration when transcript.unresolved is set" do
-      # Graceful terminal: a chain that dead-ends must tell narration the action
-      # did NOT happen, so it renders a non-event instead of fabricating success.
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      loop_inst = described_class.new(adapter: adapter, context: context)
-      transcript = Harness::Turn::Transcript.new(input: "walk into a forest", location_id: tavern.id)
-      transcript.unresolved = "destination 'forest' not found"
-
-      msg = loop_inst.send(:narration_user_message, "walk into a forest", transcript)
-      expect(msg).to include("\"unresolved\"")
-      expect(msg).to include("destination 'forest' not found")
-    end
-
-    it "omits `unresolved` from narration on a normal turn" do
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      loop_inst = described_class.new(adapter: adapter, context: context)
-      transcript = Harness::Turn::Transcript.new(input: "look", location_id: tavern.id)
-      msg = loop_inst.send(:narration_user_message, "look", transcript)
-      expect(msg).not_to include("\"unresolved\"")
-    end
-
-    it "builds an out-of-character notice from the unresolved reason" do
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      loop_inst = described_class.new(adapter: adapter, context: context)
-      notice = loop_inst.send(:unresolved_notice, "destination 'forest' not found")
-      expect(notice).to match(/out of character/i)
-      expect(notice).to include("destination 'forest' not found")
-      expect(notice).to match(/rephras/i)
-    end
-
-    # The dice bracket line is rendered by Ruby from the real resolve, never
-    # by the narration model (which fabricated rolls for movement/inspection).
-    describe "dice bracket rendering (system-owned)" do
-      let(:loop_inst) { described_class.new(adapter: Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)"), context: context) }
-
-      it "drops a fabricated bracket on a no-resolve turn (movement)" do
-        prose = "[Transition — Movement 1 vs 0: success, decisive]\n\nYou step through the gate into the square."
-        out = loop_inst.send(:compose_narration, prose, [ { "name" => "transition", "result" => {} } ])
-        expect(out).to eq("You step through the gate into the square.")
-      end
-
-      it "discards the model's bracket and renders the authoritative one from the resolve result" do
-        prose = "[Whatever — Bogus 1 vs 1: nonsense]\n\nYour blade bites deep."
-        tcs = [ { "name" => "resolve", "result" => {
-          "action" => "Heavy Strike", "ability_name" => "Heavy Strike", "stat" => "strength",
-          "roll" => 17, "against" => 12, "outcome" => "success", "margin" => "clear"
-        } } ]
-        out = loop_inst.send(:compose_narration, prose, tcs)
-        expect(out).to eq("[Heavy Strike — Heavy Strike 17 vs 12: success, clear]\n\nYour blade bites deep.")
-      end
-
-      it "labels with the capitalized stat when there's no ability_name, and flags criticals" do
-        tcs = [ { "name" => "resolve", "result" => {
-          "action" => "Climb the wall", "stat" => "strength", "roll" => 20, "against" => 10,
-          "outcome" => "critical_success", "margin" => "decisive", "critical" => true
-        } } ]
-        expect(loop_inst.send(:resolve_bracket_lines, tcs))
-          .to eq([ "[Climb the wall — Strength 20 vs 10: critical_success, decisive, critical]" ])
-      end
-
-      it "leaves bracketless prose untouched on a non-resolve turn" do
-        out = loop_inst.send(:compose_narration, "The square is quiet under a grey sky.", [ { "name" => "query_scene" } ])
-        expect(out).to eq("The square is quiet under a grey sky.")
-      end
-    end
-
-    it "current_scene is empty {} shape when no scene active" do
-      # Defensive: even without an active scene the field exists with
-      # empty arrays so the prompt doesn't trip on a missing field.
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      loop_inst = described_class.new(adapter: adapter, context: context)
-      loop_inst.instance_variable_get(:@scene_manager).instance_variable_set(:@active, nil)
-      payload = loop_inst.send(:current_scene_payload)
-      expect(payload).to eq({
-        "present_characters" => [],
-        "present_items"      => [],
-        "present_corpses"    => [],
-        "present_extras"     => []
-      })
-    end
-
-    it "carries character appearance in the scene payload on establishing AND later turns" do
-      Npc.create!(name: "Maren", subrole: "barkeep", location: tavern,
-                  properties: { "appearance" => "broad-shouldered, burn-scarred forearms" })
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(n)")
-      loop_inst = described_class.new(adapter: adapter, context: context)
-      loop_inst.run_turn(input: "look around")
-
-      [ true, false ].each do |establishing|
-        payload = loop_inst.send(:current_scene_payload, include_extras: establishing)
-        maren = payload["present_characters"].find { |c| c["name"] == "Maren" }
-        expect(maren["appearance"]).to include("burn-scarred")
-      end
+    it "renders conversation_silence as stock and skips errored calls whole" do
+      silence = { "name" => "conversation_silence", "args" => {}, "result" => { "nobody_spoke" => true } }
+      errored = { "name" => "pickup", "args" => {}, "result" => { "error" => "no item" } }
+      parts = compose([ errored, silence ])
+      expect(parts).to eq([ { kind: :stock, text: "No one reacts." } ])
     end
   end
 
@@ -584,10 +317,9 @@ RSpec.describe Harness::Turn::Loop do
       context.history << { "input" => "older", "narration" => "older" }
       context.history << { "input" => "old",   "narration" => "old" }
 
-      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "new")
-      described_class.new(
-        adapter: adapter, context: context, history_cap: history_cap
-      ).run_turn(input: "now")
+      scripted_loop([ event_call("new") ], context: context)
+        .tap { |l| l.instance_variable_set(:@history_cap, history_cap) }
+        .run_turn(input: "now")
 
       expect(context.history.size).to eq(history_cap)
       expect(context.history.last["narration"]).to eq("new")
@@ -605,7 +337,7 @@ RSpec.describe Harness::Turn::Loop do
     end
 
     it "records the turn's narration on the active scene" do
-      run(reasoning: [], narration: "the bar is mostly empty")
+      run(reasoning: [ event_call("the bar is mostly empty") ])
       expect(context.active_scene.narrations).to eq(
         [ { "input" => "player input", "narration" => "the bar is mostly empty" } ]
       )
@@ -617,12 +349,12 @@ RSpec.describe Harness::Turn::Loop do
         narration: "you arrive in the warehouse"
       )
       # By end of the dirty turn, the scene has already rebuilt — the
-      # narration recorded against the destination scene, NOT the origin.
-      # This is the limbo fix: Turn N+1's recent_history reads the
-      # warehouse's narrations, not an empty list (origin scene narrations
-      # are wiped at exit).
+      # narration (the mechanical arrival card) recorded against the
+      # destination scene, NOT the origin. This is the limbo fix: Turn N+1's
+      # recent_history reads the warehouse's narrations, not an empty list
+      # (origin scene narrations are wiped at exit).
       expect(context.active_scene.location).to eq(warehouse)
-      expect(context.active_scene.narrations.last["narration"]).to eq("you arrive in the warehouse")
+      expect(context.active_scene.narrations.last["narration"]).to include("Warehouse")
 
       # A subsequent non-transitioning turn finds itself at the same scene,
       # no further rebuild needed.
@@ -639,21 +371,17 @@ RSpec.describe Harness::Turn::Loop do
 
   describe "error path" do
     it "persists a TurnLog with error set when the loop raises" do
-      broken_adapter = Class.new do
-        def start_turn(system:, user:, tools:)
-          raise "adapter exploded"
-        end
-        def complete(system:, user:, schema: nil)
-          raise "adapter exploded"
-        end
-      end.new
+      # The narration model call is gone, so break the turn upstream: the
+      # dispatcher's planner raising escapes run_turn's begin block.
+      allow(Harness::Planner).to receive(:plan_for).and_raise("planner exploded")
+      adapter = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "n")
 
       expect {
-        described_class.new(adapter: broken_adapter, context: context).run_turn(input: "x")
-      }.to raise_error(/adapter exploded/)
+        described_class.new(adapter: adapter, context: context).run_turn(input: "x")
+      }.to raise_error(/planner exploded/)
 
       row = TurnLog.last
-      expect(row.error).to match(/adapter exploded/)
+      expect(row.error).to match(/planner exploded/)
       expect(row.narration).to be_nil
     end
   end
@@ -755,8 +483,8 @@ RSpec.describe Harness::Turn::Loop do
       # through Combat::PlayerTurn.
       expect(context.active_scene&.in_combat?).to be(true)
       expect(context.scene_dirty).to be(false)
-      # Bootstrap-yield with no rounds → regular narration step ran.
-      expect(transcript.narration).to eq("regular narration body")
+      # Bootstrap-yield with no rounds → the mechanical parts path ran.
+      expect(transcript.narration).to eq("⚔ The fight begins.")
     end
   end
 end

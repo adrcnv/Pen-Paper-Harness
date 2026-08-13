@@ -491,9 +491,6 @@ RSpec.describe Harness::Runners::Conversation do
       expect(voiced.first).to include("you lost — it went the player's way")
       contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
       expect(contest_record).to be_present
-      # Tagged so the narration step keeps contest turns in the dialogue-only
-      # skip (the verdict already renders as bracket + the NPC's own line).
-      expect(contest_record["contest"]).to be(true)
       expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:social" ])
     end
 

@@ -7,8 +7,7 @@ module Harness
     # The point is to keep OOC text OUT of the conversation runner, where it
     # would be committed as the player addressing an NPC and the NPC would
     # answer the joke — an immersion break. Here we commit nothing and emit a
-    # marker so narration knows not to advance the fiction or have anyone
-    # react. (See the META rule in narration.txt.)
+    # marker; the mechanical floor renders it as "(The moment passes.)".
     class Meta < Base
       def run(context:, scene:, input:, step:)
         @logger.debug { "[Runner meta] OOC/non-action input → no-op (no one reacts, fiction holds)" }

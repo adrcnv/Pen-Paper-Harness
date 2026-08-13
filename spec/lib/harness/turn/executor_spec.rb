@@ -46,7 +46,10 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     transcript = loop_obj.run_turn(input: "look around")
 
     expect(transcript.tool_calls.map { |t| t["name"] }).to eq([ "query_scene" ])
-    expect(transcript.narration).to eq("(n)")
+    # Mechanical floor: an inspection turn renders its query_scene result as a
+    # dry scene card — no narration model exists to call.
+    expect(transcript.parts.map { |p| p[:kind] }).to eq([ :card ])
+    expect(transcript.narration).to include("—")
     expect(transcript.runners_ran).to eq([ "inspection" ]) # the executor records which runner ran
   end
 
@@ -110,21 +113,20 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(transcript.unresolved).to eq("do dead")          # the step intent, for diegetic rendering
   end
 
-  it "renders a cast-contest turn bracket-only (no model prose to invent acceptance speech)" do
+  it "renders a resolve as its authoritative bracket through the mechanical floor" do
     contest_resolve = {
-      "name" => "resolve", "contest" => "cast",
+      "name" => "resolve",
       "args" => { "actor_id" => 1 },
       "result" => { "outcome" => "success", "margin" => "decisive", "roll" => 19, "against" => 7,
                     "action" => "charms the timberwright", "ability_name" => "Charm Word" }
     }
     caster = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :ok, tool_calls: [ contest_resolve ]))
     stub_plan("cast")
-    loop_obj, adapter = build_loop(registry: { "cast" => caster }, narration: "SHOULD NOT APPEAR")
+    loop_obj, = build_loop(registry: { "cast" => caster })
 
     transcript = loop_obj.run_turn(input: "cast charm word on her")
 
     expect(transcript.narration).to eq("[charms the timberwright — Charm Word 19 vs 7: success, decisive]")
-    expect(transcript.narration).not_to include("SHOULD NOT APPEAR")
   end
 
   it "bounds re-dispatch and hard-stops after REDISPATCH_CAP" do

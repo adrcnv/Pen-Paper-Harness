@@ -28,7 +28,7 @@ class StubLLM
     @schema_calls = []
   end
 
-  def complete(system:, user:, schema: nil)
+  def complete(system:, user:, schema: nil, max_tokens: nil)
     if @strict && @system_calls.any? && @system_calls.last != system
       raise CacheDriftError, drift_message(@system_calls.last, system)
     end
