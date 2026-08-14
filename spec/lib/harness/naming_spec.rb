@@ -82,6 +82,24 @@ RSpec.describe Harness::Naming do
       expect(name).to match(/\AAex (II|III|IV|V|VI|VII)\z/)
     end
 
+    it "rejects a first name already taken in the settlement (a first name is an address)" do
+      would_be = described_class.for(location: sub, rng: Random.new(7))
+      taken_first = would_be.split(" ").first
+      Npc.create!(name: "#{taken_first} Elsewhere", subrole: "x", location: sub,
+                  current_hp: 1, max_hp: 1, level: 1)
+      name = described_class.unique_for(location: sub, rng: Random.new(7))
+      expect(name.split(" ").first).not_to eq(taken_first)
+    end
+
+    it "fails OPEN to a duplicate first name when the pool is exhausted (never blocks a spawn)" do
+      stub_culture = { "id" => "tiny", "given" => [ "Aex" ], "family" => [ "Borr" ] }
+      allow(Harness::Naming::Library).to receive(:default).and_return(stub_culture)
+      allow(described_class).to receive(:culture_for).and_return(stub_culture)
+      Npc.create!(name: "Aex Other", subrole: "x", location: sub, current_hp: 1, max_hp: 1, level: 1)
+      name = described_class.unique_for(location: sub, rng: Random.new(0))
+      expect(name).to eq("Aex Borr")
+    end
+
     it "uses Elara/Silas zero times across many rolls (we are escaping the trope pit)" do
       banned = %w[Elara Silas]
       200.times do

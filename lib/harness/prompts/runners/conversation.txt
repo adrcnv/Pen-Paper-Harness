@@ -12,7 +12,7 @@ Output:
 {
   "thought": "<ONE sentence, written FIRST, in the THIRD person — refer to yourself by name, never 'I'. The deliberation: is anyone actually addressing this character, do they have something NEW to add, and if so what? If they already made their point and it went unanswered, silence or a pointed refusal beats restating it.>",
   "speak": true | false,
-  "dialogue": null OR { "summary": "<2-8 word headline>", "prose": "<what you say/do, in-world>" },
+  "dialogue": null OR { "summary": "<2-8 word headline, beginning with your own name as its subject>", "prose": "<what you say/do, in-world>" },
   "subrole": "<ONLY if INPUT.you.ambient is true AND you are speaking: your one-word archetype, e.g. recruit, courier>",
   "resolve_call": null OR { "stat": "charisma", "action": "<2-6 words>", "difficulty": "easy|moderate|hard" },
   "ignorance": null OR { "topic": "<a concrete topic you explicitly deny knowing>" },

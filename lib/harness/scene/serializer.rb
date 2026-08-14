@@ -29,7 +29,8 @@ module Harness
           "last_lines"           => active.last_lines || {},
           "contest_ledger"       => active.contest_ledger || {},
           "dispositions"         => active.dispositions || {},
-          "doing"                => active.doing || {}
+          "doing"                => active.doing || {},
+          "perceived_view"       => active.perceived_view
         }
       end
 
@@ -52,7 +53,8 @@ module Harness
           last_lines:           int_keyed(data["last_lines"]),
           contest_ledger:       data["contest_ledger"] || {},
           dispositions:         int_keyed(data["dispositions"]),
-          doing:                int_keyed(data["doing"])
+          doing:                int_keyed(data["doing"]),
+          perceived_view:       data["perceived_view"]
         )
       end
 

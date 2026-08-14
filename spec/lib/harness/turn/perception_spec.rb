@@ -29,6 +29,10 @@ RSpec.describe Harness::Turn::Perception do
     # Eyes see no engine bookkeeping: no ids, no agendas.
     expect(input).not_to include('"id"')
     expect(input).not_to include('"agenda"')
+    # The eyes know whose skull they're in — third-person references to the
+    # player in bearing/doing lines must bind to "you".
+    expect(input).to include('"you"')
+    expect(input).to include('"Hero"')
   end
 
   it "surfaces the taking-stock activity microbeat as the person's `doing`" do
@@ -69,6 +73,38 @@ RSpec.describe Harness::Turn::Perception do
     input = llm.user_calls.last
     expect(input).not_to include("wall Sindri")
     expect(input).to include("You take the locket.")
+  end
+
+  describe ".view_delta" do
+    it "reports the moved person whole, departures by name, and moved fields only" do
+      prev = { "people" => [ { "name" => "A", "doing" => "raking" }, { "name" => "B", "doing" => "sitting" } ],
+               "time_of_day" => "day", "things" => [ "rake" ] }
+      curr = { "people" => [ { "name" => "A", "doing" => "pacing" } ],
+               "time_of_day" => "evening", "things" => [ "rake" ] }
+      d = described_class.view_delta(prev, curr)
+      expect(d["people"]).to eq([ { "name" => "A", "doing" => "pacing" } ])
+      expect(d["departed"]).to eq([ "B" ])
+      expect(d["time_of_day"]).to eq("evening")
+      expect(d).not_to have_key("things")
+    end
+
+    it "returns empty when nothing moved" do
+      v = { "people" => [ { "name" => "A" } ], "time_of_day" => "day" }
+      expect(described_class.view_delta(v, v)).to eq({})
+    end
+  end
+
+  it "renders a delta through the shift prompt, changed fields only" do
+    llm = StubLLM.new { "The light goes amber." }
+    text = described_class.render_delta(
+      context: ctx(llm: llm), parts: [],
+      delta: { "time_of_day" => "evening" }, place: { "name" => "Tavern", "description" => "beams" }
+    )
+    expect(text).to eq("The light goes amber.")
+    expect(llm.system_calls.last).to include("what just SHIFTED")
+    input = llm.user_calls.last
+    expect(input).to include('"evening"')
+    expect(input).not_to include("beams")   # anchor is the name only — no re-establishment material
   end
 
   it "swallows a flaked call — the mechanical parts carry the turn" do

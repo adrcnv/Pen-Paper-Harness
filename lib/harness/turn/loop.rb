@@ -215,25 +215,55 @@ module Harness
             end
           end
 
-          # Perception — the player's eyes, appended to every non-combat turn
-          # for now (ruled 2026-08-14; a view-change gate is the likely
-          # future). Runs dead last so it reads post-commit state and every
-          # voice that spoke, including the beat. DISPLAY-ONLY: `narration`
-          # was joined above WITHOUT this part, so scene history, the context
-          # buffer, and every LLM payload never see the eyes' prose.
+          # Perception — the player's eyes, DELTA-GATED (v2, ruled
+          # 2026-08-14): eyes fire when the OBSERVABLE VIEW changed or the
+          # player looked, and stay silent otherwise. The view is the whole
+          # ledger — every field Perception.observable_view exposes (place,
+          # phase, roster, appearance, doing, bearing, alterations, ...)
+          # triggers on change automatically; no per-attribute gate wiring.
+          # The stamp is the view's digest at last successful render, held on
+          # the Active scene — it dies with the scene, so an arrival fires
+          # as establishment for free; a flaked call doesn't stamp, so the
+          # gate stays open to retry. A no-change conversation turn pays
+          # nothing (the view build is pure SQL). Runs dead last so it reads
+          # post-commit state and every voice that spoke, including the
+          # beat. DISPLAY-ONLY: `narration` was joined above WITHOUT this
+          # part, so scene history, the context buffer, and every LLM
+          # payload never see the eyes' prose.
           unless combat_result || @scene_manager.active&.in_combat?
-            # Extras are ESTABLISHMENT content — no writer, never a delta —
-            # so they feed the eyes only on the scene's first render (the
-            # narrations list is still empty here; record_narration runs
-            # below) or on an explicit look. Otherwise the lone gull cries
-            # in every single render.
-            establishing = Array(transcript.runners_ran).include?("inspection") ||
-                           Array(@scene_manager.active&.narrations).empty?
-            eyes = ::Harness::Turn::Perception.render(context: @context, parts: transcript.parts,
-                                                      include_figures: establishing, logger: logger)
-            if eyes
-              transcript.record_tool_calls([ { "name" => "display_perception", "args" => { "text" => eyes }, "result" => { "rendered" => true } } ])
-              transcript.parts << { kind: :perception, text: scrub_player_reference(eyes) }
+            active = @scene_manager.active
+            view   = ::Harness::Turn::Perception.observable_view(@context)
+            digest = ::Harness::Turn::Perception.view_digest(view)
+            looked = Array(transcript.runners_ran).include?("inspection")
+            # The stamp is {digest, view} from the last successful render:
+            # digest = the no-change fast path, view = what the delta diffs
+            # against. (A legacy bare-string stamp from an older save reads
+            # as no stamp — one establishment render, then normal.)
+            stamp = active&.perceived_view
+            stamp = nil unless stamp.is_a?(::Hash)
+            if looked || active.nil? || stamp.nil? || stamp["digest"] != digest
+              # An arrival or an explicit look ESTABLISHES: full view, and
+              # extras feed only here (no writer, near-never a delta — the
+              # narrations list is still empty on the scene's first render;
+              # record_narration runs below). A mere attribute shift renders
+              # ONLY the delta — the scene is not re-established because
+              # somebody coughed.
+              establishing = looked || stamp.nil? || Array(active&.narrations).empty?
+              eyes = if establishing
+                ::Harness::Turn::Perception.render(
+                  context: @context, parts: transcript.parts, view: view,
+                  include_figures: looked || Array(active&.narrations).empty?, logger: logger)
+              else
+                delta = ::Harness::Turn::Perception.view_delta(stamp["view"], view)
+                ::Harness::Turn::Perception.render_delta(
+                  context: @context, parts: transcript.parts, delta: delta,
+                  place: view["place"], logger: logger)
+              end
+              if eyes
+                transcript.record_tool_calls([ { "name" => "display_perception", "args" => { "text" => eyes }, "result" => { "rendered" => true } } ])
+                transcript.parts << { kind: :perception, text: scrub_player_reference(eyes) }
+                active&.perceived_view = { "digest" => digest, "view" => view }
+              end
             end
           end
 

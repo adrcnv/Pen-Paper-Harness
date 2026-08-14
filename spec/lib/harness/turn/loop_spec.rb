@@ -258,6 +258,77 @@ RSpec.describe Harness::Turn::Loop do
       transcript = run(reasoning: [ event_call("You pocket the coin.") ])
       expect(transcript.parts.last[:text]).to eq("Dust hangs where Hero stood.")
     end
+
+    it "delta gate: renders once, then stays silent while the view holds (same scene, same phase)" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
+      loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
+      loop_obj.run_turn(input: "first")
+      second = loop_obj.run_turn(input: "second")
+      expect(Harness::Turn::Perception).to have_received(:render).once
+      expect(second.parts.map { |p| p[:kind] }).not_to include(:perception)
+    end
+
+    it "delta gate: a clock-phase crossing renders as a DELTA, not a re-establishment" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
+      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("The light goes amber.")
+      loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
+      loop_obj.run_turn(input: "first")                 # establishes, stamps the view (day, 12:00)
+      context.game_time = 1100                          # 18:20 — evening
+      second = loop_obj.run_turn(input: "second")
+      expect(Harness::Turn::Perception).to have_received(:render).once
+      expect(Harness::Turn::Perception).to have_received(:render_delta).once do |delta:, **|
+        expect(delta).to eq({ "time_of_day" => "evening" })
+      end
+      expect(second.parts.last).to eq({ kind: :perception, text: "The light goes amber." })
+    end
+
+    it "delta gate: a flaked render leaves the gate open to retry next turn" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return(nil, "The room settles.")
+      loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
+      loop_obj.run_turn(input: "first")                 # flake — no stamp
+      second = loop_obj.run_turn(input: "second")       # retried
+      expect(Harness::Turn::Perception).to have_received(:render).twice
+      expect(second.parts.map { |p| p[:kind] }).to include(:perception)
+    end
+
+    it "delta gate: a present NPC settling into a different activity renders only that shift" do
+      npc = Npc.create!(name: "Osric", subrole: "porter", location: tavern)
+      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
+      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("Osric paces.")
+      loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
+      loop_obj.run_turn(input: "first")                                 # establishes, stamps the view
+      context.active_scene.update_doing!(npc.id, "pacing the floor")    # taking-stock moves someone
+      loop_obj.run_turn(input: "second")
+      expect(Harness::Turn::Perception).to have_received(:render).once
+      expect(Harness::Turn::Perception).to have_received(:render_delta).once do |delta:, **|
+        expect(delta["people"]).to eq([ { "name" => "Osric", "role" => "porter", "doing" => "pacing the floor" } ])
+      end
+      loop_obj.run_turn(input: "third")                                 # re-stamped — silent again
+      expect(Harness::Turn::Perception).to have_received(:render_delta).once
+    end
+
+    it "delta gate: an ABSENT character's doing is invisible — no fire" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return("The room shifts.")
+      loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
+      loop_obj.run_turn(input: "first")
+      context.active_scene.update_doing!(999_999, "pacing")   # nobody present has this id
+      loop_obj.run_turn(input: "second")
+      expect(Harness::Turn::Perception).to have_received(:render).once
+    end
+
+    it "delta gate: an explicit look renders even when nothing changed" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return("You take it in again.")
+      allow(Harness::Planner).to receive(:plan_for).and_return(
+        "plan" => [ { "runner" => "inspection", "reason" => "look", "args" => {} } ],
+        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
+      )
+      adapter  = Harness::LLM::FakeAdapter.new(narration: "(n)")
+      loop_obj = described_class.new(adapter: adapter, context: context,
+                                     registry: { "inspection" => Harness::Runners::Inspection.new })
+      loop_obj.run_turn(input: "look around")   # establishes + stamps
+      loop_obj.run_turn(input: "look again")    # same phase — the look alone re-opens
+      expect(Harness::Turn::Perception).to have_received(:render).twice
+    end
   end
 
   # The mechanical floor: typed parts from committed tool calls, in causal

@@ -22,7 +22,7 @@ module Harness
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
       :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines, :contest_ledger,
-      :dispositions, :doing,
+      :dispositions, :doing, :perceived_view,
       keyword_init: true
     ) do
       # The disposition ladder — each NPC's standing temperature toward the
@@ -59,10 +59,11 @@ module Harness
 
       # The activity microbeat — what this character is VISIBLY occupied with
       # right now. Written by the taking-stock pass when the speaker's
-      # activity actually shifts (the staged line pre-voices the change, so
-      # the write is silent); read by perception on later looks. Nil until
-      # the character has spoken this scene — their scene-entry bearing
-      # carries the initial activity. Dies with the scene.
+      # activity actually shifts; a shift is a perception-gate trigger (the
+      # staged line does not reliably voice the activity change — voicing
+      # and taking-stock are separate emits). Nil until the character has
+      # spoken this scene — their scene-entry bearing carries the initial
+      # activity. Dies with the scene.
       def doing_for(character_id)
         (doing || {})[character_id]
       end

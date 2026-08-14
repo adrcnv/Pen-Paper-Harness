@@ -51,22 +51,50 @@ module Harness
       end
 
       # Same as `.for` but avoids name collisions with existing Character
-      # rows. With 30 given × 30 family per culture (~900 combinations) and
-      # a typical save under 100 characters, collisions are rare. After
-      # `attempts` retries we fall back to appending a Roman-numeral suffix
-      # (Halric Morvanir II) — fine for the rare case, never blocks a spawn.
-      def unique_for(location:, rng: Random.new, attempts: 5)
+      # rows: the full name globally, and the FIRST NAME within the
+      # settlement's ancestry. A first name is an ADDRESS — the player types
+      # it, the planner binds it, recall ranks by it — and two Dushkas in
+      # one town fuse into a single multitasking phantom for every consumer
+      # (the two-Bjorns / two-Dushkas class). Same scope as
+      # propose_character's collision gate; that door was already guarded,
+      # this closes the mechanical-draw doors (Genesis, Materializer,
+      # StaffSeeder, extras promotion). After `attempts` retries we fail
+      # OPEN with a loud warn and the old full-name-only rule — a Roman
+      # suffix keeps its first token, so pretending would be worse than a
+      # rare honest duplicate. Never blocks a spawn.
+      def unique_for(location:, rng: Random.new, attempts: 10)
+        taken = settlement_first_names(location)
         attempts.times do
           name = self.for(location: location, rng: rng)
+          next if taken.include?(name.split(/\s+/).first.downcase)
           return name unless ::Character.exists?(name: name)
         end
+        Rails.logger.warn { "[Naming] first-name pool exhausted near #{location&.name} — allowing a duplicate first name" }
         # Fallback: pick once more, append a discriminator until free.
         base   = self.for(location: location, rng: rng)
+        return base unless ::Character.exists?(name: base)
         suffix = 2
         while ::Character.exists?(name: "#{base} #{roman(suffix)}")
           suffix += 1
         end
         "#{base} #{roman(suffix)}"
+      end
+
+      # First tokens of every character name anchored in this location's
+      # settlement (top-level ancestor + all its descendants), lowercased.
+      def settlement_first_names(location)
+        return ::Set.new unless location
+        root = location
+        root = root.parent while root.parent
+        ids = [ root.id ] + descendant_ids(root)
+        ::Character.where(location_id: ids).pluck(:name)
+                   .filter_map { |n| n.to_s.strip.split(/\s+/).first&.downcase }
+                   .to_set
+      end
+
+      def descendant_ids(loc)
+        children = ::Location.where(parent_id: loc.id).to_a
+        children.map(&:id) + children.flat_map { |c| descendant_ids(c) }
       end
 
       # Resolve a location to its kingdom's culture hash. Returns nil when:
