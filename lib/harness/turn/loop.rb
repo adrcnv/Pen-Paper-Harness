@@ -255,9 +255,24 @@ module Harness
                   include_figures: looked || Array(active&.narrations).empty?, logger: logger)
               else
                 delta = ::Harness::Turn::Perception.view_delta(stamp["view"], view)
-                ::Harness::Turn::Perception.render_delta(
-                  context: @context, parts: transcript.parts, delta: delta,
-                  place: view["place"], logger: logger)
+                # A changed person who STAGED A LINE this turn already voiced
+                # their own shift — the eyes re-voicing it in the very next
+                # sentence is jarring (ruled). Their entries drop; a decliner's
+                # silent snub has no line, so it stays and renders. If nothing
+                # else moved, the change is absorbed into the stamp silently.
+                spoke = staged_speaker_names(transcript)
+                if spoke.any? && delta["people"].is_a?(Array)
+                  delta["people"] = delta["people"].reject { |p| spoke.include?(p["name"]) }
+                  delta.delete("people") if delta["people"].empty?
+                end
+                if delta.empty?
+                  active&.perceived_view = { "digest" => digest, "view" => view }
+                  nil
+                else
+                  ::Harness::Turn::Perception.render_delta(
+                    context: @context, parts: transcript.parts, delta: delta,
+                    place: view["place"], logger: logger)
+                end
               end
               if eyes
                 transcript.record_tool_calls([ { "name" => "display_perception", "args" => { "text" => eyes }, "result" => { "rendered" => true } } ])
@@ -299,6 +314,20 @@ module Harness
       end
 
       private
+
+      # Names of NPCs who staged a line this turn — their prose already voiced
+      # their own state shift. Resolved from the in-RAM scene snapshot, no DB
+      # hit; a promoted extra absent from the snapshot just isn't suppressed.
+      def staged_speaker_names(transcript)
+        ids = Array(transcript.tool_calls).filter_map { |tc|
+          next unless tc["name"] == "propose_event" && tc.dig("result", "staged")
+          Array(tc.dig("args", "participants"))
+            .find { |p| p.is_a?(Hash) && p["role"].to_s == "actor" }&.dig("character_id")
+        }
+        return [] if ids.empty?
+        Array(@scene_manager.active&.present_characters)
+          .select { |c| ids.include?(c.id) }.map(&:name)
+      end
 
       # A justified fourth-wall break: when a turn dead-ends, tell the PLAYER
       # (out of character) what the engine couldn't do, so they can rephrase.

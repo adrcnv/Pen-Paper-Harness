@@ -86,7 +86,15 @@ module Harness
           emit, voicing_user = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest, recall_gate: recall_gate)
           next unless emit
           parsed_any = true
-          if apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
+          applied = apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
+          # The silent snub: a decliner's visible shift still lands on the
+          # scene — no line of theirs carries it, so perception voices it
+          # (the delta gate fires on the doing change).
+          if !applied && v[:kind] == :npc && emit["speak"] == false && active &&
+             emit["doing"].is_a?(::String) && !emit["doing"].strip.empty?
+            active.update_doing!(v[:char]["id"], emit["doing"].strip)
+          end
+          if applied
             spoken += 1
             # First speaking turn consumed the seeded mood/agenda; from now on the
             # thread carries this NPC (npc_knowledge drops the frozen self-state).
@@ -601,6 +609,11 @@ module Harness
           "personality" => (props["personality"] if props.is_a?(::Hash)),
           "appearance"  => ((props["appearance"] || props["physical"]) if props.is_a?(::Hash)),
           "mood"        => mood_line(active, char["id"]),
+          # The current activity microbeat — without it a decliner has no
+          # reference for "simply carry on" and re-asserts a paraphrase of
+          # the same act every turn (Bram returning to his ledger thrice:
+          # each rewrite moved the perception view and re-rendered him).
+          "doing"       => active&.doing_for(char["id"]),
           "agenda"      => active&.agenda_for(char["id"]),
           "debts"       => debts_for(char["id"], now),
           "events"      => events
@@ -860,7 +873,12 @@ module Harness
           "memorable" => { "anyOf" => [ { "type" => "null" }, {
             "type" => "object", "properties" => { "gist" => { "type" => "string" } },
             "required" => %w[gist], "additionalProperties" => false
-          } ] }
+          } ] },
+          # The silent snub: a DECLINER may still visibly shift what they're
+          # doing ("turns back to his ropes"). Optional — null/absent is the
+          # normal answer; honored only on the decline path (speakers' doing
+          # belongs to the taking-stock pass).
+          "doing" => { "type" => %w[string null] }
         },
         "required" => %w[thought speak],
         "additionalProperties" => false

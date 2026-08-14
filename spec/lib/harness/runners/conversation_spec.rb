@@ -267,6 +267,35 @@ RSpec.describe Harness::Runners::Conversation do
     expect(captured).to include("gruff, taciturn", "wary of strangers", "wants the player to drink or leave") # the soul
   end
 
+  it "a decliner's silent snub lands on the scene: speak false + doing writes the microbeat" do
+    active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [],
+                                        internal_state: {}, agendas: {}, extras: [], entered_at_game_time: 90)
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { { "speak" => false, "doing" => "turns back to his ropes" }.to_json })
+    ctx.active_scene = active
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    outcome = described_class.new.run(context: ctx, scene: scene, input: "well?!", step: step)
+
+    expect(active.doing_for(barkeep.id)).to eq("turns back to his ropes")
+    # Still a declined turn — nothing staged, silence marker set.
+    expect(outcome.tool_calls.map { |t| t["name"] }).to include("conversation_silence")
+  end
+
+  it "a decliner sees their own current doing (the reference for 'simply carry on')" do
+    active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [],
+                                        internal_state: {}, agendas: {}, extras: [], entered_at_game_time: 90)
+    active.update_doing!(barkeep.id, "tracing his ledger columns")
+    captured = nil
+    ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+      llm_nuance: StubLLM.new { |full| captured = full; { "speak" => false }.to_json })
+    ctx.active_scene = active
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "still here", step: step)
+    expect(captured).to include("tracing his ledger columns")
+  end
+
   it "keeps mood/agenda in the payload after the NPC has spoken (the taking-stock pass keeps them current)" do
     barkeep.update!(properties: { "personality" => "gruff, taciturn" })
     active = Harness::Scene::Active.new(

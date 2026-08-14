@@ -307,6 +307,37 @@ RSpec.describe Harness::Turn::Loop do
       expect(Harness::Turn::Perception).to have_received(:render_delta).once
     end
 
+    it "delta suppression: a speaker's own doing shift is absorbed silently (their line voiced it)" do
+      npc = Npc.create!(name: "Osric", subrole: "porter", location: tavern)
+      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
+      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("Osric shifts.")
+      speaker_runner = Class.new(Harness::Runners::Base) do
+        def initialize(npc_id) = (@npc_id, @calls = npc_id, 0)
+        def run(context:, **)
+          @calls += 1
+          context.active_scene.update_doing!(@npc_id, "activity ##{@calls}")
+          Harness::Runners::Outcome.new(status: :ok, scene_dirty: false, tool_calls: [ {
+            "name" => "propose_event",
+            "args" => { "details" => "Osric grunts and drums the table.",
+                        "participants" => [ { "character_id" => @npc_id, "role" => "actor" } ] },
+            "result" => { "staged" => true }
+          } ])
+        end
+      end
+      allow(Harness::Planner).to receive(:plan_for).and_return(
+        "plan" => [ { "runner" => "talk", "reason" => "talk", "args" => {} } ],
+        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
+      )
+      adapter  = Harness::LLM::FakeAdapter.new(narration: "(n)")
+      loop_obj = described_class.new(adapter: adapter, context: context,
+                                     registry: { "talk" => speaker_runner.new(npc.id) })
+      loop_obj.run_turn(input: "first")    # establishment render, stamps
+      loop_obj.run_turn(input: "second")   # speaker shifts doing + stages the line → absorbed
+      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
+      loop_obj.run_turn(input: "third")    # stamp absorbed the shift — still silent
+      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
+    end
+
     it "delta gate: an ABSENT character's doing is invisible — no fire" do
       allow(Harness::Turn::Perception).to receive(:render).and_return("The room shifts.")
       loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
@@ -357,7 +388,7 @@ RSpec.describe Harness::Turn::Loop do
       expect(parts).to eq([ { kind: :dialogue, text: "Bess doesn't stop moving. 'I just pour the ale, sir.'" } ])
     end
 
-    it "resolves the staged line's speaker from the actor participant — metadata only, not text" do
+    it "keeps staged dialogue label-free — participants never surface as attribution" do
       bess = Npc.create!(name: "Bess", location: tavern)
       tagged = staged.merge("args" => staged["args"].merge(
         "participants" => [
@@ -366,8 +397,7 @@ RSpec.describe Harness::Turn::Loop do
         ]
       ))
       parts = compose([ tagged ])
-      expect(parts.first[:speaker]).to eq("Bess")
-      expect(parts.first[:text]).not_to include("[Bess]") # the label never enters the text
+      expect(parts.first).to eq({ kind: :dialogue, text: staged["args"]["details"] })
     end
 
     it "renders bracket before dialogue, in tool-call order" do

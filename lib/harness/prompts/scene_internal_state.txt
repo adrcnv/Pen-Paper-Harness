@@ -23,6 +23,7 @@ Each line stays at the scale of a private mood with texture: more than the subro
 
 CONSTRAINTS
 - One or two sentences per character. Concrete. Sensory or social texture preferred over abstract emotion.
+- The line happens WHERE they are — condition any activity on the location given: a person at the pens is doing pen things, not desk things.
 - Conditioned on the character's name, subrole, properties (especially personality / physical / mood baselines), and any RECENT_EVENTS touching them. Physical attributes are valid hooks — a "thick forearms from years of hauling kegs" character can plausibly feel a specific kind of tiredness; a "lean traveler in dyed dark coat" suggests different activity textures. If RECENT_EVENTS is empty, invent something small and plausible.
 - VARY THE HOOK across characters in the same scene. If one is "physical complaint + work annoyance", the next should NOT also be "physical complaint + work annoyance". Pull from different dimensions above. A barkeep does not always have a sore back. A stranger does not always nurse a drink. The example shapes are starting points to combine and vary, not a template to apply.
 - Allowed to vary scene-to-scene on whim — someone can be grumpy today and cheerful tomorrow without explanation. Don't anchor to "their disposition." Anchor to "what they happen to be feeling right now."

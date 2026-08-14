@@ -57,17 +57,12 @@ RSpec.describe Harness::Render do
       expect(out).to eq("you watch the flats dry in the sun")
     end
 
-    it "renders a dialogue part's speaker as a dim attribution header (display-only)" do
+    it "renders a dialogue part as bare prose — no attribution header" do
       out = described_class.parts(
-        [ { kind: :dialogue, text: %("The wall stays."), speaker: "Sindri Northwind" } ],
-        known_names: [], color: true
-      )
-      expect(out).to start_with("#{described_class::DIM}Sindri Northwind#{R}\n")
-      out_plain = described_class.parts(
         [ { kind: :dialogue, text: %("The wall stays."), speaker: "Sindri Northwind" } ],
         known_names: [], color: false
       )
-      expect(out_plain).to eq(%(Sindri Northwind\n"The wall stays."))
+      expect(out).to eq(%("The wall stays."))
     end
 
     it "never colours a leading article from a place name" do
