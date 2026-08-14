@@ -115,14 +115,27 @@ module Harness
 
     # --- internals -----------------------------------------------------------
 
+    # Leading articles and connectives never colour on their own ("the
+    # Evaporation Flats" must not light up every "the").
+    NAME_TOKEN_STOP = %w[the a an of].freeze
+
     # Union of the known names, longest-first so "Blackwood Relay" wins over a
-    # bare "Blackwood", case-insensitive, word-bounded, plus an optional trailing
-    # possessive 's so "Hilde's" colours whole. nil if no names.
+    # bare "Blackwood", word-bounded, plus an optional trailing possessive 's
+    # so "Hilde's" colours whole. A multi-word name is usually mentioned by
+    # ONE of its parts ("Vesna" for Vesna Krasnov), so distinctive capitalized
+    # parts colour too — but tokens match case-SENSITIVELY (a lowercase
+    # "watch" must not light up for Oak Watch), while full names keep their
+    # case-insensitive match. nil if no names.
     def known_regex(names)
       cleaned = Array(names).compact.map { |n| n.to_s.strip }.reject(&:empty?).uniq
       return nil if cleaned.empty?
-      alt = cleaned.sort_by { |n| -n.length }.map { |n| Regexp.escape(n) }.join("|")
-      /\b(?:#{alt})\b#{POSSESSIVE.source}/i
+      tokens = cleaned.flat_map { |n| n.split(/\s+/) }
+                      .select { |t| t.length >= 3 && t.match?(/\A\p{Lu}/) && !NAME_TOKEN_STOP.include?(t.downcase) }
+                      .uniq - cleaned
+      alts = (cleaned.map { |n| [ n, true ] } + tokens.map { |t| [ t, false ] })
+               .sort_by { |s, _| -s.length }
+               .map { |s, ci| ci ? "(?i:#{Regexp.escape(s)})" : Regexp.escape(s) }
+      /\b(?:#{alts.join('|')})\b#{POSSESSIVE.source}/
     end
 
     # Each span is [start, end, replacement_string]. Spans are collected in

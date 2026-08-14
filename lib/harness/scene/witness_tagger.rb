@@ -15,8 +15,8 @@ module Harness
     #
     # Replaces the prior Scene::Extractor (LLM-driven extraction of
     # characters / factions / ignorance / telling-events from narration).
-    # The narration step is now disciplined: it doesn't invent nouns. The
-    # reasoning loop owns all entity creation via tools. Extraction's only
+    # Rendered prose no longer invents nouns: the runners own all entity
+    # creation via tools. Extraction's only
     # remaining structural job — "who silently witnessed what" — collapses
     # to this tagger.
     class WitnessTagger

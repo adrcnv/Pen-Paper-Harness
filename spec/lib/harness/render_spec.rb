@@ -41,6 +41,30 @@ RSpec.describe Harness::Render do
       expect(out).to include("#{K}MAREN's#{R}")
     end
 
+    it "colours a bare part of a multi-word known name (prose says 'Vesna', row says more)" do
+      out = described_class.narration(
+        "Vesna stares at the tree line.",
+        known_names: [ "Vesna Krasnov" ], color: true
+      )
+      expect(out).to eq("#{K}Vesna#{R} stares at the tree line.")
+    end
+
+    it "a name part matches case-SENSITIVELY — common words stay unpainted" do
+      out = described_class.narration(
+        "you watch the flats dry in the sun",
+        known_names: [ "Oak Watch", "the Evaporation Flats" ], color: true
+      )
+      expect(out).to eq("you watch the flats dry in the sun")
+    end
+
+    it "never colours a leading article from a place name" do
+      out = described_class.narration(
+        "the door creaks; the Evaporation Flats shimmer",
+        known_names: [ "the Evaporation Flats" ], color: true
+      )
+      expect(out).to eq("the door creaks; #{K}the Evaporation Flats#{R} shimmer")
+    end
+
     it "leaves text with no known names untouched" do
       out = described_class.narration("the door creaks open slowly", known_names: ["Maren"], color: true)
       expect(out).to eq("the door creaks open slowly")

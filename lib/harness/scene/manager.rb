@@ -93,8 +93,8 @@ module Harness
 
       # Mechanical witness backfill against events committed at this scene's
       # location during this scene's lifetime, then drop the active reference
-      # so the next enter starts clean. The narration step does NOT invent
-      # nouns — the reasoning loop owns all entity creation through tools, so
+      # so the next enter starts clean. Rendered prose does NOT invent
+      # nouns — the runners own all entity creation through tools, so
       # there's nothing for an LLM-driven extractor to clean up. The only
       # structural job at scene exit is "who silently witnessed what," which
       # is presence-during-window — pure SQL.

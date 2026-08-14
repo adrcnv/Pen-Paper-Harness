@@ -62,7 +62,7 @@ module Harness
       end
 
       # Text blocks the model emitted across the reasoning loop, in order.
-      # Useful for transcript logging. Not consumed by the narration step.
+      # Useful for transcript logging only.
       def final_text
         @assistant_texts.join("\n")
       end

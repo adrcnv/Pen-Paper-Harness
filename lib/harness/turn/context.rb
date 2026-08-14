@@ -13,13 +13,12 @@ module Harness
     #                 contradiction validation, catch-up sim, genesis,
     #                 entity resolution. Per-turn hot path; latency and cost
     #                 matter.
-    #   llm_nuance  — reasoning tier. Reasoning loop tool-use + narration
-    #                 step. Larger model; once or twice per turn.
+    #   llm_nuance  — reasoning tier. Runner structured emits + prose
+    #                 renders. Larger model; a few calls per turn.
     #
     # Both are duck-typed adapters that respond to .call(prompt) for
-    # synchronous one-shot calls. The reasoning loop and narration step use
-    # the richer start_turn / complete interface on the adapter object
-    # directly, not via context.
+    # synchronous one-shot calls. Combat slots use the richer start_turn
+    # interface on the adapter object directly, not via context.
     #
     # `llm_client=` / `llm_client` are a back-compat shim from before the
     # split: setting llm_client wires both tiers to the same adapter, which

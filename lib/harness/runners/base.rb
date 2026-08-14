@@ -136,7 +136,7 @@ module Harness
       # name, runner-supplied subrole, the original description carried as
       # `physical`. propose_character's `from_extra` removes the extra from the
       # scene so it doesn't double-render. We then refresh the scene snapshot
-      # (pure SQL) so the new NPC appears in present_characters for narration
+      # (pure SQL) so the new NPC appears in present_characters when rendering
       # THIS turn — otherwise it reads from the assembly-time snapshot and the
       # promoted figure would be invisible again.
       #

@@ -74,7 +74,7 @@ module Harness
       end
 
       # Reasoning trace, if the model emitted any. Useful for transcript
-      # debugging; not consumed by the narration step.
+      # debugging only.
       def final_thoughts
         @assistant_thoughts.join("\n")
       end

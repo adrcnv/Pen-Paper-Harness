@@ -3,7 +3,7 @@ module Harness
     # Generates per-character internal-state prose AND ambient extras for a
     # scene in a single LLM call. Pure flavor — keeps NPCs from feeling
     # like question-answering automata, and paints nameless background
-    # presences into the scene the narrator can mention. Conditioned on
+    # presences into the scene for perception to mention. Conditioned on
     # each character's subrole, properties, and recent events.
     #
     # Single batched LLM call per scene (one prompt, internal_states +

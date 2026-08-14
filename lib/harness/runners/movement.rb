@@ -42,7 +42,7 @@ module Harness
           unless ok
             # A barred door is deterministic (venue shut at this hour) —
             # skip so the rest of the chain survives; the refusal rides in
-            # tcs for narration to render as a shut door.
+            # tcs and the stall renders diegetically via `unresolved`.
             return skip(res["error"], tcs) if res.is_a?(::Hash) && res["refused"] == "closed"
             return redispatch("transition failed for id=#{tid}", tcs)
           end

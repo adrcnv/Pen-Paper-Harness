@@ -25,7 +25,7 @@ module Harness
     # no voice renders another voice's output; nothing describes what
     # didn't happen.
     class Loop
-      # Hard cap on prior narration turns handed to the narration step. Loose
+      # Hard cap on prior turns retained in the context history buffer. Loose
       # for now — tighten when we measure token usage against a real adapter.
       DEFAULT_HISTORY_CAP = 50
 
@@ -215,6 +215,20 @@ module Harness
             end
           end
 
+          # Perception — the player's eyes, appended to every non-combat turn
+          # for now (ruled 2026-08-14; a view-change gate is the likely
+          # future). Runs dead last so it reads post-commit state and every
+          # voice that spoke, including the beat. DISPLAY-ONLY: `narration`
+          # was joined above WITHOUT this part, so scene history, the context
+          # buffer, and every LLM payload never see the eyes' prose.
+          unless combat_result || @scene_manager.active&.in_combat?
+            eyes = ::Harness::Turn::Perception.render(context: @context, parts: transcript.parts, logger: logger)
+            if eyes
+              transcript.record_tool_calls([ { "name" => "display_perception", "args" => { "text" => eyes }, "result" => { "rendered" => true } } ])
+              transcript.parts << { kind: :perception, text: scrub_player_reference(eyes) }
+            end
+          end
+
           # Record only the diegetic narration to scene history (keeps the
           # fiction record clean). The OOC notice below is display-only. A turn
           # with nothing diegetic to say (a meta-only no-op) records nothing.
@@ -356,7 +370,7 @@ module Harness
 
           # A deterministically-dead step (referent doesn't exist) stalls
           # alone; the chain continues. The intent (not the mechanical note)
-          # goes to narration's `unresolved` so the stall renders diegetically.
+          # goes to `unresolved` so the stall renders diegetically (Parts).
           if outcome.skipped?
             logger.info { "[Executor] step #{step_no} #{step.runner} skipped (#{outcome.note}); chain continues" }
             transcript.unresolved ||= step.intent.to_s.strip.presence || outcome.note

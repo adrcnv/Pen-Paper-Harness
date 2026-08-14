@@ -13,7 +13,7 @@ module Harness
     # tool_result blocks and sends them back in a single user message once
     # the batch is drained.
     #
-    # The narration step is a tool-less completion. Returns the concatenated
+    # `complete` is a tool-less one-shot completion. Returns the concatenated
     # text blocks.
     #
     # Retries on 429 and 5xx with exponential backoff. Other errors raise.

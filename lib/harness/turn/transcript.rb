@@ -29,8 +29,8 @@ module Harness
         @combat           = nil
         # When a chain dead-ends (redispatch cap, unbuilt runner, failed
         # re-plan), this holds the intent that could not be carried out. It's
-        # the signal to narration that the player's action did NOT happen — so
-        # it renders a non-event instead of fabricating success.
+        # the signal to the turn's rendering that the player's action did NOT
+        # happen — Parts renders a non-event instead of fabricating success.
         @unresolved       = nil
         # Out-of-character line shown to the PLAYER (not the fiction, not
         # recorded into scene history) when a turn dead-ends — a justified

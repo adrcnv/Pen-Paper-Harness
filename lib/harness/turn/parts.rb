@@ -16,6 +16,9 @@ module Harness
     #   :stock    — fixed non-event lines (silence, stalls, table talk)
     #   :beat     — the initiative NPC's trailing move (appended by the loop)
     #   :combat   — assembled combat-round narration (replaces the whole list)
+    #   :fragment — a runner's own delta prose (Base#emit_fragment, verbatim)
+    #   :perception — the player's-eyes state prose (loop-appended last;
+    #                 display-only — never enters the buffer or LLM payloads)
     module Parts
       # Display gate for non-staged world events (the stake gesture, a spell's
       # committed record): render short personal ones whole, skip long ones
@@ -56,6 +59,7 @@ module Harness
         when "resolve"          then bracket(tc)
         when "propose_event"    then event_part(args, result)
         when "display_fragment" then fragment_part(args)
+        when "display_perception" then perception_part(args)
         when "transition"       then arrival_card(result, context, scene)
         when "travel"           then travel_line(result)
         when "pickup"           then line("You take the #{result['item_name']}.")
@@ -187,6 +191,13 @@ module Harness
       def fragment_part(args)
         text = args["text"].to_s.strip
         text.empty? ? nil : { kind: :fragment, text: text }
+      end
+
+      # The eyes' prose, when a transcript is re-composed (replay paths). In
+      # a live turn the loop appends both the record and the part itself.
+      def perception_part(args)
+        text = args["text"].to_s.strip
+        text.empty? ? nil : { kind: :perception, text: text }
       end
 
       # An inter-city journey leg: arrived / stopped short / stumbled onto a

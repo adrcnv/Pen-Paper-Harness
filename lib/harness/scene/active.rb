@@ -133,7 +133,7 @@ module Harness
 
       # Dead NPCs still anchored to this location — bodies on the floor.
       # Surfaced separately so they're inert as action targets but still
-      # available to narration ("his body slumps against the wall") and to
+      # visible to scene rendering ("Fallen: ...") and to
       # pickup of items dropped at death (Tools::Pickup uses the location-
       # anchored items, not these rows directly).
       def present_corpses

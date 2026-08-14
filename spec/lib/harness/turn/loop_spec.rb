@@ -229,6 +229,37 @@ RSpec.describe Harness::Turn::Loop do
     end
   end
 
+  # The player's eyes: appended dead last on every non-combat turn, and
+  # DISPLAY-ONLY — the prose renders but never enters scene history, the
+  # context buffer, or the persisted narration (fact-laundering firewall).
+  describe "perception (the player's eyes)" do
+    it "appends a :perception part last with its display record, kept OUT of the buffer" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return("The fire gutters low.")
+      transcript = run(reasoning: [ event_call("You pocket the coin.") ])
+
+      expect(transcript.parts.last).to eq({ kind: :perception, text: "The fire gutters low." })
+      expect(transcript.tool_calls.last["name"]).to eq("display_perception")
+      # Display-only: the buffer join and everything downstream of it
+      # (scene history, context turns, TurnLog narration) exclude the prose.
+      expect(transcript.narration).to eq("You pocket the coin.")
+      expect(TurnLog.last.narration).not_to include("fire gutters")
+      expect(context.history.last["narration"]).not_to include("fire gutters")
+    end
+
+    it "a flaked or silent render adds nothing — mechanical parts carry the turn" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return(nil)
+      transcript = run(reasoning: [ event_call("You pocket the coin.") ])
+      expect(transcript.parts.map { |p| p[:kind] }).to eq([ :line ])
+      expect(transcript.tool_calls.map { |t| t["name"] }).not_to include("display_perception")
+    end
+
+    it "runs after initiative so the eyes read every voice, and the engine word is scrubbed" do
+      allow(Harness::Turn::Perception).to receive(:render).and_return("Dust hangs where the player stood.")
+      transcript = run(reasoning: [ event_call("You pocket the coin.") ])
+      expect(transcript.parts.last[:text]).to eq("Dust hangs where Hero stood.")
+    end
+  end
+
   # The mechanical floor: typed parts from committed tool calls, in causal
   # order, no model call anywhere. Causal authority = rendering authority.
   describe "mechanical parts (Turn::Parts)" do
