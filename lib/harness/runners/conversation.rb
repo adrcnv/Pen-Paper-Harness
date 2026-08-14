@@ -990,11 +990,16 @@ module Harness
           active.update_state!(id, flavor) unless flavor.empty?
         end
         active.clear_agenda!(id) if %w[resolved abandoned].include?(taking["agenda"]) && active.agenda_for(id)
+        # The activity microbeat: written silently (the staged line already
+        # voiced the change this turn); perception reads it on later looks.
+        if taking["doing"].is_a?(::String) && !taking["doing"].strip.empty?
+          active.update_doing!(id, taking["doing"].strip)
+        end
 
         @logger.info do
           "[Runner conversation] #{v[:char]['name']} takes stock: disposition=#{taking['disposition']}" \
             " (now #{active.disposition_for(id)}) mood #{taking['mood'] ? 'refreshed' : 'held'}" \
-            " agenda=#{taking['agenda'] || 'pursue'}"
+            " agenda=#{taking['agenda'] || 'pursue'} doing #{taking['doing'] ? 'shifted' : 'held'}"
         end
       rescue ::StandardError => e
         @logger.warn { "[Runner conversation] reevaluation failed for #{v[:char]['name']}: #{e.class}: #{e.message}" }

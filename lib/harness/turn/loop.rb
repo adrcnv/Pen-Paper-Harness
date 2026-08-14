@@ -222,7 +222,15 @@ module Harness
           # was joined above WITHOUT this part, so scene history, the context
           # buffer, and every LLM payload never see the eyes' prose.
           unless combat_result || @scene_manager.active&.in_combat?
-            eyes = ::Harness::Turn::Perception.render(context: @context, parts: transcript.parts, logger: logger)
+            # Extras are ESTABLISHMENT content — no writer, never a delta —
+            # so they feed the eyes only on the scene's first render (the
+            # narrations list is still empty here; record_narration runs
+            # below) or on an explicit look. Otherwise the lone gull cries
+            # in every single render.
+            establishing = Array(transcript.runners_ran).include?("inspection") ||
+                           Array(@scene_manager.active&.narrations).empty?
+            eyes = ::Harness::Turn::Perception.render(context: @context, parts: transcript.parts,
+                                                      include_figures: establishing, logger: logger)
             if eyes
               transcript.record_tool_calls([ { "name" => "display_perception", "args" => { "text" => eyes }, "result" => { "rendered" => true } } ])
               transcript.parts << { kind: :perception, text: scrub_player_reference(eyes) }

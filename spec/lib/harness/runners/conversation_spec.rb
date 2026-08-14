@@ -338,7 +338,8 @@ RSpec.describe Harness::Runners::Conversation do
         if full.include?("TAKING STOCK")
           tails << full
           { "assessment" => "Tomas hardens toward the freeloader.",
-            "disposition" => "colder", "mood" => "polishing the same mug, knuckles white", "agenda" => "resolved" }.to_json
+            "disposition" => "colder", "mood" => "polishing the same mug, knuckles white", "agenda" => "resolved",
+            "doing" => "turning his back to restack the shelf" }.to_json
         elsif full.include?("WORLD MEMORY")
           { "facts" => [], "people" => [], "places" => [] }.to_json
         else
@@ -354,6 +355,8 @@ RSpec.describe Harness::Runners::Conversation do
     expect(active.disposition_for(barkeep.id)).to eq("guarded")   # neutral → one step colder
     expect(active.state_for(barkeep.id)).to eq("polishing the same mug, knuckles white")
     expect(active.agenda_for(barkeep.id)).to be_nil
+    # The activity microbeat lands silently on the scene (perception's read).
+    expect(active.doing_for(barkeep.id)).to eq("turning his back to restack the shelf")
 
     # Next voicing renders the ladder word into the mood line.
     captured = nil

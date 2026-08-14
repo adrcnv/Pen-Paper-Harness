@@ -18,14 +18,10 @@ PERSONALITY (a short trait list — NOT prose, NOT sentences):
   - "watchful, evasive, dry, plays dumb"
 
 APPEARANCE (one to two sentences):
-- What they look like, how they're built, how they move, distinguishing marks.
-- MUST reflect their stats — a STR-17 character is broad-shouldered with heavy hands; a DEX-16 character is light and quick on their feet; an INT-15 scholar has sharp eyes that catch detail; high-CHA characters carry themselves with ease; low-CON characters look frail or hollow-eyed; etc.
-- MUST reflect their level when high — veterans (level 5+) carry scars, weathered hands, a way of watching exits; legendary outliers (level 11+) often have one detail that's notably wrong for their cover (the fishmonger with unburnt-but-callused fingers, the barkeep whose eyes track too smoothly across a crowd).
-- MUST reflect scenario when active — a retired_adept tending bar may have callused palms or a faded tattoo at the wrist; an exiled_noble's bearing is wrong for their station; a marked_by_a_power character has something subtle that catches the light wrong.
-- Examples of shape (do NOT paraphrase):
-  - "Broad-shouldered, with thick wrists and the stance of a man who has spent decades behind a forge. A burn-scar runs the length of his right forearm; the hand is steady."
-  - "Slight, sharp-featured, hair in a careful merchant's braid. Her left hand drums a beat against the table when she listens — she is always listening."
-  - "Heavyset and bald, with the soft-faced look of a scholar gone to seed. The eyes are wrong for the body: they track exits with the precision of someone who has had to leave rooms quickly."
+- The body alone, as a portrait sculptor could render it: build, age, coloring, features, scars, permanent marks — this field is physical fact.
+- MUST reflect their stats — a STR-17 character is broad-shouldered with heavy hands; an INT-15 scholar has sharp, deep-set eyes; a low-CON character looks frail or hollow-eyed.
+- MUST reflect their level when high — veterans (level 5+) carry scars and weathered hands; legendary outliers (level 11+) have one physical detail notably wrong for their cover.
+- MUST reflect scenario when active — as a physical mark: a retired_adept tending bar may have callused palms or a faded tattoo at the wrist; a marked_by_a_power character has something subtle that catches the light wrong.
 
 INPUT format
 {
@@ -53,4 +49,4 @@ HARD RULES
 - Use pronouns that MATCH INPUT.gender: male → he/him/his, female → she/her/hers. This is a fixed fact about the character, decided upstream — never contradict it, and stay consistent within both fields. (Their NAME may read either way to you; the gender field is authoritative, not your read of the name.)
 - Do NOT use the character's name in either field — the prose describes them in third-person attributes only (using the gendered pronoun above — name-less).
 - Do NOT contradict the input. If subrole is "barkeep" and scenario is absent, do NOT make them a soldier in disguise. The scenario is what creates legitimate hidden depths; without one, the character is what they appear to be.
-- Description MUST be observable. No "he is wracked by guilt over the war" (interior state, not visible). YES "he looks tired in a way sleep doesn't fix" (observable inference).
+- "appearance" is physical fact only — anything a sculptor could not carve does not belong there.

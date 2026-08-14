@@ -31,6 +31,46 @@ RSpec.describe Harness::Turn::Perception do
     expect(input).not_to include('"agenda"')
   end
 
+  it "surfaces the taking-stock activity microbeat as the person's `doing`" do
+    bess = Npc.create!(name: "Bess", subrole: "barkeep", location: tavern)
+    active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [])
+    active.update_doing!(bess.id, "stacking tankards behind the bar")
+    llm = StubLLM.new { "Bess stacks tankards." }
+    context = ctx(llm: llm)
+    context.active_scene = active
+
+    described_class.render(context: context, parts: [])
+    expect(llm.user_calls.last).to include("stacking tankards behind the bar")
+  end
+
+  it "withholds figures (extras) on a non-establishing render — no writer, never a delta" do
+    active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [],
+                                        extras: [ "a lone gull crying over the water" ])
+    llm = StubLLM.new { "The room holds still." }
+    context = ctx(llm: llm)
+    context.active_scene = active
+
+    described_class.render(context: context, parts: [], include_figures: false)
+    expect(llm.user_calls.last).not_to include("lone gull")
+
+    described_class.render(context: context, parts: [], include_figures: true)
+    expect(llm.user_calls.last).to include("lone gull")
+  end
+
+  it "eyes don't hear: dialogue parts are excluded from just_now" do
+    llm = StubLLM.new { "The room holds still." }
+    described_class.render(
+      context: ctx(llm: llm),
+      parts: [
+        { kind: :dialogue, text: "\"Look at that wall Sindri threw up.\"" },
+        { kind: :line, text: "You take the locket." }
+      ]
+    )
+    input = llm.user_calls.last
+    expect(input).not_to include("wall Sindri")
+    expect(input).to include("You take the locket.")
+  end
+
   it "swallows a flaked call — the mechanical parts carry the turn" do
     llm = StubLLM.new { raise "connection refused" }
     expect(described_class.render(context: ctx(llm: llm), parts: [])).to be_nil

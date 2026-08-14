@@ -19,10 +19,10 @@ module Harness
 
       module_function
 
-      def render(context:, parts:, logger: Rails.logger)
+      def render(context:, parts:, include_figures: true, logger: Rails.logger)
         llm = context.llm_nuance || context.llm_grunt
         return nil unless llm
-        payload = build_payload(context, parts)
+        payload = build_payload(context, parts, include_figures: include_figures)
         text = ::Harness::CostTracker.in_subsystem(:perception) do
           llm.complete(
             system:     ::File.read(PROMPT_PATH),
@@ -39,9 +39,17 @@ module Harness
       # Observable state only: no ids, no agendas, no engine bookkeeping.
       # `just_now` is this turn's already-rendered parts, whole — the eyes
       # continue from what the player just read instead of contradicting it.
-      def build_payload(context, parts)
+      # Dialogue is EXCLUDED: eyes don't hear. Quoted speech invites the
+      # model to materialize talked-about things into the room (the boundary
+      # wall that got rebuilt beside the tavern hearth).
+      def build_payload(context, parts, include_figures: true)
         snap  = ::Harness::Tools::QueryScene.build(context)
         looks = appearance_by_id(snap)
+        # The taking-stock pass's activity microbeats live on the active
+        # scene; a mid-turn move leaves the cached scene pointing at the old
+        # place, so drop it then (same guard QueryScene applies).
+        active = context.active_scene
+        active = nil if active && active.location&.id != context.player_location&.id
         {
           "place" => {
             "name"        => snap.dig("location", "name"),
@@ -55,13 +63,14 @@ module Harness
               "role"       => c["subrole"],
               "gender"     => c["gender"],
               "appearance" => looks[c["id"]],
+              "doing"      => active&.doing_for(c["id"]),
               "bearing"    => c["internal_state"] }.compact
           },
           "things"   => Array(snap["present_items"]).map { |i| i["name"] }.compact,
-          "figures"  => Array(snap["present_extras"]),
+          "figures"  => (Array(snap["present_extras"]) if include_figures),
           "fallen"   => Array(snap["present_corpses"]).map { |c| c["name"] }.compact,
-          "just_now" => Array(parts).map { |p| p[:text] }.join("\n")
-        }.reject { |_, v| v.respond_to?(:empty?) && v.empty? }
+          "just_now" => Array(parts).reject { |p| p[:kind] == :dialogue }.map { |p| p[:text] }.join("\n")
+        }.reject { |_, v| v.nil? || (v.respond_to?(:empty?) && v.empty?) }
       end
 
       def appearance_by_id(snap)

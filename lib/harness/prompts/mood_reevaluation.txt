@@ -7,6 +7,7 @@ Now judge what this exchange did to YOUR OWN state. The dialogue format above no
 {"assessment": "<ONE sentence, third person by name: what this exchange did to them, if anything>",
  "disposition": "hold" | "warmer" | "colder",
  "mood": null | "<one fresh line of present state, replacing INPUT.you.mood>",
- "agenda": "pursue" | "resolved" | "abandoned"}
+ "agenda": "pursue" | "resolved" | "abandoned",
+ "doing": null | "<one short clause: the activity their hands and body settle into now>"}
 
-Most exchanges move nobody — {"disposition": "hold", "mood": null, "agenda": "pursue"} is the normal answer. Shift disposition ONLY when this exchange gave real cause, one step, read through your personality — the same words warm one soul and sharpen another. A contest verdict in INPUT.you.contest is settled fact: feel its effect, do not re-judge it. Refresh "mood" only when your present state visibly changed. Mood is weather — how you are RIGHT NOW — never a demand, a question, or something you are waiting for; wants live in the agenda. "resolved" when the thing you were pursuing has concluded; "abandoned" when you gave it up out loud.
+Most exchanges move nobody — {"disposition": "hold", "mood": null, "agenda": "pursue", "doing": null} is the normal answer. Shift disposition ONLY when this exchange gave real cause, one step, read through your personality — the same words warm one soul and sharpen another. A contest verdict in INPUT.you.contest is settled fact: feel its effect, do not re-judge it. Refresh "mood" only when your present state visibly changed. Mood is weather — how you are RIGHT NOW — never a demand, a question, or something you are waiting for; wants live in the agenda. "resolved" when the thing you were pursuing has concluded; "abandoned" when you gave it up out loud. "doing" is visible occupation only — an activity, not a feeling; null when they carry on with what they were already doing.

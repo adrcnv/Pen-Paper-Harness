@@ -286,6 +286,19 @@ RSpec.describe Harness::Turn::Loop do
       expect(parts).to eq([ { kind: :dialogue, text: "Bess doesn't stop moving. 'I just pour the ale, sir.'" } ])
     end
 
+    it "resolves the staged line's speaker from the actor participant — metadata only, not text" do
+      bess = Npc.create!(name: "Bess", location: tavern)
+      tagged = staged.merge("args" => staged["args"].merge(
+        "participants" => [
+          { "character_id" => bess.id, "role" => "actor" },
+          { "character_id" => player.id, "role" => "participant" }
+        ]
+      ))
+      parts = compose([ tagged ])
+      expect(parts.first[:speaker]).to eq("Bess")
+      expect(parts.first[:text]).not_to include("[Bess]") # the label never enters the text
+    end
+
     it "renders bracket before dialogue, in tool-call order" do
       parts = compose([ resolve, staged ])
       expect(parts.map { |p| p[:kind] }).to eq([ :bracket, :dialogue ])

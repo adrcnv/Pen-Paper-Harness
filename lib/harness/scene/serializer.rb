@@ -28,7 +28,8 @@ module Harness
           "spoken_ids"           => active.spoken_ids || [],
           "last_lines"           => active.last_lines || {},
           "contest_ledger"       => active.contest_ledger || {},
-          "dispositions"         => active.dispositions || {}
+          "dispositions"         => active.dispositions || {},
+          "doing"                => active.doing || {}
         }
       end
 
@@ -50,7 +51,8 @@ module Harness
           spoken_ids:           Array(data["spoken_ids"]).map(&:to_i),
           last_lines:           int_keyed(data["last_lines"]),
           contest_ledger:       data["contest_ledger"] || {},
-          dispositions:         int_keyed(data["dispositions"])
+          dispositions:         int_keyed(data["dispositions"]),
+          doing:                int_keyed(data["doing"])
         )
       end
 

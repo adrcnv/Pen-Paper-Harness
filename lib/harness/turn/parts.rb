@@ -94,16 +94,32 @@ module Harness
       end
 
       # Staged dialogue renders verbatim (the beat + quote is the voicing
-      # organ's own prose). Other committed events show whole when short and
-      # personal; anything longer is a record, not display.
+      # organ's own prose), with the speaking NPC resolved mechanically from
+      # the event's actor participant. `speaker` is PART METADATA: the
+      # presenter shows it as an attribution header, but join_parts reads
+      # only :text — no label ever enters the buffer or an LLM payload (the
+      # source-baked `[Name]` labels of 2026-07-05 caused the parrot loop
+      # precisely because the model saw them; this way it never does).
+      # Other committed events show whole when short and personal; anything
+      # longer is a record, not display.
       def event_part(args, result)
         details = args["details"].to_s.strip
         return nil if details.empty?
         if result.is_a?(Hash) && result["staged"]
-          { kind: :dialogue, text: details }
+          part = { kind: :dialogue, text: details }
+          speaker = speaker_name(args)
+          part[:speaker] = speaker if speaker
+          part
         elsif args["scope"].to_s == "personal" && details.length <= EVENT_LINE_MAX
           { kind: :line, text: details }
         end
+      end
+
+      def speaker_name(args)
+        participants = Array(args["participants"])
+        actor = participants.find { |p| p.is_a?(Hash) && p["role"].to_s == "actor" } || participants.first
+        return nil unless actor.is_a?(Hash) && actor["character_id"]
+        ::Character.find_by(id: actor["character_id"])&.name
       end
 
       def arrival_card(result, context, scene)

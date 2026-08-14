@@ -83,6 +83,8 @@ module Harness
     # Render a turn's typed parts ({kind:, text:}), one styled block per part.
     # Kinds carry the styling: cards ochre, stock lines dim, everything else
     # through narration() (quotes green, known names cyan, brackets painted).
+    # A dialogue part with `speaker` metadata gets a dim screenplay-style
+    # attribution header — display-only; the label exists nowhere but here.
     # Styling lives HERE only — the buffer and every LLM payload store the
     # plain join, never ANSI.
     def parts(list, known_names: [], color: true)
@@ -92,6 +94,14 @@ module Harness
         case (p[:kind] || p["kind"]).to_s
         when "card"  then color ? "#{CARD_COLOR}#{text}#{RESET}" : text
         when "stock" then color ? "#{DIM}#{text}#{RESET}" : text
+        when "dialogue"
+          body    = narration(text, known_names: known_names, color: color)
+          speaker = (p[:speaker] || p["speaker"]).to_s
+          if speaker.empty?
+            body
+          else
+            color ? "#{DIM}#{speaker}#{RESET}\n#{body}" : "#{speaker}\n#{body}"
+          end
         else narration(text, known_names: known_names, color: color)
         end
       }.join("\n\n")
