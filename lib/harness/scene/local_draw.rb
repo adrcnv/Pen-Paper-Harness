@@ -1,22 +1,24 @@
 module Harness
   module Scene
-    # Phase 3 of the home/current split — the intra-city twin of TravelerPull.
+    # The intra-city draw — the dice half of presence. When the player is at
+    # a SUBLOCATION (a tavern, a smithy, a customs office), a free resident of
+    # the same city occasionally drifts in. Without it, a sublocation only
+    # ever shows its own anchored cast plus transients — a sealed room with no
+    # sense of the town around it. With it, the barkeep's regulars wander in
+    # for a drink and the place feels part of its city.
     #
-    # TravelerPull keeps a town's cast alive by importing residents of OTHER
-    # cities. LocalDraw does the same trick WITHIN a city: when the player is at
-    # a SUBLOCATION (a tavern, a smithy, a customs office), a resident of the
-    # same city who is currently resting at home occasionally drifts in. Without
-    # it, a sublocation only ever shows its own anchored cast plus transients —
-    # a sealed room with no sense of the town around it. With it, the barkeep's
-    # regulars wander in for a drink and the place feels part of its city.
-    #
-    # Like TravelerPull it relocates an existing row (current ← here, home
-    # untouched); Scene::Evictor sends them home on exit (home != here), so they
-    # never accumulate and you re-meet them at their own haunt later.
+    # The draw writes a PIN (a transient stay Whereabouts honors until the
+    # next day-phase boundary) — never the location cache. Whereabouts.refresh!
+    # places the pinned patron when the scene assembles, and the pin's expiry
+    # is what sends them home (or to their shift): no eviction, no bookkeeping.
+    # The candidate pool is defined by SCHEDULE, never by stored presence —
+    # an off-shift keeper is drawable to the pub no matter where their row sat.
     #
     # Fires ONLY at sublocations (parent_id present). At the city tier the
-    # residents are already standing in the scene (home == location == here), so
-    # there's nothing to draw. Top-level cities are TravelerPull's domain.
+    # free residents already resolve to the root, so there's nothing to draw.
+    # Top-level cities are TravelerPull's domain. With no game_time (tests,
+    # headless) pins are meaningless — the draw relocates the row directly,
+    # matching the clockless cache-is-truth mode.
     class LocalDraw
       CHANCE = 0.25 # flat fallback when no game_time is supplied; tunable knob
 
@@ -47,25 +49,30 @@ module Harness
         local = candidates.sample(random: @rng)
         return nil unless local
 
-        local.update!(location_id: @location.id)
+        if @game_time
+          Whereabouts.pin!(local, @location, @game_time, logger: @logger)
+        else
+          local.update!(location_id: @location.id)
+        end
         @logger.info { "[Scene::LocalDraw] #{local.name} of #{local.home_location&.name} drifts into #{@location.name}" }
         local
       end
 
-      # Residents of THIS city (home anywhere in the city ancestry) whose home
-      # is somewhere OTHER than this exact sublocation, currently resting at
-      # home, eligible to drift in. Excludes this sublocation's own residents
-      # (already here), anyone currently away from home (already out and
-      # about), and `exclude_ids` — the cast of the scene the player just left
-      # (the anti-cart rule: the person you were talking to must not trail you
-      # through the next doorway). Public for testability.
+      # Free residents of THIS city (anchor anywhere in the city ancestry,
+      # somewhere other than this exact sublocation), not already out on a
+      # pinned stay, eligible to drift in. Excludes `exclude_ids` — the cast
+      # of the scene the player just left (the anti-cart rule: the person you
+      # were talking to must not trail you through the next doorway). Public
+      # for testability.
       def candidates
         city_ids = Residents.ancestry_ids(@location)
         scope = ::Npc.where(home_location_id: city_ids)
                      .where.not(home_location_id: @location.id)
-                     .where("characters.location_id = characters.home_location_id") # resting at home
         scope = scope.where.not(id: @exclude_ids) if @exclude_ids.any?
-        scope.to_a.select { |c| Residents.eligible?(c) && Routine.free?(c, @game_time) }
+        scope.to_a.select { |c|
+          Residents.eligible?(c) && Routine.free?(c, @game_time) &&
+            !Whereabouts.pinned?(c, @game_time)
+        }
       end
 
       private

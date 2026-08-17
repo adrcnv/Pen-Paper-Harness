@@ -82,8 +82,9 @@ module Harness
             char.update!(current_hp: 0)
             ::Harness::Items::Loot.drop_to_floor(char) if defined?(::Harness::Items::Loot)
           when "fled"
-            parent_id = scene.location&.parent_id
-            char.update!(location_id: parent_id) # nil for top-level wilderness; that's fine
+            parent = scene.location&.parent
+            char.update!(location_id: parent&.id) # nil for top-level wilderness; that's fine
+            ::Harness::Scene::Whereabouts.pin!(char, parent, context.game_time) if parent
           end
         end
 

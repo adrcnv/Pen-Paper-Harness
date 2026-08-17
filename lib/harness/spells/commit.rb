@@ -231,6 +231,8 @@ module Harness
           return { "error" => "no location named #{atom['destination'].inspect} exists" } unless dest
 
           who.update!(location_id: dest.id)
+          # A teleported NPC stays put past the next Whereabouts refresh.
+          ::Harness::Scene::Whereabouts.pin!(who, dest, context.game_time) if who.is_a?(::Npc)
           context.player_location = dest if who.is_a?(::Player)
           state[:scene_dirty] = true
           { "teleported" => who.name, "to" => dest.name }

@@ -181,7 +181,7 @@ RSpec.describe Harness::Scene::Manager do
 
     let(:materializer_double) {
       instance_double(Harness::Scene::Materializer).tap do |m|
-        allow(m).to receive(:materialize) { |location:, target_count:|
+        allow(m).to receive(:materialize) { |location:, target_count:, game_time: nil|
           # Simulate a successful spawn: create N NPCs at the location so
           # subsequent assembler queries see them.
           target_count.times do |i|
@@ -212,7 +212,7 @@ RSpec.describe Harness::Scene::Manager do
       context.player_location = warehouse
       mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
       mgr.ensure_entered
-      expect(materializer_double).to have_received(:materialize).with(location: warehouse, target_count: be_between(3, 6))
+      expect(materializer_double).to have_received(:materialize).with(location: warehouse, target_count: be_between(3, 6), game_time: anything)
     end
 
     it "skips Materializer when the sublocation already has at least one NPC" do
@@ -227,7 +227,7 @@ RSpec.describe Harness::Scene::Manager do
       maren  # the keeper StaffSeeder guarantees — a lone barkeep is an empty tavern
       mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
       mgr.ensure_entered
-      expect(materializer_double).to have_received(:materialize).with(location: tavern, target_count: be_between(3, 6))
+      expect(materializer_double).to have_received(:materialize).with(location: tavern, target_count: be_between(3, 6), game_time: anything)
       expect(tavern.reload.properties["materialized"]).to be(true)   # stamped — one-time device
     end
 
@@ -255,7 +255,7 @@ RSpec.describe Harness::Scene::Manager do
       context.player_location = wilderness
       mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
       mgr.ensure_entered
-      expect(materializer_double).to have_received(:materialize).with(location: wilderness, target_count: be_between(3, 6))
+      expect(materializer_double).to have_received(:materialize).with(location: wilderness, target_count: be_between(3, 6), game_time: anything)
     end
 
     it "does NOT staff wilderness_leaf locations with a materialized cast (they're transient encounter spots)" do
@@ -292,14 +292,14 @@ RSpec.describe Harness::Scene::Manager do
       context.player_location = warehouse
       mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
       mgr.ensure_entered(materialize_target: 7)
-      expect(materializer_double).to have_received(:materialize).with(location: warehouse, target_count: 7)
+      expect(materializer_double).to have_received(:materialize).with(location: warehouse, target_count: 7, game_time: anything)
     end
 
     it "explicit materialize_target fires even when location already has NPCs" do
       maren
       mgr = described_class.new(context: context, logger: logger, rng: fixed_rng)
       mgr.ensure_entered(materialize_target: 5)
-      expect(materializer_double).to have_received(:materialize).with(location: tavern, target_count: 5)
+      expect(materializer_double).to have_received(:materialize).with(location: tavern, target_count: 5, game_time: anything)
     end
   end
 

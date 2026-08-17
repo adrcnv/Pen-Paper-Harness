@@ -61,12 +61,17 @@ module Harness
         maybe_run_materialize(loc, materialize_target)
         maybe_pull_traveler(loc)
         maybe_draw_local(loc)
-        maybe_pin_appointments(loc)
         maybe_seed_location_items(loc)
         maybe_stock_shop(loc)
         maybe_seed_treasure(loc)
 
-        snapshot = ::Harness::Scene::Assembler.for(location: loc, game_time: @context.game_time)
+        # The presence authority writes the cache for this location — pulls
+        # in everyone the schedule places here (keepers to open posts, meet
+        # counterparties, pinned patrons), sweeps out cached rows who belong
+        # elsewhere. The Assembler below only READS what this wrote.
+        refresh_whereabouts(loc)
+
+        snapshot = ::Harness::Scene::Assembler.for(location: loc)
         maybe_run_character_catch_up(snapshot.present_characters)
         maybe_weave_claim_web(snapshot.present_characters)
         flavor = generate_internal_state(loc, snapshot.present_characters)
@@ -113,14 +118,16 @@ module Harness
         # the exclusion only holds within the SAME day-phase (see
         # cart_exclusions) — once the phase ticks over, people legitimately
         # relocate (the smith off-shift CAN be at the pub you walked to).
-        @last_cast_ids       = ::Npc.where(location_id: @active.location.id).pluck(:id)
+        @last_cast_ids       = Array(@active.snapshot&.present_characters).map(&:id)
         @last_exit_game_time = @context.game_time
         @last_exit_location_id = @active.location.id
 
-        # Clear non-residents from the scene we're leaving: transients go home,
-        # pure-flavor strangers evaporate. Stops the "merchants stranded at the
-        # crossing forever" pile-up.
-        ::Harness::Scene::Evictor.evict!(@active.location, logger: logger)
+        # Transient lifecycle: pure-flavor strangers (nil anchor, no events)
+        # evaporate; engaged ones earn an anchor. Anchored cast needs nothing —
+        # Whereabouts re-derives them wherever the player next looks.
+        ::Harness::Scene::Whereabouts.settle_transients!(
+          Array(@active.snapshot&.present_characters), @active.location, logger: logger
+        )
 
         @active = nil
         @context.active_scene = nil
@@ -239,7 +246,7 @@ module Harness
 
         ::Harness::Scene::Materializer
           .new(llm_client: @context.llm_grunt, logger: logger)
-          .materialize(location: loc, target_count: target)
+          .materialize(location: loc, target_count: target, game_time: @context.game_time)
         mark_materialized!(loc)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] auto-materialize failed for #{loc.name}: #{e.class}: #{e.message}" }
@@ -289,11 +296,12 @@ module Harness
         @last_cast_ids
       end
 
-      # The certainty draw: an NPC whose open meet with the player falls due
-      # HERE is relocated into the scene (Scene::AppointmentPin). Mechanical,
-      # no LLM gate — an appointment is not a dice roll.
-      def maybe_pin_appointments(loc)
-        ::Harness::Scene::AppointmentPin.pin!(loc, @context.game_time, logger: logger)
+      # The cache write. Mechanical, no LLM gate — where people stand is
+      # never a dice roll (the draws already rolled theirs into pins).
+      def refresh_whereabouts(loc)
+        ::Harness::Scene::Whereabouts.refresh!(loc, @context.game_time, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] whereabouts refresh failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
 
       # The staffing invariant: a manifest venue's keeper is spawned
@@ -380,8 +388,11 @@ module Harness
         # dormant historicals at the city tier; they're row-shaped
         # placeholders, not inhabitants yet — the Materializer's job is to
         # wake the ones who plausibly fit and spawn fresh public-facing locals.
+        # Cached-here OR anchored-here: presence is schedule-derived now, so
+        # a venue's cast can be off-premises when we look — the anchor half
+        # keeps a populated place reading as populated.
         staff_trade = loc.properties.is_a?(Hash) ? loc.properties["trade"].presence : nil
-        any_active = ::Npc.where(location_id: loc.id).any? { |c|
+        any_active = ::Npc.where("location_id = :id OR home_location_id = :id", id: loc.id).any? { |c|
           props = c.properties
           next false if props.is_a?(Hash) && props["dormant"] == true
           !(staff_trade && c.subrole.to_s == staff_trade)
@@ -397,7 +408,7 @@ module Harness
           # Wilderness leaves get NO materialized resident cast — they're
           # transient encounter spots, not settlements. Staffing them spawned
           # homeless rows in the middle of nowhere (a "lost_traveler" with no
-          # home that the Evictor then culls). Wilderness population comes from
+          # anchor that the transient sweep then culls). Wilderness population comes from
           # the LLM's ambient `extras` (materialized on engagement via
           # propose_character(from_extra:)) and the travel encounter-spawner.
           nil

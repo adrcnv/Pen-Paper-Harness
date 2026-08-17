@@ -158,7 +158,7 @@ module Harness
 
         id = (ok && res.is_a?(Hash)) ? (res["character_id"] || res["id"]) : nil
         if id && (active = context.active_scene)
-          active.snapshot = ::Harness::Scene::Assembler.for(location: context.player_location, game_time: context.game_time)
+          active.snapshot = ::Harness::Scene::Assembler.for(location: context.player_location)
         end
         cache[index] = id
       end

@@ -80,14 +80,17 @@ module Harness
         "#{base} #{roman(suffix)}"
       end
 
-      # First tokens of every character name anchored in this location's
+      # First tokens of every character name belonging to this location's
       # settlement (top-level ancestor + all its descendants), lowercased.
+      # Anchor OR cache: membership is `home_location_id` (a resident out on
+      # a pinned stay elsewhere still holds their name here); the cache half
+      # keeps the player, corpses, and unanchored transients in the pool.
       def settlement_first_names(location)
         return ::Set.new unless location
         root = location
         root = root.parent while root.parent
         ids = [ root.id ] + descendant_ids(root)
-        ::Character.where(location_id: ids).pluck(:name)
+        ::Character.where("location_id IN (:ids) OR home_location_id IN (:ids)", ids: ids).pluck(:name)
                    .filter_map { |n| n.to_s.strip.split(/\s+/).first&.downcase }
                    .to_set
       end

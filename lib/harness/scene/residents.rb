@@ -1,9 +1,9 @@
 module Harness
   module Scene
-    # Shared helpers for the home/current draw mechanisms — TravelerPull
-    # (cross-city) and LocalDraw (intra-city). Both pick an existing NPC row
-    # who is "resting at home" and relocate them into the current scene; both
-    # rely on the SAME notion of "eligible to be drawn" and the SAME walk of a
+    # Shared helpers for the draw mechanisms — TravelerPull (cross-city) and
+    # LocalDraw (intra-city). Both pick an existing free NPC by SCHEDULE and
+    # pin them into the current scene (Whereabouts honors the pin); both rely
+    # on the SAME notion of "eligible to be drawn" and the SAME walk of a
     # location's full city ancestry. Kept in one place so the eligibility rule
     # can't drift between the two draws.
     module Residents

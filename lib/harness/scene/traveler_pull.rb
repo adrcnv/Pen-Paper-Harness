@@ -1,18 +1,19 @@
 module Harness
   module Scene
-    # Phase 2 of the home/current split. Once a location is first materialized
-    # it never re-materializes (auto_target_for short-circuits on any active
-    # NPC), so a town's cast would otherwise be frozen for the rest of the game.
-    # The traveler pull keeps populated places alive: on a settlement scene
-    # entry it occasionally relocates an EXISTING resident of ANOTHER city —
-    # currently resting at home — into the scene as someone passing through.
+    # The cross-city draw. Once a location is first materialized it never
+    # re-materializes (auto_target_for short-circuits), so a town's cast would
+    # otherwise be frozen for the rest of the game. The traveler pull keeps
+    # populated places alive: on a settlement scene entry it occasionally
+    # brings in an EXISTING resident of ANOTHER city as someone passing
+    # through.
     #
-    # Because it reuses a real row (current ← here, home untouched), the world
-    # gains continuity: you can meet the same merchant again later in his own
-    # city. On scene exit, Scene::Evictor sends them home (home != here), so
-    # travelers never accumulate.
+    # Like LocalDraw it writes a PIN, never the location cache: the visit
+    # lasts until the next day-phase boundary, after which Whereabouts
+    # resolves them back to their own city — travelers never accumulate, and
+    # you can meet the same merchant again later at his home. With no
+    # game_time the draw relocates the row directly (clockless legacy mode).
     #
-    # Peaceful townsfolk only (home is a settlement). A lair-homed bandit
+    # Peaceful townsfolk only (anchor is a settlement). A lair-anchored bandit
     # wandering into a tavern is the "bar bandit" — that waits for free-form
     # scene-contextual intent so it can behave right, and is deliberately NOT
     # done here.
@@ -42,26 +43,41 @@ module Harness
         traveler = candidates.sample(random: @rng)
         return nil unless traveler
 
-        traveler.update!(location_id: @location.id)
+        if @game_time
+          Whereabouts.pin!(traveler, @location, @game_time, logger: @logger)
+        else
+          traveler.update!(location_id: @location.id)
+        end
         @logger.info { "[Scene::TravelerPull] #{traveler.name} of #{traveler.home_location&.name} passes through #{@location.name}" }
         traveler
       end
 
-      # Existing settlement residents of ANOTHER city, currently resting at
-      # home, eligible to wander in — minus `exclude_ids`, the cast of the
-      # scene the player just left (anti-cart: nobody tails the player across
-      # cities). Public for testability (the selection is the load-bearing
-      # part; the dice roll is just a gate).
+      # Settlement residents of ANOTHER city, awake and not held at an open
+      # post (long-distance travel is itself time away from the post, so a
+      # root-anchored working trade passing through mid-day is coherent — but
+      # a keeper whose own venue is open right now is behind their bar, and a
+      # pin could not outrank that anyway), not already out on a pinned stay —
+      # minus `exclude_ids`, the cast of the scene the player just left
+      # (anti-cart: nobody tails the player across cities). Public for
+      # testability.
       def candidates
         here_ids = Residents.ancestry_ids(@location)
         scope = ::Npc.where.not(home_location_id: nil)
                      .where.not(home_location_id: here_ids)
-                     .where("characters.location_id = characters.home_location_id") # resting at home
         scope = scope.where.not(id: @exclude_ids) if @exclude_ids.any?
-        scope.to_a.select { |c| Residents.eligible?(c) && Routine.awake?(c, @game_time) }
+        scope.to_a.select { |c|
+          Residents.eligible?(c) && Routine.awake?(c, @game_time) &&
+            !post_open?(c) && !Whereabouts.pinned?(c, @game_time)
+        }
       end
 
       private
+
+      def post_open?(c)
+        return false if @game_time.nil?
+        post = Routine.post_venue(c)
+        !!(post && VenueHours.open?(post, ::Harness::Clock.phase(@game_time)))
+      end
 
       def chance
         @game_time.nil? ? CHANCE : PHASE_CHANCE.fetch(::Harness::Clock.phase(@game_time))

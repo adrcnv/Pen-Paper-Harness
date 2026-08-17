@@ -94,7 +94,7 @@ module Harness
               inciting_beat: inciting_beat,
               llm:           context.llm_grunt
             )
-            apply_deliberation!(char, outcome, sides, state, scene, player.id)
+            apply_deliberation!(char, outcome, sides, state, scene, player.id, context.game_time)
             deliberations << { "character_id" => char.id, "name" => char.name, "decision" => outcome["decision"], "reason" => outcome["reason"] }
           end
 
@@ -208,7 +208,7 @@ module Harness
           { "id" => char.id, "name" => char.name, "side" => side&.dig("name") }
         end
 
-        def apply_deliberation!(char, outcome, sides, state, scene, player_id)
+        def apply_deliberation!(char, outcome, sides, state, scene, player_id, game_time = nil)
           case outcome["decision"]
           when "join_player_side"
             player_side = sides.find { |s| s["members"].include?(player_id) }
@@ -219,8 +219,12 @@ module Harness
           when "watch"
             state.add_watcher(char.id)
           when "flee"
-            flee_destination = scene.location.parent_id
-            char.update!(location_id: flee_destination)
+            # Cache write for the immediate effect; the pin makes the flight
+            # outlast the next Whereabouts refresh (you chased them out the
+            # door — they're at the parent until the phase turns).
+            flee_dest = scene.location.parent
+            char.update!(location_id: flee_dest&.id)
+            ::Harness::Scene::Whereabouts.pin!(char, flee_dest, game_time) if flee_dest
             state.record_evicted_character(char.id)
             scene.snapshot.present_characters.delete(char) if scene.snapshot
           end

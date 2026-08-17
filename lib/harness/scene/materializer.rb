@@ -16,10 +16,10 @@ module Harness
     # worker who "followed me to the tavern and became a barkeep" bug).
     # Bringing an active resident into a scene is the job of the TRANSIENT
     # draws (Scene::LocalDraw intra-city, Scene::TravelerPull cross-city):
-    # they borrow a row (current ← here, home untouched, subrole preserved)
-    # and Scene::Evictor sends them home on exit. The Materializer only
-    # introduces characters who are NEW to play — woken dormants and fresh
-    # spawns — both of which legitimately settle here.
+    # they pin a free resident here for the phase, and Whereabouts resolves
+    # them home when the pin lapses. The Materializer only introduces
+    # characters who are NEW to play — woken dormants and fresh spawns —
+    # both of which legitimately settle here.
     #
     # Class-2 promotion was a third channel; retired with Phase 2. Genesis
     # eager-spawns dormant rows for every named historical, so anyone who
@@ -36,7 +36,8 @@ module Harness
         @max_retries = max_retries
       end
 
-      def materialize(location:, target_count:)
+      def materialize(location:, target_count:, game_time: nil)
+        @game_time     = game_time
         already        = present_already(location)
         candidate_ids  = candidate_pool_location_ids(location)
         slots_to_fill  = target_count - already.size
@@ -177,6 +178,13 @@ module Harness
             )
           end
         end
+
+        # A fresh cast is a SCENE, not a residency: patrons are anchored at
+        # the settlement root, so without a pin the next Whereabouts refresh
+        # would sweep them straight back out of the room they were just cast
+        # into. The pin holds them for the phase; drift-back-in later is the
+        # draws' job.
+        (reused + spawned).each { |c| ::Harness::Scene::Whereabouts.pin!(c, location, @game_time, logger: logger) } if @game_time
 
         logger.info { "[Scene::Materializer] reused=#{reused.size} spawned=#{spawned.size}" }
         { reused: reused, spawned: spawned }

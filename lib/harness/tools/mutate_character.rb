@@ -39,7 +39,7 @@ module Harness
         return { "error" => "no character with id=#{id}" } unless char
 
         result = if COLUMN_FIELDS.include?(field)
-          update_column(char, field, value)
+          update_column(char, field, value, context)
         else
           merge_property(char, field, value)
         end
@@ -52,7 +52,7 @@ module Harness
 
       private
 
-      def update_column(char, field, value)
+      def update_column(char, field, value, context = nil)
         case field
         when "name"
           return { "error" => "name must be a non-empty string" } unless value.is_a?(String) && !value.strip.empty?
@@ -63,8 +63,13 @@ module Harness
         when "location_id"
           return apply(char, field, nil) if value.nil?
           return { "error" => "location_id must be integer or null" } unless value.is_a?(Integer)
-          return { "error" => "no location with id=#{value}" } unless ::Location.exists?(id: value)
-          apply(char, field, value)
+          dest = ::Location.find_by(id: value)
+          return { "error" => "no location with id=#{value}" } unless dest
+          out = apply(char, field, value)
+          # A relocated NPC must outlast the next Whereabouts refresh — the
+          # cache alone would snap them back to their schedule.
+          ::Harness::Scene::Whereabouts.pin!(char, dest, context&.game_time) if char.is_a?(::Npc)
+          out
         when *STAT_FIELDS
           return { "error" => "#{field} must be an integer" } unless value.is_a?(Integer)
           clamped = value.clamp(STAT_RANGE.min, STAT_RANGE.max)

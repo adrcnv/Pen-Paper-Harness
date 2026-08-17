@@ -39,11 +39,11 @@ module Harness
         # Barred doors: a classified venue outside its staffed hours refuses
         # entry (taverns never bar — the always-open refuge). A due-now
         # appointment at the destination opens the door: the keeper expects
-        # you (same window AppointmentPin uses).
+        # you (same window Whereabouts' meet tier uses to place them).
         if context.game_time
           phase = ::Harness::Clock.phase(context.game_time)
           if ::Harness::Scene::VenueHours.barred?(dest, phase) &&
-             !::Harness::Scene::AppointmentPin.due_here?(dest, context.game_time)
+             !::Harness::Scene::Whereabouts.due_here?(dest, context.game_time)
             return { "refused" => "closed",
                      "error"   => "#{dest.name} is shut and barred at this hour" }
           end

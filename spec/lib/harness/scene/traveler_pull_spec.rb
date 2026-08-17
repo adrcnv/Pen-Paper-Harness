@@ -30,9 +30,15 @@ RSpec.describe Harness::Scene::TravelerPull do
       expect(cands).not_to include(local, local_sub)
     end
 
-    it "excludes a resident who isn't currently at home (already out / displaced)" do
-      away = npc(location_id: mirehold.id, home_location_id: osmere.id) # home Osmere, but here already
-      expect(described_class.new(mirehold).candidates).not_to include(away)
+    it "excludes a resident already out on a pinned stay (Whereabouts holds them elsewhere)" do
+      pinned = npc(location_id: osmere.id, home_location_id: osmere.id,
+                   properties: { "pin" => { "location_id" => osmere.id, "until" => 20 * 60 } })
+      expect(described_class.new(mirehold, game_time: 19 * 60).candidates).not_to include(pinned)
+    end
+
+    it "includes a resident regardless of where their cache row sits (pool is schedule, not presence)" do
+      away = npc(location_id: mirehold.id, home_location_id: osmere.id)
+      expect(described_class.new(mirehold).candidates).to include(away)
     end
 
     it "excludes homeless, lair-homed, dormant, followers, and the dead" do

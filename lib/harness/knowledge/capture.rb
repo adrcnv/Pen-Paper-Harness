@@ -232,7 +232,7 @@ module Harness
       end
 
       # Meeting place: a spoken place naming an EXISTING location beats the
-      # struck-location proxy (AppointmentPin keys on this). Link-only —
+      # struck-location proxy (Whereabouts' meet tier keys on this). Link-only —
       # deals never mint places; unknown or absent → where the deal was struck.
       def deal_location_id(where)
         nm = where.to_s.strip
@@ -575,7 +575,11 @@ module Harness
         end
         ids = settlement_character_scope
         return nil if ids.nil?
-        ::Character.where(location_id: ids).find { |c| name_match?(c.name, name) }
+        # Anchor OR cache: a resident belongs to the settlement wherever
+        # their presence cache happens to sit (presence is schedule-derived;
+        # the anchor is the durable membership fact).
+        ::Character.where("location_id IN (:ids) OR home_location_id IN (:ids)", ids: ids)
+                   .find { |c| name_match?(c.name, name) }
       end
 
       # Character rows anywhere in the scene's root-settlement subtree.

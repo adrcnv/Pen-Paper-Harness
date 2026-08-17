@@ -123,6 +123,10 @@ module Harness
             context.scene_dirty = true
           else
             actor.update!(location_id: parent_id)
+            # An escaping NPC stays fled past the next Whereabouts refresh.
+            if actor.is_a?(::Npc) && (dest = scene.location&.parent)
+              ::Harness::Scene::Whereabouts.pin!(actor, dest, context.game_time)
+            end
             scene.snapshot.present_characters.delete(actor) if scene.snapshot
             context.scene_dirty = true if actor.is_a?(::Player)
           end

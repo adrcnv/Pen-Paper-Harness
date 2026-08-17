@@ -86,7 +86,7 @@ module Harness
         # the player. Anything else either doesn't exist yet (would need
         # eager Hatchery, which catch-up doesn't do) or belongs elsewhere
         # (cross-location identity collision risk).
-        allowed_names = ::Npc.where(location_id: location.id)
+        allowed_names = ::Npc.where("location_id = :id OR home_location_id = :id", id: location.id)
                              .reject { |c|
                                props = c.properties
                                next true unless props.is_a?(Hash)
@@ -164,7 +164,8 @@ module Harness
                   .reject(&:empty?)
                   .uniq
         return {} if names.empty?
-        ::Npc.where(location_id: location.id, name: names)
+        ::Npc.where("location_id = :id OR home_location_id = :id", id: location.id)
+             .where(name: names)
              .each_with_object({}) { |npc, h| h[npc.name] = npc }
       end
 
@@ -239,7 +240,7 @@ module Harness
       #   this filter, CatchUp would happily generate events featuring
       #   characters who structurally shouldn't be in play yet.
       def recent_actors_for(location)
-        skip_ids = ::Npc.where(location_id: location.id)
+        skip_ids = ::Npc.where("location_id = :id OR home_location_id = :id", id: location.id)
                         .select { |c|
                           props = c.properties
                           next false unless props.is_a?(Hash)
@@ -248,7 +249,7 @@ module Harness
                         .map(&:id)
         scope = ::EventParticipant.joins(:event, :character)
                                   .where(events: { location_id: location.id })
-                                  .where(characters: { location_id: location.id })
+                                  .where("characters.location_id = :id OR characters.home_location_id = :id", id: location.id)
         scope = scope.where.not(characters: { id: skip_ids }) if skip_ids.any?
         scope.group("characters.name")
              .order(Arel.sql("COUNT(*) DESC"))

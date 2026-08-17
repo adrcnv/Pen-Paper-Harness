@@ -139,7 +139,10 @@ module Harness
       # more distinct name.
       def find_name_collision(proposed_name, location)
         ancestry_ids = location_ancestry_ids(location)
-        ::Npc.where(location_id: ancestry_ids).find { |c| name_match?(c.name, proposed_name) }
+        # Anchor OR cache — a resident whose presence cache sits elsewhere
+        # (out on a pinned stay) still holds their name in this settlement.
+        ::Npc.where("location_id IN (:ids) OR home_location_id IN (:ids)", ids: ancestry_ids)
+             .find { |c| name_match?(c.name, proposed_name) }
       end
 
       def location_ancestry_ids(location)

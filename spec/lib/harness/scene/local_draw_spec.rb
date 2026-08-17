@@ -39,9 +39,15 @@ RSpec.describe Harness::Scene::LocalDraw do
       expect(described_class.new(tavern).candidates).not_to include(outsider)
     end
 
-    it "excludes a resident who isn't currently at home (already out / displaced)" do
-      away = npc(location_id: tavern.id, home_location_id: mirehold.id) # home is the city, but standing in the tavern already
-      expect(described_class.new(tavern).candidates).not_to include(away)
+    it "excludes a resident already out on a pinned stay (Whereabouts holds them elsewhere)" do
+      pinned = npc(location_id: smithy.id, home_location_id: mirehold.id,
+                   properties: { "pin" => { "location_id" => smithy.id, "until" => 20 * 60 } })
+      expect(described_class.new(tavern, game_time: 19 * 60).candidates).not_to include(pinned)
+    end
+
+    it "includes a resident regardless of where their cache row sits (pool is schedule, not presence)" do
+      away = npc(location_id: smithy.id, home_location_id: mirehold.id)
+      expect(described_class.new(tavern).candidates).to include(away)
     end
 
     it "excludes homeless, dormant, followers, and the dead" do

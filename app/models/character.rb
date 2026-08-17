@@ -17,11 +17,16 @@ class Character < ApplicationRecord
   # commoners and level-1 NPCs); [...] = has these.
   serialize :abilities, coder: JSON
 
+  # WHERE THEY ARE NOW — for living NPCs this is a CACHE maintained by
+  # Scene::Whereabouts (presence is schedule-derived; never treat this
+  # column as truth outside the active scene). Authoritative only for the
+  # Player, corpses (the body stays where it fell), and dormant historicals
+  # (their offstage shelf address).
   belongs_to :location, optional: true
-  # Where this character BELONGS (settlement residence), distinct from
-  # `location` (where they are NOW). Nil for hostiles / wilderness creatures
-  # and not-yet-engaged transients — see AddHomeLocationToCharacters and
-  # Scene::Evictor. Settled townsfolk rest with location == home_location.
+  # The ANCHOR — where this character BELONGS: settlement root (ordinary
+  # citizen, housing is abstract), venue sublocation (their post), a
+  # wilderness lair (they live there), or nil (transient scene prop, culled
+  # or adopted at scene exit). Scene::Whereabouts derives presence from it.
   belongs_to :home_location, class_name: "Location", optional: true
 
   has_many :event_participants, foreign_key: :character_id, dependent: :nullify
