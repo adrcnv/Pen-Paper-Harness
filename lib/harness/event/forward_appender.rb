@@ -64,11 +64,10 @@ module Harness
         end
 
         @participants.each_with_index do |p, i|
-          # Post-Phase-2: every participant is a class-4 Character row.
-          # Class-2 (actor_name string) participants are retired —
+          # Every participant must carry a :character (an existing row) —
           # callers must Hatchery their named participants up front.
           if p[:character].blank?
-            @errors << "participant[#{i}] must have a :character (post-Phase-2: class-2 actor_name strings retired)"
+            @errors << "participant[#{i}] must carry a :character (an existing row)"
           end
           @errors << "participant[#{i}] missing :role" if p[:role].to_s.strip.empty?
         end
@@ -76,8 +75,7 @@ module Harness
 
       # Returns [Location_or_nil, details_hash]. A String location resolves to
       # an existing row by name when one is found; otherwise the name is kept
-      # as prose in details["location_name"] and location_id stays nil. This
-      # is the location-side equivalent of class-2 actor_name participants —
+      # as prose in details["location_name"] and location_id stays nil —
       # named-but-unmaterialized places live as prose until narrative gravity
       # demands a row (player wants to go there, character claims to be from
       # there in a scene the player visits). Auto-stubs were retired.

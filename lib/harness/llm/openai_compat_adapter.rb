@@ -22,15 +22,14 @@ module Harness
     # Reasoning mode (Qwen 3.6): the model emits a chain-of-thought trace in
     # `reasoning_content`, final answer in `content`. Both default OFF.
     #
-    # Why off for the reasoning loop: at local-inference output speeds
+    # Why off for tool-calling turns: at local-inference output speeds
     # (~35 tok/s), thinking content dominates per-call latency — a single
     # tool call routinely produces 1500-8000 tokens of `<think>` before
     # ~50-300 tokens of actual tool args. Worst case the model spins until
     # it hits max_tokens with no tool call emitted (a 4-minute no-op turn).
-    # The reasoning prompt's four-pattern structural guidance
-    # (CREATE/SHIFT/DEFLECT/RESOLVE) gives the model enough planning surface
-    # without `<think>`. Flip back to true (constructor kwarg) if tool
-    # selection quality degrades visibly in play.
+    # planner.txt + the runner prompts give the model enough planning
+    # surface without `<think>`. Flip back to true (constructor kwarg) if
+    # tool selection quality degrades visibly in play.
     #
     # Why off for complete: narration and materializers want direct output;
     # no thinking budget needed.

@@ -80,7 +80,7 @@ module Harness
 
       # --- per-tool renderers -------------------------------------------------
 
-      # Same authoritative format the narrator-era composer used; the roll is
+      # The bracket renders from the resolve tool result; the roll is
       # Ruby's truth, never prose.
       def bracket(tc)
         r = tc["result"]

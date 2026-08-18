@@ -3,7 +3,7 @@ require "set"
 
 module Harness
   module Genesis
-    # Hydrator for Genesis output (post-Phase-3).
+    # Hydrator for Genesis output.
     #
     # The LLM no longer picks character names. It declares a `characters`
     # array of `{id, subrole}` entries — each id is a cluster-local slug

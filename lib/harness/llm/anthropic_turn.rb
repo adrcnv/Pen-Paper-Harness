@@ -61,7 +61,7 @@ module Harness
         @done && @pending_tool_uses.empty? && @current_tool_use.nil?
       end
 
-      # Text blocks the model emitted across the reasoning loop, in order.
+      # Text blocks the model emitted across the tool-calling turn, in order.
       # Useful for transcript logging only.
       def final_text
         @assistant_texts.join("\n")

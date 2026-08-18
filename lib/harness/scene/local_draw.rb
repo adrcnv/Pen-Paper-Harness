@@ -9,8 +9,8 @@ module Harness
     #
     # The draw writes a PIN (a transient stay Whereabouts honors until the
     # next day-phase boundary) — never the location cache. Whereabouts.refresh!
-    # places the pinned patron when the scene assembles, and the pin's expiry
-    # is what sends them home (or to their shift): no eviction, no bookkeeping.
+    # places the pinned patron when the scene assembles; the pin lapses at the
+    # phase boundary and Whereabouts resolves them onward (home or shift).
     # The candidate pool is defined by SCHEDULE, never by stored presence —
     # an off-shift keeper is drawable to the pub no matter where their row sat.
     #

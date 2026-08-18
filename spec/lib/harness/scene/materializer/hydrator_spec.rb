@@ -22,7 +22,7 @@ RSpec.describe Harness::Scene::Materializer::Hydrator do
       )
       expect(out["reuse"].first).to include("character_id" => 17, "subrole" => "bandit")
       expect(out["spawn"].first).to include("subrole" => "fisher")
-      # Post-Phase-3: names are mechanical; hydrator does not emit a name field.
+      # Names are mechanical; hydrator does not emit a name field.
       expect(out["spawn"].first).not_to have_key("name")
     end
 

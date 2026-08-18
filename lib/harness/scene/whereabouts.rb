@@ -29,8 +29,8 @@ module Harness
     # they live there, nil = transient scene prop (kept where cached until
     # settle_transients! culls or adopts them at scene exit).
     #
-    # No game_time (tests, headless) = no schedule: the cache is truth and
-    # every method degrades to legacy stored-presence behavior.
+    # No game_time (tests, headless) = no schedule: clockless mode — the
+    # cache is truth for every method.
     #
     # WORKERS GET NO PINS: being at your post is derived (tier 3); a pin for
     # it would be redundant stored state. Pins exist only for presence the
@@ -162,8 +162,8 @@ module Harness
 
       # Scene-exit lifecycle for transient props (nil anchor): engaged ones
       # (in any event) earn an anchor and go there; pure flavor evaporates.
-      # This is the Evictor's surviving duty — load-bearing, because nothing
-      # else ever removes a homeless row. Anchored cast needs NO action here:
+      # Load-bearing, because nothing else ever removes a homeless row.
+      # Anchored cast needs NO action here:
       # the resolver owns them, and their stale cache is corrected wherever
       # someone next looks.
       def settle_transients!(cast, location, logger: Rails.logger)

@@ -36,7 +36,7 @@ RSpec.describe Harness::Genesis::Generator do
     }
   end
 
-  # Post-Phase-3: cluster declares characters[] with mechanical-id slugs;
+  # The cluster declares characters[] with mechanical-id slugs;
   # participants reference by actor_id, names are assigned by the engine.
   def well_formed_cluster_json(game_time_floor: 100)
     {
@@ -110,7 +110,7 @@ RSpec.describe Harness::Genesis::Generator do
     expect(k.map(&:game_time)).to all(eq(1000)) # capture stamp, not the event's past date
   end
 
-  it "eager-spawns one dormant class-4 row per characters[] entry, with a mechanical name" do
+  it "eager-spawns one dormant Character row per characters[] entry, with a mechanical name" do
     llm = stub_call_returning(well_formed_cluster_json, consistent_validator_json)
 
     expect {

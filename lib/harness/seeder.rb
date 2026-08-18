@@ -27,8 +27,8 @@ module Harness
         locations[name] = location(name, description: description, faction: kingdom, **extras)
       end
 
-      # The Path model was retired in favor of cursor-based travel
-      # (any coords → any coords). Frame skeletons may still emit a "paths"
+      # Travel is cursor-based (any coords → any coords), so there are no
+      # edge rows to seed. Frame skeletons may still emit a "paths"
       # array — we ignore it.
       { factions: factions, locations: locations }
     end
@@ -129,7 +129,7 @@ module Harness
       ).tap do |ev|
         participants.each do |who, role|
           unless who.is_a?(::Character)
-            raise ArgumentError, "post-Phase-2 seeder requires Character participants (got #{who.inspect}); class-2 actor_name strings retired"
+            raise ArgumentError, "seeder events require Character participants (got #{who.inspect}) — name strings are not accepted"
           end
           ::EventParticipant.create!(event: ev, character: who, role: role.to_s)
         end

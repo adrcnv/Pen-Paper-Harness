@@ -49,7 +49,7 @@ module Harness
 
         log_entry(scene, state)
 
-        # Pre-flight: the reasoning loop may have already ended combat via
+        # Pre-flight: Combat::PlayerTurn may have already ended combat via
         # the player's actions (killed the last enemy, escaped, died). Catch
         # it before we narrate a vacuous round.
         end_reason = ::Harness::Combat::Termination.evaluate(scene)
@@ -144,7 +144,7 @@ module Harness
 
       # Walks initiative slots from state.initiative_index. Returns:
       #   true  — yielded at a fresh player slot. State is left at that slot;
-      #           the next turn's reasoning loop will exercise it, then a
+      #           the next turn's Combat::PlayerTurn will exercise it, then a
       #           subsequent run_combat call resumes after.
       #   false — round complete (initiative_index has advanced past end of
       #           initiative). Caller runs end-of-round narration + term check.
@@ -197,10 +197,10 @@ module Harness
       # Player slot policy:
       #   - If the player has any token spent (acted or moved) OR no adapter
       #     is wired (test path), close the slot and advance.
-      #   - Otherwise yield, so the next player turn's reasoning loop can
+      #   - Otherwise yield, so the next turn's Combat::PlayerTurn can
       #     exercise it.
-      # This implements the "one player input per combat slot" rule. The
-      # reasoning loop's combat-mode tools mark tokens; if nothing marked
+      # This implements the "one player input per combat slot" rule.
+      # Combat::PlayerTurn's slot tools mark tokens; if nothing marked
       # them, the player skipped (queried only, or said something non-combat)
       # — in production that means we wait for fresh input, in tests we
       # auto-close so the loop terminates.

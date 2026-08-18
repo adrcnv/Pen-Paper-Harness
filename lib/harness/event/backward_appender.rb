@@ -16,16 +16,15 @@ module Harness
     # produced malformed JSON; one fix-attempt is cheap.
     #
     # Two callers (both wired):
-    #   1. Reasoning-loop narrative shift via propose_event tool (N=1)
+    #   1. Runner narrative shift (conversation/worldbuilding) via propose_event (N=1)
     #   2. Genesis::Generator at propose_location wilderness_leaf (N=1..many)
     #
     # Floor enforcement: each event in the cluster must have game_time ≥ each
     # of its character participants' earliest existing event game_time.
-    # Post-Phase-2: ALL participants are class-4 (Genesis eager-spawns
-    # dormant rows for its named historicals; narrative-shift always
-    # carried class-4). For genesis-spawned rows the character has zero
-    # prior events so the floor is unbounded — the backstory cluster
-    # itself sets it.
+    # ALL participants are real Character rows (Genesis eager-spawns
+    # dormant rows for its named historicals). For genesis-spawned rows
+    # the character has zero prior events so the floor is unbounded —
+    # the backstory cluster itself sets it.
     #
     # Idempotency: not enforced. Identical successful payloads create multiple
     # rows. LLM is responsible for not double-calling.
@@ -127,7 +126,7 @@ module Harness
       end
 
       # After-set spans the cluster's earliest game_time, narrowed structurally
-      # to the union of all event locations + all class-4 participants. For
+      # to the union of all event locations + all participant characters. For
       # single-location clusters (genesis: all events at the new location;
       # narrative-shift: one event at the player's scene) this collapses to
       # the existing PreFilter::After behavior. Cross-location clusters use

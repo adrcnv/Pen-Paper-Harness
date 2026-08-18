@@ -133,8 +133,8 @@ module Harness
 
       # Name collision detection across the location's ancestry. Catches both
       # exact matches ("Marta" vs "Marta") and first-token overlaps ("Marta"
-      # vs "Marta of the Moss" — the canonical Genesis-vs-propose collision
-      # the class-2 retirement was supposed to fix). LLM gets the existing
+      # vs "Marta of the Moss" — the canonical Genesis-vs-propose
+      # collision). LLM gets the existing
       # character back so it can decide: relocate the existing one, or pick a
       # more distinct name.
       def find_name_collision(proposed_name, location)

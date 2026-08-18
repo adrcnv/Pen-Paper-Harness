@@ -9,8 +9,7 @@ module Harness
     #
     # Output is a Map struct of City + Kingdom + the Geography they sit on. No
     # DB writes, no LLM bindings. Pass 2 layers naming + descriptions on top.
-    # Inter-city connectivity used to be Path edges between cities; the Path
-    # model was retired in favor of cursor-based travel (any coords → any coords).
+    # There are no inter-city edges — travel is coords → coords.
     module Generator
       DEFAULT_SIZE          = 100
       DEFAULT_CITY_COUNT    = 15

@@ -11,7 +11,7 @@ WHAT TO INVENT
 - ZERO events is the right answer for short gaps or quiet places. Don't pad. A sleepy hamlet with a 2-day gap probably had nothing memorable happen.
 
 WHAT NOT TO INVENT
-- DO NOT invent new named participants. Every participant must appear by name in RECENT_ACTORS. Post-Phase-2 catch-up cannot create character rows; fresh names will be rejected. If you want to mention "a passing traveler" or "two strangers had words," put them in narrative prose only with NO participant entry.
+- DO NOT invent new named participants. Every participant must appear by name in RECENT_ACTORS. Catch-up cannot create character rows; fresh names will be rejected. If you want to mention "a passing traveler" or "two strangers had words," put them in narrative prose only with NO participant entry.
 - Do NOT include unnamed groups ("the shepherds", "two travelers") as participants — put them in narrative prose only.
 - Catch-up should NOT meaningfully change the lives of major existing characters. Small interactions are fine; a known barkeep restocking, a regular dropping in. Don't kill, exile, or upend anyone — leave that for play.
 - No regional/kingdom/world events. Catch-up is local. If a war moved or a king died, that's the regional spine, not catch-up.

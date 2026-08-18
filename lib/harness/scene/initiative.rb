@@ -147,9 +147,8 @@ module Harness
       end
 
       # The SELECTOR call: who moves, and why — never what they say. Live
-      # mood (disposition-laddered) and agenda ride for every candidate; the
-      # taking-stock pass keeps them current, so the old spoken-strip rule
-      # is gone here too.
+      # mood (disposition-laddered) and agenda ride for every candidate;
+      # the taking-stock pass keeps them current.
       def decide(candidates, player)
         present = candidates.first(MAX_PRESENT).map do |c|
           props = c.properties.is_a?(::Hash) ? c.properties : {}

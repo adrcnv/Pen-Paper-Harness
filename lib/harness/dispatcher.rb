@@ -37,10 +37,9 @@ module Harness
       end
 
       steps = Array(res["plan"]).map { |s|
-        # No label normalization: the grammar's enum can't emit retired labels
-        # (the old dice/agentic remap died with them), and anything else — the
-        # unconstrained-fallback path only — degrades to inspection in the
-        # executor via built?.
+        # No label normalization: the grammar's enum can't emit unknown labels,
+        # and anything else — the unconstrained-fallback path only — degrades
+        # to inspection in the executor via built?.
         Step.new(runner: s["runner"], intent: s["reason"], args: s["args"] || {})
       }
       plan = Plan.new(

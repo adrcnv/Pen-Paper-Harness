@@ -1,6 +1,6 @@
 module Harness
   module NarrativeShift
-    # Increment-2 social web — when a claimed person is first present in a scene
+    # Social web — when a claimed person is first present in a scene
     # with other NPCs, make a few of those NPCs KNOW them, so "ask around at the
     # relay" pays off (the keeper points the player to Harek instead of shrugging).
     #

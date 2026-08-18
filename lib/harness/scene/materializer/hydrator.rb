@@ -83,7 +83,7 @@ module Harness
         end
 
         def validate_spawn_entries
-          # Post-Phase-3: names are mechanical. `name` field is silently
+          # Names are mechanical. `name` field is silently
           # dropped from spawn entries; only subrole + properties matter for
           # the LLM. The committer (Materializer#apply) assigns names via
           # Harness::Naming.unique_for at the spawn location.

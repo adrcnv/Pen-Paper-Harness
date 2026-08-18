@@ -4,8 +4,8 @@ module Harness
     # separate classifier anymore — it's a projection OF Worldgen::Terrain, so
     # the two can never disagree. The fine terrain taxonomy (10 land types) is
     # the single source of truth; `coarse` collapses it to the binary that the
-    # cheaper consumers want: travel-cost fallback, quest tags/debt, and the
-    # lowland/highland context fed to genesis / catch-up / quest / naming
+    # cheaper consumers want: travel-cost fallback, and the
+    # lowland/highland context fed to genesis / catch-up / naming
     # prompts (and the optional scenario `requires: {biome: ...}` gate).
     #
     # (Historically Biome.at sampled an INDEPENDENT noise channel unrelated to

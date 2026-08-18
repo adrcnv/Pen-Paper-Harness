@@ -42,7 +42,7 @@
 - id: new_named_actor
   weight: 3
   prompt_seed: |
-    SCENARIO: One of the events introduces a fresh class-2 named actor
+    SCENARIO: One of the events introduces a fresh never-materialized named actor
     who arrived during the gap and is still around. Give them a name, a
     rough purpose for being here, and one specific behavior locals have
     noticed. They become a candidate for promotion if the player engages

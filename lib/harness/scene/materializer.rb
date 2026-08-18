@@ -1,6 +1,6 @@
 module Harness
   module Scene
-    # Fills a sublocation with characters, via two mechanisms (post-Phase-2):
+    # Fills a sublocation with characters, via two mechanisms:
     #
     # 1. Wake — a DORMANT historical from Genesis (a named figure with rich
     #    event history who hasn't surfaced in play yet) gets woken into this
@@ -21,9 +21,8 @@ module Harness
     # characters who are NEW to play — woken dormants and fresh spawns —
     # both of which legitimately settle here.
     #
-    # Class-2 promotion was a third channel; retired with Phase 2. Genesis
-    # eager-spawns dormant rows for every named historical, so anyone who
-    # could plausibly be woken already has a row.
+    # Genesis eager-spawns dormant rows for every named historical, so anyone
+    # who could plausibly be woken already has a row.
     #
     # Preference order: wake-dormant > spawn. The LLM judges both in a
     # single call.
@@ -192,11 +191,12 @@ module Harness
 
       # Where an LLM-cast spawn belongs. At a MANIFEST venue (stub carries
       # properties.trade) the cast are PATRONS — townsfolk homed at the
-      # settlement root, drawn back by schedule, evicted home on exit;
-      # staffing there is the StaffSeeder's mechanical invariant, never a
-      # casting outcome. Elsewhere the old rule: residences (settlement
-      # dwellers, lair occupants) live where they're spawned; social
-      # waypoints / open wild stay homeless (evicted/culled on exit).
+      # settlement root, pinned for the phase; the pin lapses and Whereabouts
+      # resolves them to their anchor. Staffing there is the StaffSeeder's
+      # mechanical invariant, never a casting outcome. Elsewhere: residences
+      # (settlement dwellers, lair occupants) live where they're spawned;
+      # social waypoints / open wild stay homeless (settle_transients! at
+      # scene exit anchors the engaged and destroys pure flavor).
       def spawn_home_for(location)
         props = location.properties.is_a?(Hash) ? location.properties : {}
         return location.parent_id if props["trade"].present? && location.parent_id

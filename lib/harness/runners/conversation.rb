@@ -596,11 +596,10 @@ module Harness
           .map { |e| event_text(e, exclude_id: char["id"]) }
           .reject(&:empty?)
         props = ::Npc.find_by(id: char["id"])&.properties
-        # Mood and agenda ride EVERY turn now — the post-emit reevaluation
+        # Mood and agenda ride EVERY turn — the post-emit reevaluation
         # keeps them current, so they can't yank a spoken NPC back to a stale
-        # seed (the reason they used to be dropped at mark_spoken). Mood leads
-        # with the disposition-ladder word: the standing temperature toward
-        # the player.
+        # seed. Mood leads with the disposition-ladder word: the standing
+        # temperature toward the player.
         {
           "id"          => char["id"],
           "name"        => char["name"],
@@ -837,10 +836,9 @@ module Harness
       # reuse), plus a tail quoting what they just said and asking what they
       # claimed. The judgment is made WITH the speaker's recall/roster/thread
       # in view — a statement is only a NEW claim relative to what the speaker
-      # could see, which the old disembodied observer never could. Extraction
-      # lands in Knowledge::Capture.ingest (routing, realizers, dedup,
-      # revision — unchanged). Speaker attribution is structural, not
-      # model-reported. Non-fatal.
+      # could see. Extraction lands in Knowledge::Capture.ingest (routing,
+      # realizers, dedup, revision — unchanged). Speaker attribution is
+      # structural, not model-reported. Non-fatal.
       # Grammar contract for the voicing emit. required = thought + speak
       # ONLY: decliners stop after "speak": false exactly as the prompt
       # instructs, and speak-true-with-dialogue-absent stays GRAMMATICAL on

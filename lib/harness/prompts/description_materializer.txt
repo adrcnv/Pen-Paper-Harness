@@ -1,9 +1,6 @@
 You are generating a personality and a physical appearance for a character that has already been given stats and a level. Your output is the LAST step of character creation — everything upstream (subrole, scenario, the prose that established them, their level, their stats) is now fixed and feeds into what you write.
 
-What you produce becomes the character's stable disposition and visible presentation. It will be read by:
-- the InternalState materializer (every scene the character is in, to color their mood)
-- the reasoning loop (when the player asks about them or they push an agenda)
-- belief generation (when other characters form impressions of them)
+What you produce becomes the character's stable disposition and visible presentation. It is read every scene the character is in (to color their mood), when the player asks about them, and when other characters form impressions of them.
 
 The two fields pull in opposite directions on purpose: PERSONALITY is a compact handle (a few trait words), APPEARANCE is a concrete observed sentence. The interpretive heavy lifting is done elsewhere — `properties.lens` is what actually colors how a character reads a situation — so personality does NOT need to be a paragraph; a tight trait list is enough for downstream readers and stays out of the lens's way.
 

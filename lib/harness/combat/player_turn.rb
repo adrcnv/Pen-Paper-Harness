@@ -12,7 +12,7 @@ module Harness
       PROMPT_PATH = ::File.expand_path("../prompts/combat_player_turn.txt", __dir__)
 
       # Returns [call, result] when an action executed (caller records it on
-      # the transcript, same shape as a reasoning tool call), or nil when the
+      # the transcript, same shape as any runner tool call), or nil when the
       # input wasn't a combat action / nothing could run.
       def self.run(player:, input:, scene:, adapter:, context:, logger: ::Rails.logger)
         return nil unless adapter && player

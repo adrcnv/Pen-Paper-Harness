@@ -20,7 +20,7 @@ Decision rules (priority order):
 1. **In melee with someone hostile?** Attack them with your best close-range damage ability. Don't disengage to chase a different target — finish what you started.
 2. **A hostile is at near range and you have a near-or-far ranged ability?** Use it. Don't move to engage if you can hit from here.
 3. **No reachable target?** Move toward the closest hostile (`move_to position=engaged target_id=<them>` if they're at near, or `move_to position=near` if they're far).
-4. **You're bloodied (HP < 1/3 max), outnumbered (more hostiles standing than allies), AND no allies adjacent?** Consider escape. Otherwise stand and fight — cowardice is the exception, not the rule.
+4. **You're bloodied (HP < 1/3 max), outnumbered (more hostiles standing than allies), AND no allies engaged or near?** Consider escape. Otherwise stand and fight — cowardice is the exception, not the rule.
 5. **Out of useful actions?** end_turn.
 
 The brief above is the entire scene state — every id, hp, position, engagement, and ability you need is in it. Do NOT look for tools to query or inspect; you have exactly ONE tool call to spend, and it must be one of the four actions above. Do not attempt to move other characters or change anyone's state beyond what your one action does.

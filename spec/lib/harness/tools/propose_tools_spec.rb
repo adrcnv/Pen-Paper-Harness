@@ -101,7 +101,7 @@ RSpec.describe "Harness::Tools propose family" do
       expect(result["error"]).to match(/role must be/)
     end
 
-    describe "post-Phase-2: class-2 actor_name retired" do
+    describe "actor_name participants are rejected" do
       it "rejects participants with actor_name strings, pointing to propose_character" do
         result = described_class.new.call(
           {
@@ -112,7 +112,7 @@ RSpec.describe "Harness::Tools propose family" do
           },
           context
         )
-        expect(result["error"]).to match(/actor_name is no longer supported/)
+        expect(result["error"]).to match(/actor_name is not supported/)
         expect(result["error"]).to match(/propose_character/)
       end
 

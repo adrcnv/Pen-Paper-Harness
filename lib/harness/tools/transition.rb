@@ -84,7 +84,7 @@ module Harness
       # coercion in SQLite is fragile; the candidate pool is at most a
       # handful per scene so the cost is negligible. The flag is set by
       # the LLM via mutate_character at recruitment and cleared on
-      # dismissal — see the FOLLOWERS section in the reasoning prompt.
+      # dismissal.
       def followers_at(loc)
         ::Npc.where(location_id: loc.id).select { |c|
           c.properties.is_a?(Hash) && c.properties["following_player"] == true

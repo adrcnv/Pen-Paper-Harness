@@ -25,8 +25,8 @@ module Harness
     # - Placement: if the NPC named a real destination, create the person THERE
     #   (active) so they're present when the player travels over. Otherwise
     #   UNPLACED + dormant — grounded and queryable, crowding no scene. The
-    #   social web (who-else-knows-them at the destination) is deferred to that
-    #   scene's entry passes (increment 2).
+    #   social web (who-else-knows-them at the destination) is handled at
+    #   scene entry by SocialWeb.
     # - The spawn runs the full Hatchery materialize (stats + description) — that
     #   IS the "mini genesis". Same cost profile as propose_character.
     module Realizer

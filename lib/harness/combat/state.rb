@@ -2,8 +2,7 @@ module Harness
   module Combat
     # In-memory state for an active combat. Lives on Scene::Active#combat,
     # nil when combat is not running. Wiped at end_combat or scene transition.
-    # Not persisted — process restart = combat reset (acceptable MVP weakness;
-    # see COMBAT_DESIGN.md).
+    # Not persisted — process restart = combat reset (acceptable MVP weakness).
     #
     # Three position buckets (engaged / near / far). Engagement is symmetric:
     # engage!(a, b) sets both sides of engaged_with and both positions to

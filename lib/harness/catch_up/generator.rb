@@ -16,13 +16,13 @@ module Harness
     # Differs from Genesis in three ways:
     #   - Uses ForwardAppender (catch-up events have nothing later to contradict
     #     in their own time window — by definition the gap had no events here).
-    #   - Participants are RESTRICTED to existing class-4 names at this
-    #     location. Post-Phase-2, no class-2 fallback exists — and catch-up
-    #     does NOT eager-spawn fresh characters the way Genesis does. The
-    #     LLM picks from the existing local cast or produces zero events.
-    #     Names of characters at OTHER locations are explicitly forbidden.
-    #   - Scope = "local" exclusively. Regional+ during the gap is the spine
-    #     sim's job; catch-up stays at the place's own scale.
+    #   - Participants are RESTRICTED to existing Character rows at this
+    #     location — catch-up does NOT eager-spawn fresh characters the
+    #     way Genesis does. The LLM picks from the existing local cast or
+    #     produces zero events. Names of characters at OTHER locations are
+    #     explicitly forbidden.
+    #   - Scope = "local" exclusively. Regional+ is out of scope here;
+    #     catch-up stays at the place's own scale.
     #
     # Failure handling:
     #   - LLM unavailable    → caller skips (we never get called)
@@ -81,9 +81,9 @@ module Harness
         recent = recent_events_for(location)
         logger.info { "[CatchUp::Generator] location=#{location.name} floor=#{floor} current=#{current_game_time} gap=#{gap} recent_actors=#{actors.size} recent_events=#{recent.size}" }
 
-        # Post-Phase-2 invariant: catch-up may ONLY reference characters who
-        # are class-4 rows AT this location AND not dormant AND not following
-        # the player. Anything else either doesn't exist yet (would need
+        # Invariant: catch-up may ONLY reference characters with existing
+        # rows AT this location AND not dormant AND not following the
+        # player. Anything else either doesn't exist yet (would need
         # eager Hatchery, which catch-up doesn't do) or belongs elsewhere
         # (cross-location identity collision risk).
         allowed_names = ::Npc.where("location_id = :id OR home_location_id = :id", id: location.id)
@@ -130,7 +130,7 @@ module Harness
             # have already rejected — but defensive: skip the event rather
             # than crash on an invalid participant set.
             if participants.size != e["participants"].size
-              logger.warn { "[CatchUp::Generator] dropping event at gt=#{e['game_time']} — participant name(s) didn't resolve to class-4 rows at this location" }
+              logger.warn { "[CatchUp::Generator] dropping event at gt=#{e['game_time']} — participant name(s) didn't resolve to character rows at this location" }
               next
             end
 
@@ -152,7 +152,7 @@ module Harness
         committed
       end
 
-      # Look up the class-4 rows for every name in the cluster. Hydrator
+      # Look up the Character rows for every name in the cluster. Hydrator
       # has already rejected anything outside the allowed_names set, so
       # this should resolve every name; the commit step's
       # participant-count check catches any edge cases anyway.

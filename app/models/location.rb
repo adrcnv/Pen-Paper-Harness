@@ -16,8 +16,8 @@ class Location < ApplicationRecord
 
   # A settlement is anywhere townsfolk live — cities and their sublocations.
   # The only non-settlement is a wilderness_leaf (a road, a forest, an
-  # encounter site). Used by eviction to pick a town to rehome a stray
-  # traveler to (lairs are never rehome targets).
+  # encounter site). Used by Whereabouts.settle_transients! to pick a town
+  # to anchor a stray traveler to (lairs are never anchor targets).
   def settlement?
     (properties || {})["kind"] != "wilderness_leaf"
   end
@@ -32,7 +32,8 @@ class Location < ApplicationRecord
 
   # Somewhere a freshly-spawned NPC takes as home (home == here): any
   # settlement, or a wilderness lair. A social waypoint or open wild is NOT a
-  # residence — NPCs spawned there are transients (homeless → evicted/culled).
+  # residence — NPCs spawned there are transients (anchored if event-engaged,
+  # destroyed if pure flavor, at scene exit).
   # This is what keeps a fought bandit at his lair (re-encounter = another toll)
   # instead of being rehomed into a peaceful town.
   def residence?

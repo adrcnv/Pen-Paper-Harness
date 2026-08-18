@@ -89,7 +89,7 @@ module Harness
 
           # Ground gender as a stored fact BEFORE the description materializer
           # runs (it reads it to pick consistent pronouns) and so every
-          # downstream reader — internal_state, reasoning loop, narration —
+          # downstream reader — internal_state, runner payloads, rendering —
           # agrees instead of re-guessing from an ambiguous name each turn.
           ensure_gender!(character, rng: rng)
 
@@ -133,8 +133,8 @@ module Harness
           ::Harness::Character::HP.apply!(character)
 
           # Interpretation lens: weighted random roll, set once. Drives
-          # belief projection bias — a cynic projects neutral events as
-          # suspect; a romantic projects them as warmer. ~50% land on
+          # interpretation bias — a cynic reads neutral events as
+          # suspect; a romantic reads them as warmer. ~50% land on
           # `balanced` (neutral); the named lenses are minority colors.
           # No LLM call; pure mechanical assignment from the distribution.
           ::Harness::Character::Lens.apply!(character, rng: rng)
@@ -181,7 +181,7 @@ module Harness
         # has something concrete to ground in (fresh encounter NPCs have
         # NO past events, so without this they get no agenda). Bias
         # subrole only when the caller didn't already pass one — the
-        # reasoning loop's propose_character path passes one explicitly.
+        # runner's propose_character path passes one explicitly.
         # No-op for non-encounter locations or unknown encounter_types.
         def inject_encounter_intent(attrs, rng:)
           loc_id = attrs[:location_id] || attrs[:location]&.id

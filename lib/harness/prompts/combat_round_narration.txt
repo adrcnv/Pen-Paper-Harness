@@ -18,9 +18,8 @@ Tools and how to render them:
 - `move_to` — NEVER a bracket line. Render in prose IF the move changed the spatial picture meaningfully (closing to engage, breaking off to range, disengaging). A near→near reposition is silent.
 - `escape` — NEVER a bracket line. Success → render the exit in prose. Failure → render the engaged hostile's free hit (which IS a separate resolve in the result list and gets its own bracket line + prose).
 - `end_turn` — silent. The combatant held ground; nothing to say.
-- `mutate_character` / `propose_event` — silent unless prose-meaningful (a stance flip ("yields") or narrative beat ("the cart's wheel finally cracks") may warrant one sentence). NEVER a bracket line.
 
-HARD RULES (same as the regular narration prompt):
+HARD RULES:
 - Do NOT introduce new named characters, factions, places, or items not already in the input.
 - Do NOT name the unnamed (no "the bandit Karn"; he's just "the bandit").
 - Do NOT mention engine internals: no "round", no "initiative", no "tool call", no "the system".

@@ -74,7 +74,7 @@ module Harness
           return ability_not_found_error(actor, ability_name) if ability.nil?
 
           # Use-count gate: if exhausted since last rest, refuse the call
-          # cleanly (the reasoning loop should narrate fallback to a basic
+          # cleanly (the runner fragment renders the fallback to a basic
           # attack instead).
           if (ability["uses_remaining"] || 0) <= 0
             return {
@@ -306,7 +306,7 @@ module Harness
 
           # Reflect damage: apply to actor after target took the hit (or was
           # saved). Doesn't itself fire on_damage_taken on the actor — would
-          # be infinite recursion if both wore reflect amulets. Phase 1.
+          # be infinite recursion if both wore reflect amulets.
           if (reflected = taken_outcome[:reflect_damage].to_i) > 0
             apply_damage!(actor, reflected)
           end
@@ -328,8 +328,8 @@ module Harness
             )
             # Death-loot: detach the deceased's items and anchor them to
             # the location for pickup. Coins stay on the corpse — looted
-            # via transfer_coins. Surfaced on the outcome so the reasoning
-            # loop knows what dropped without re-querying.
+            # via transfer_coins. Surfaced on the outcome so the runner
+            # knows what dropped without re-querying.
             dropped_items = ::Harness::Items::Loot.drop_to_floor(target)
             clear_follower_flag!(target)
             # In-combat death cleanup: clear the deceased's engagement edge
@@ -351,7 +351,7 @@ module Harness
         # alive NPC to 0 with this resolve. NPC-on-NPC and NPC-on-player kills
         # don't track XP (only the player levels). XP::award! handles auto-
         # leveling-up while the new total clears next thresholds. The result
-        # is surfaced on the outcome so the reasoning loop / narration can
+        # is surfaced on the outcome so the runner's rendering can
         # mention it.
         xp_award = nil
         if actor.is_a?(::Player) && target.is_a?(::Npc) && target_was_alive_before && target.reload.current_hp <= 0

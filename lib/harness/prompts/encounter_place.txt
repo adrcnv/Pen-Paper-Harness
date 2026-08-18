@@ -13,7 +13,6 @@ CONSTRAINTS
 - name: at least 3 words. Specific, not generic. NOT "Bandit Camp" or "Old Ruin" — something like "the Old Carter's Cottage" or "Marn's Wayshrine on the Ridge" or "the Black-Reed Ambush" or "the Hollowed Watchtower". Names should feel found, not catalogued.
 - description: ONE OR TWO sentences. Sensory and concrete (a smell, a texture, a posture). For combat bucket, the threat must be named or unambiguously implied — generic "danger lurks" prose won't get the right characters spawned downstream.
 - Do NOT introduce factions, kingdoms, or named historical events the world doesn't already have. Stay local.
-- Do NOT include items in the description (item system is being reworked).
 - ENGLISH only. Output ONLY JSON, no leading or trailing prose.
 
 OUTPUT format

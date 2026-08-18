@@ -28,14 +28,14 @@ module Harness
       # The disposition ladder — each NPC's standing temperature toward the
       # player, scene-scoped. Descriptive context ONLY, never a trigger. The
       # post-emit reevaluation moves it at most one step per turn; internal
-      # state (the mood flavor line) rides beside it and is no longer frozen
-      # at the seeded value — the taking-stock pass refreshes both.
+      # state (the mood flavor line) rides beside it — the taking-stock pass
+      # refreshes both.
       DISPOSITIONS = %w[hostile guarded neutral warm trusting].freeze
 
       # Has this character already taken a speaking turn in THIS scene? Once
-      # they've spoken, the live thread carries their words — but mood/agenda
-      # are NO longer dropped with it: the reevaluation pass keeps them
-      # current, so a stale seed can't yank a mid-conversation NPC backwards.
+      # they've spoken, the live thread carries their words — and mood/agenda
+      # ride along: the reevaluation pass keeps them current, so a stale seed
+      # can't yank a mid-conversation NPC backwards.
       def spoken?(character_id)
         (spoken_ids || []).include?(character_id)
       end
@@ -110,8 +110,7 @@ module Harness
 
       # Combat sub-mode helpers. `combat` is nil when no fight is running; set
       # by Tools::StartCombat, cleared by Combat::Loop's end_combat!. While
-      # set, the resolver serves the narrow combat-mode tool surface (see
-      # COMBAT_DESIGN.md).
+      # set, the resolver serves the narrow combat-mode tool surface.
       def in_combat?
         !combat.nil?
       end
@@ -162,8 +161,8 @@ module Harness
 
       # Ambient nameless figures painted into the scene at entry — pure
       # narration flavor. Array of one-line descriptions. No ids; cannot be
-      # commit targets. If the player engages an extra consequentially, the
-      # reasoning loop calls propose_character to materialize them as a real
+      # commit targets. If the player engages an extra consequentially, a
+      # runner calls propose_character to materialize them as a real
       # Npc row (the description carries forward via the connection arg).
       def present_extras
         extras || []

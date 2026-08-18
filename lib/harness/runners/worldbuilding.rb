@@ -2,14 +2,12 @@ module Harness
   module Runners
     # The player expects something that doesn't exist yet (a tavern, a smith,
     # a market). One structured call describes the minimal creation; Ruby runs
-    # the CREATE chain (location → character → item → kickoff) via tools. This
-    # replaces the agentic loop's multi-call worldbuilding spray with a bounded
-    # commit.
+    # the CREATE chain (location → character → item → kickoff) via tools — a
+    # bounded commit.
     #
     # Kickoff is committed FORWARD (now), not backward: a just-spawned
     # character has no earlier floor, so a backward origin event would trip the
-    # floor-violation guard (observed in the agentic fallback). Backward origin
-    # is a later refinement.
+    # floor-violation guard. Backward origin is a later refinement.
     class Worldbuilding < Base
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/worldbuilding.txt")
 

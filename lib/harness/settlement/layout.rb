@@ -9,7 +9,7 @@ module Harness
     #
     # Pure mechanical (no LLM). Idempotent via the city's `settlement_laid_out`
     # flag AND a per-row `manifest_key` guard, so it never duplicates a wing the
-    # player (or quest gen) already created. Only fires for worldgen cities that
+    # player already created. Only fires for worldgen cities that
     # carry an economic profile; hand-authored fixtures and pre-geography saves
     # have none and are left alone.
     module Layout

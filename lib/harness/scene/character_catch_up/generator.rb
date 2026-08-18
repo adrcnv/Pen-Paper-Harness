@@ -2,7 +2,7 @@ module Harness
   module Scene
     # Character catch-up = "fill in what each present character was doing
     # off-screen during the lookback window." One batched grunt-tier call for
-    # all present class-4 characters; commits 0-2 personal-scope events per
+    # all present characters; commits 0-2 personal-scope events per
     # character; events get location=null (the character was elsewhere).
     #
     # Triggered by Scene::Manager.enter after Scene::Materializer has settled
@@ -30,7 +30,7 @@ module Harness
           @lookback_window = lookback_window
         end
 
-        # characters: array of Character (class-4) rows expected to be in the
+        # characters: array of Character rows expected to be in the
         # upcoming scene. Player rows are filtered out — we never simulate the
         # player. Characters with NO prior event history are also filtered —
         # there's no "off-screen activity" to catch up on for someone who was

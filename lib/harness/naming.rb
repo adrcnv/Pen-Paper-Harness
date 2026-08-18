@@ -1,12 +1,11 @@
 require "set"
 
 module Harness
-  # Mechanical name generator. Replaces the LLM as the source of new
-  # character names for background spawn paths (Genesis /
-  # Scene::Materializer when they sweep through Phase 3). The reasoning
-  # loop's propose_character path STAYS LLM-named because the player
-  # picks names in conversation; this primitive is for engine-driven
-  # spawns only.
+  # Mechanical name generator. The source of new character names for
+  # background spawn paths (Genesis and Scene::Materializer call
+  # Naming.unique_for). The runner's propose_character path STAYS
+  # LLM-named because the player picks names in conversation; this
+  # primitive is for engine-driven spawns only.
   #
   # Algorithm:
   #   1. Walk parent chain from `location` to find a top-level row with a

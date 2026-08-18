@@ -21,11 +21,10 @@ module Harness
         self.class.build(context)
       end
 
-      # Class-method form used both by the tool call and by Turn::Loop to
-      # pre-inject scene state into the reasoning prompt (so the model
-      # doesn't need to spend a round-trip on a defensive query_scene call
-      # at the start of every turn — see INPUT.scene in the reasoning
-      # prompt).
+      # Class-method form used by the tool call and by Turn::Loop /
+      # Perception / the runners to pre-inject scene state into the runner
+      # prompts (so the model doesn't need to spend a round-trip on a
+      # defensive query_scene call at the start of every turn).
       #
       # `condense_mood:` when true, internal_state prose is suppressed from
       # each present_character entry. Caller passes true on turns where the
@@ -34,7 +33,7 @@ module Harness
       # re-read every iteration. (Mood may also have drifted from the cached
       # scene-entry snapshot; narration's no-invention rule already wants the
       # model to render from this-turn's tool results, not from the cached
-      # mood.) See AUDIT in execution_flows_observed.md.
+      # mood.)
       def self.build(context, condense_mood: false)
         snap = ::Harness::Scene::Assembler.for(location: context.player_location)
         active = context.active_scene
@@ -64,15 +63,15 @@ module Harness
             "name"           => loc.name,
             "description"    => loc.description,
             # Surfaces wilderness_leaf encounter context. Combat encounters
-            # mean the present NPCs are hostile; see the ENCOUNTER SCENES
-            # section in the reasoning prompt.
+            # mean the present NPCs are hostile; surfaced so the runner
+            # prompts treat them as such.
             "encounter_type" => loc.properties.is_a?(Hash) ? loc.properties["encounter_type"] : nil,
             # Persistent player-made changes to the place (mutate_location):
             # a barred door, a breached wall. Surfaced so later turns honor
             # them instead of re-describing the place as pristine.
             "alterations"    => (loc.properties["alterations"] if loc.properties.is_a?(Hash) && loc.properties["alterations"].present?),
             # Mechanical setting identity of the enclosing settlement — terrain
-            # + economic basis/size/wealth. Lets the reasoning loop & narration
+            # + economic basis/size/wealth. Lets the runners & narration
             # ground the place ("a poor coastal fishing hamlet") instead of
             # defaulting every town to a generic fantasy village.
             "setting"        => settlement_facts(loc)
@@ -82,23 +81,22 @@ module Harness
           "children" => children,
           "present_characters" => snap.present_characters.map { |c|
             entry = { "id" => c.id, "name" => c.name, "subrole" => c.subrole }
-            # Surface gender so the reasoning loop and narration use the right
+            # Surface gender so the runners and narration use the right
             # pronouns instead of re-guessing from an ambiguous name each turn.
             # Grounded once at spawn (Hatchery), authoritative over the name.
             if c.properties.is_a?(Hash) && c.properties["gender"]
               entry["gender"] = c.properties["gender"]
             end
-            # Surface the follower flag so the reasoning loop knows allegiance
+            # Surface the follower flag so the runner prompts know allegiance
             # at-a-glance. A follower is the player's structural ally and
-            # should act on their behalf in combat — see the FOLLOWERS rule
-            # in the reasoning prompt.
+            # should act on their behalf in combat.
             if c.properties.is_a?(Hash) && c.properties["following_player"] == true
               entry["following_player"] = true
             end
-            # Surface the interpretation lens so the reasoning loop can color
-            # this NPC's voice and stance when sourcing speech — see NPC VOICE
-            # in the reasoning prompt. `balanced` is the default majority and
-            # gets surfaced explicitly for legibility.
+            # Surface the interpretation lens so the conversation runner can
+            # color this NPC's voice and stance when sourcing speech.
+            # `balanced` is the default majority and gets surfaced explicitly
+            # for legibility.
             if c.properties.is_a?(Hash) && c.properties["lens"]
               entry["lens"] = c.properties["lens"]
             end
@@ -123,7 +121,7 @@ module Harness
           },
           # Items anchored here. Shop wares (for_sale) carry the buy price the
           # local settlement charges. Containers (chests) carry container/state/
-          # locked so the reasoning loop can call open_container; their contents
+          # locked so the runners can call open_container; their contents
           # stay hidden until opened.
           "present_items" => snap.present_items.map { |i|
             props = i.properties.is_a?(Hash) ? i.properties : {}
@@ -149,13 +147,13 @@ module Harness
           },
           # Ambient nameless figures from InternalState generation. Pure
           # flavor; no ids; cannot be commit targets. Narration may describe
-          # them; reasoning loop must propose_character before committing
+          # them; runners must propose_character before committing
           # anything about them.
           "present_extras" => (active&.present_extras || []),
           # Combat-aware payload — only present when scene.in_combat?. Gives
-          # the reasoning loop tactical visibility: round number, your slot
+          # the combat prompts tactical visibility: round number, your slot
           # state, allies/hostiles with HP+position+engagement. See
-          # COMBAT MODE in the reasoning prompt.
+          # combat_player_turn.txt.
           "combat" => combat_payload(active)
         }.compact
       end

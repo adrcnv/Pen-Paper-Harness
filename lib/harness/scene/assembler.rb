@@ -1,6 +1,6 @@
 module Harness
   module Scene
-    # Snapshot of scene state at a moment — what the reasoning loop sees.
+    # Snapshot of scene state at a moment — what the planner and runners read.
     # Transient; not persisted. Rebuild on scene transition, not mutated in place.
     Snapshot = Struct.new(
       :location, :present_characters, :present_corpses, :present_items,
@@ -20,9 +20,8 @@ module Harness
     #   sublocations (the brewer is at her brewery, not at the bar).
     # - `present_items` stays literal to `location_id`. Items are anchored;
     #   they don't wander.
-    # - Path-edge adjacency was retired with the Path model. Inter-location
-    #   movement is now `transition` (sibling/parent/child) or `travel`
-    #   (top-level coords → coords).
+    # - Inter-location movement is `transition` (sibling/parent/child) or
+    #   `travel` (top-level coords → coords).
     class Assembler
       def self.for(location:)
         new(location).assemble

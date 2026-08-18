@@ -1,7 +1,7 @@
 module Harness
   module Knowledge
-    # The knowledge-write INGESTION pipe, and a two-store ROUTER. Extraction no
-    # longer happens here — each speaker judges their OWN line in a reflection
+    # The knowledge-write INGESTION pipe, and a two-store ROUTER. Extraction
+    # happens upstream — each speaker judges their OWN line in a reflection
     # pass on their voicing context (Runners::Conversation#reflect_knowledge),
     # so the what-did-I-claim judgment is made with the speaker's recall,
     # roster, and thread in view. This class takes that parsed payload and

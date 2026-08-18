@@ -50,7 +50,7 @@ RSpec.describe Harness::Event::ForwardAppender do
       expect(Location.where(name: "Old Town").count).to eq(1)
     end
 
-    it "accepts class-4 character participants" do
+    it "accepts existing-row character participants" do
       event = described_class.append(
         game_time: 100, location: city, scope: "local",
         participants: [ { character: maren, role: "victim" } ]
@@ -72,13 +72,13 @@ RSpec.describe Harness::Event::ForwardAppender do
       }.to raise_error(described_class::InvalidEvent, /game_time/)
     end
 
-    it "rejects a participant with no :character (post-Phase-2: actor_name retired)" do
+    it "rejects a participant with no :character" do
       expect {
         described_class.append(
           game_time: 100, location: city, scope: "local",
           participants: [ { role: "bystander" } ]
         )
-      }.to raise_error(described_class::InvalidEvent, /must have a :character/)
+      }.to raise_error(described_class::InvalidEvent, /must carry a :character/)
     end
 
     it "rejects a participant missing role" do

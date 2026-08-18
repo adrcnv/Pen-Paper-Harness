@@ -80,9 +80,9 @@ module Harness
       private
 
       # The "what could this character plausibly know" filter — direct
-      # participation + scope projection. Mirrors what the deprecated
-      # Belief::PreFilter did, surfaced as a tool argument now that there's
-      # no separate belief read path. Class-level so the conversation
+      # participation + scope projection: a character knows events they
+      # participated in, wide-scope events, and local events at their
+      # location. Class-level so the conversation
       # runner's semantic event recall can reuse the exact same knowability
       # rule without constructing the tool.
       def self.knowable_ids(holder)

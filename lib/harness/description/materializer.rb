@@ -9,7 +9,7 @@ module Harness
     #
     # Writes both fields into character.properties:
     #   - properties.personality (existing convention; multiple readers
-    #     including InternalState, belief, character_catch_up)
+    #     including InternalState, character_catch_up, the voicing payload)
     #   - properties.appearance  (new structural key for physical/visible
     #     traits; observable, not interior state)
     #

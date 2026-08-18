@@ -20,7 +20,7 @@ module Harness
     #
     # The manager is constructed once per Turn::Loop and threads the
     # context through. `llm_grunt` powers internal-state, materializer,
-    # genesis, and catch-up. Scene exit no longer needs an LLM.
+    # genesis, and catch-up. Scene exit is mechanical.
     class Manager
       # Auto-target distribution for fresh sublocations: heavy bias toward 3,
       # tail to 6. Picks the floor for a "this place should feel inhabited"
@@ -149,7 +149,7 @@ module Harness
 
       private
 
-      # Increment-2 social web: a claimed person present here (just placed, or
+      # Social web: a claimed person present here (just placed, or
       # active since claim time) gets a few local NPCs who KNOW them, so asking
       # around at the destination points to them. Mechanical — reads the carried
       # gist, invents no identity. After the snapshot so present NPCs are known.
@@ -169,8 +169,8 @@ module Harness
       #     genesis already ran or play has accrued events)
       #   - test/dry-run setups without llm_grunt
       # Failure is non-fatal — scene entry continues even if genesis raises.
-      # Genesis::Generator now materializes Characters at commit (post-class-2
-      # collapse) so participants get real character_id rows.
+      # Genesis::Generator materializes Characters at commit so participants
+      # get real character_id rows.
       def maybe_run_genesis(loc)
         return unless @context.llm_grunt
         return unless loc.parent_id.nil? && loc.x.present? && loc.y.present?
@@ -256,9 +256,10 @@ module Harness
       # proxy for "first entry" was zero NPCs anchored — StaffSeeder broke
       # that (the mechanical keeper spawns BEFORE the cast, so every trade
       # venue read as populated and capped out at keeper + extras). The stamp
-      # is the honest signal, and it also stops re-entry inflation: patrons
-      # are root-homed and evicted on exit, so a bare population count would
-      # re-fire the cast every visit. Drift-back-in is LocalDraw's job.
+      # is the honest signal, and it also stops re-entry inflation: patrons'
+      # pins lapse and Whereabouts resolves them home, so a bare population
+      # count would re-fire the cast every visit. Drift-back-in is
+      # LocalDraw's job.
       def mark_materialized!(loc)
         props = loc.properties.is_a?(Hash) ? loc.properties : {}
         loc.update!(properties: props.merge("materialized" => true))
@@ -397,8 +398,8 @@ module Harness
           next false if props.is_a?(Hash) && props["dormant"] == true
           !(staff_trade && c.subrole.to_s == staff_trade)
         }
-        # Populated without a stamp (pre-stamp save): stamp it so eviction
-        # can't open the door to a second cast later.
+        # Populated without a stamp (pre-stamp save): stamp it so a later
+        # empty-looking read can't re-fire the cast.
         if any_active
           mark_materialized!(loc)
           return nil

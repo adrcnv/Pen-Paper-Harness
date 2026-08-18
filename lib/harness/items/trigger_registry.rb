@@ -118,7 +118,7 @@ module Harness
         },
 
         # +N to crit threshold check. Read by the dice engine via outcome[:crit_threshold_mod].
-        # Static modifier — Phase 1 records the intent on outcome; dice integration is later.
+        # Static modifier — records the intent on outcome; the dice engine does not consume it yet.
         "crit_chance_bonus" => {
           phase:         :on_attack_roll,
           params_schema: { amount: Integer },
@@ -128,8 +128,8 @@ module Harness
         },
 
         # Marks outcome with extra_attack flag. Resolver currently records the
-        # intent; making it actually grant a second action belongs in Phase D
-        # alongside any multi-action turn structure work.
+        # intent; actually granting a second action awaits multi-action
+        # turn structure work.
         "extra_attack" => {
           phase:         :on_ability_use,
           params_schema: {},
@@ -141,7 +141,7 @@ module Harness
         },
 
         # Returns params[:fraction] of taken damage to attacker. Fraction is 0..1.
-        # Phase 1 records the intent; actual reflection requires the resolver to
+        # Records the intent; actual reflection requires the resolver to
         # have an attacker handle on the on_damage_taken phase, which it does
         # only when actor was the target of a resolve call.
         "reflect_damage" => {

@@ -11,7 +11,7 @@ module Harness
     # lasts until the next day-phase boundary, after which Whereabouts
     # resolves them back to their own city — travelers never accumulate, and
     # you can meet the same merchant again later at his home. With no
-    # game_time the draw relocates the row directly (clockless legacy mode).
+    # game_time the draw relocates the row directly (clockless mode).
     #
     # Peaceful townsfolk only (anchor is a settlement). A lair-anchored bandit
     # wandering into a tavern is the "bar bandit" — that waits for free-form

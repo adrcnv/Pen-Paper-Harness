@@ -30,7 +30,7 @@ module Harness
       def self.schema
         {
           "name"        => tool_name,
-          "description" => "Append a narrative event that should persist past the current scene — promises, threats, arrivals, departures, secrets revealed, witnessed crimes, decisions with consequence. Do NOT use for flavor (walking, looking, ordering a drink); narration carries those. FORWARD mode: omit game_time, event happens now. BACKWARD mode (NARRATIVE SHIFT): pass game_time < current scene time to invent a past fact. Backward mode validates against later events. Scope: personal/local/regional/kingdom/world. Every participant MUST be a character_id pointing at an existing Character row — class-2 (actor_name) participants are retired; call propose_character first if a named figure needs to be introduced. Defaults location to current scene.",
+          "description" => "Append a narrative event that should persist past the current scene — promises, threats, arrivals, departures, secrets revealed, witnessed crimes, decisions with consequence. Do NOT use for flavor (walking, looking, ordering a drink); narration carries those. FORWARD mode: omit game_time, event happens now. BACKWARD mode (NARRATIVE SHIFT): pass game_time < current scene time to invent a past fact. Backward mode validates against later events. Scope: personal/local/regional/kingdom/world. Every participant MUST be a character_id pointing at an existing Character row; call propose_character first if a named figure needs to be introduced. Defaults location to current scene.",
           "input_schema" => {
             "type"       => "object",
             "properties" => {
@@ -45,7 +45,7 @@ module Harness
                   },
                   "required" => [ "character_id", "role" ]
                 },
-                "description" => "Participants. Include the actor AND any witnesses — observers form a structural record of what they saw, which downstream query_events(for_holder_id=...) surfaces. The player's character_id is in INPUT.player; tag the player when they're the actor. Unnamed crowd ('a guard', 'two bandits') stays in details prose, NOT here. Class-2 actor_name strings are retired — every named figure must be a class-4 row first (use propose_character to introduce them)."
+                "description" => "Participants. Include the actor AND any witnesses — observers form a structural record of what they saw, which downstream query_events(for_holder_id=...) surfaces. The player's character_id is in INPUT.player; tag the player when they're the actor. Unnamed crowd ('a guard', 'two bandits') stays in details prose, NOT here. Every named figure must be an existing Character row (use propose_character to introduce them)."
               },
               "trigger"     => { "type" => "string", "description" => "short prose describing what triggered the event (2-10 words)" },
               "details"     => { "type" => "string", "description" => "longer prose describing the event in narrative terms" },
@@ -97,11 +97,11 @@ module Harness
 
           return { "error" => "participants[#{i}].role must be a non-empty string" } unless role.is_a?(String) && !role.strip.empty?
 
-          # Phase 2: class-2 (actor_name string) participants are retired.
-          # Every participant must point at an existing Character row.
+          # actor_name strings are not accepted. Every participant must
+          # point at an existing Character row.
           if actor_name && !actor_name.to_s.strip.empty?
             return {
-              "error" => "participants[#{i}].actor_name is no longer supported — class-2 strings retired post-Phase-2. To name a historical figure, call propose_character first (creating a real Character row), then pass that character_id here. To leave the figure unnamed, drop them from participants and put their description in `details` prose instead."
+              "error" => "participants[#{i}].actor_name is not supported — participants must reference existing characters by character_id. To name a historical figure, call propose_character first (creating a real Character row), then pass that character_id here. To leave the figure unnamed, drop them from participants and put their description in `details` prose instead."
             }
           end
 

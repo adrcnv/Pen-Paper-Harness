@@ -9,8 +9,8 @@ module Harness
     # Single batched LLM call per scene (one prompt, internal_states +
     # extras both in output). Small-model tier. Cached on Scene::Active and
     # discarded at scene exit. Extras are RAM-only — no DB row, cannot be
-    # commit targets; if the player engages one consequentially the
-    # reasoning loop promotes via propose_character.
+    # commit targets; if the player engages one consequentially a runner
+    # calls propose_character(from_extra:).
     #
     # Player rows are excluded — internal state is for NPCs.
     class InternalState

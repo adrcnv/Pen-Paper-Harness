@@ -20,10 +20,10 @@ module Harness
     # synchronous one-shot calls. Combat slots use the richer start_turn
     # interface on the adapter object directly, not via context.
     #
-    # `llm_client=` / `llm_client` are a back-compat shim from before the
-    # split: setting llm_client wires both tiers to the same adapter, which
-    # is the correct behavior for a single-adapter setup (one model doing
-    # everything). New call sites should pick the tier explicitly.
+    # `llm_client=` / `llm_client` are a convenience setter: setting
+    # llm_client wires both tiers to the same adapter, which is the correct
+    # behavior for a single-adapter setup (one model doing everything). New
+    # call sites should pick the tier explicitly.
     class Context
       attr_accessor :player_location, :scene_dirty, :game_time
       attr_accessor :llm_grunt, :llm_nuance
@@ -47,8 +47,7 @@ module Harness
       end
 
       # Called at the start of each turn by Turn::Loop. Reserved for future
-      # per-turn counter resets (none today; the belief-query spin-cap that
-      # used this hook went away with the Belief layer).
+      # per-turn counter resets (none today; a no-op).
       def reset_per_turn_counters!
         # no-op
       end

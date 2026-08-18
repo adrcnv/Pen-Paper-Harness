@@ -13,7 +13,7 @@ module Harness
     #   2. Dispatch the input to an ordered plan and run its chained runners
     #      (or drive the structured combat slot mid-fight).
     #   3. Render the committed tool calls MECHANICALLY into typed parts
-    #      (Turn::Parts — no model call; the narrator is dead). Staged
+    #      (Turn::Parts — no model call). Staged
     #      dialogue and the initiative beat are the only LLM-authored text,
     #      and each renders verbatim from its own organ.
     #   4. Persist a TurnLog transcript.
@@ -54,9 +54,8 @@ module Harness
         @scene_manager        = scene_manager || ::Harness::Scene::Manager.new(context: context, logger: logger)
 
         # Runner registry. Only built runners live here; a plan step naming
-        # anything else degrades to a safe inspection step (the agentic
-        # scaffold fallback is gone — see run_state_machine). Injectable for
-        # tests.
+        # anything else degrades to a safe inspection step (see
+        # run_state_machine). Injectable for tests.
         @registry = registry || {
           "inspection"   => ::Harness::Runners::Inspection.new(logger: logger),
           "movement"     => ::Harness::Runners::Movement.new(logger: logger),
@@ -174,9 +173,9 @@ module Harness
           end
 
           # Render the turn MECHANICALLY: typed parts from the committed tool
-          # calls, in causal order (Parts module — no model call). The narrator
-          # is dead; the law is causal authority = rendering authority. Combat
-          # with content replaces the list (its round driver owns its prose).
+          # calls, in causal order (Parts module — no model call). The law is
+          # causal authority = rendering authority. Combat with content
+          # replaces the list (its round driver owns its prose).
           transcript.parts = if combat_result && (combat_result.round_summaries.any? || combat_result.player_fled_resolution)
             [ { kind: :combat, text: assemble_combat_narration(combat_result) } ]
           else
@@ -524,8 +523,8 @@ module Harness
       end
 
       # The player's mid-combat slot: one structured call (Combat::PlayerTurn).
-      # The executed action is recorded on the transcript exactly like a
-      # reasoning tool call, so dice brackets, the narration sanitizer, and
+      # The executed action is recorded on the transcript like any runner
+      # tool call, so dice brackets, the narration sanitizer, and
       # /debug all read it unchanged. nil = the input wasn't a combat action;
       # nothing recorded, the slot stays fresh and Combat::Loop yields again.
       def run_player_slot(input, transcript)

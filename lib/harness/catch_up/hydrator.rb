@@ -6,8 +6,8 @@ module Harness
     # Parses catch-up generator output into a list of event payloads.
     # Differs from Genesis::Hydrator only in its game_time window check:
     # events must satisfy floor_game_time < gt < current_game_time (strictly
-    # within the gap), and only "local" scope is permitted (regional+ comes
-    # from the spine sim, not from catch-up).
+    # within the gap), and only "local" scope is permitted (regional+ is
+    # out of scope for catch-up).
     class Hydrator
       class InvalidOutput < StandardError
         attr_reader :errors

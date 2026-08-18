@@ -247,9 +247,9 @@ RSpec.describe Harness::Scene::Manager do
       expect(tavern.reload.properties["materialized"]).to be(true)
     end
 
-    it "fires Materializer for untagged top-level locations (worldgen cities promote class-2 founders + spawn locals)" do
-      # Pre-class-2-revival, Genesis materialized founders directly at the
-      # city tier so Materializer was redundant here. With class-2 default,
+    it "fires Materializer for untagged top-level locations (worldgen cities wake dormant founders + spawn locals)" do
+      # Genesis eager-spawns founders as dormant rows, so the
+      # Materializer is the only path that wakes them into play —
       # founders are strings until promoted — Materializer is the only
       # path that promotes them, so it must fire on city entry too.
       context.player_location = wilderness

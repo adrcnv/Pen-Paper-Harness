@@ -21,8 +21,8 @@ module Harness
     #
     # Prose backfill runs on every successful promotion: any prior Event with
     # details["location_name"] == name gets its location_id set and the
-    # location_name prose field cleared. This is the location-side analog of
-    # class-2 → class-4 actor promotion.
+    # location_name prose field cleared — prose mentions become row
+    # references once the place exists.
     class ProposeLocation < Base
       TYPE_SUBLOCATION     = "sublocation".freeze
       TYPE_WILDERNESS_LEAF = "wilderness_leaf".freeze

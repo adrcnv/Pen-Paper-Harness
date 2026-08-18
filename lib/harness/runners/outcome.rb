@@ -1,8 +1,7 @@
 module Harness
   module Runners
-    # What a runner hands back to the executor. Same tool_calls shape the
-    # agentic loop produces ([{name:, args:, result:}, ...]) so narration
-    # consumes it unchanged.
+    # What a runner hands back to the executor. tool_calls is the
+    # [{name:, args:, result:}, ...] shape Turn::Parts renders from.
     #
     # status:
     #   :ok         — step done; continue the chain.

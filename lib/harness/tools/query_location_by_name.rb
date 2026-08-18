@@ -3,12 +3,12 @@ module Harness
     # Lookup a location by name with three layers of fallback context:
     #   - exact-match row → return its data
     #   - no row → return mention-count from event prose +
-    #              the full known-name pool (so the reasoning loop can resolve
-    #              "Ice City" → "City of Ice" itself, no fuzzy infrastructure) +
-    #              geographic context near the player so a propose_location
-    #              call has neighbors to anchor against
+    #              the full known-name pool (so the movement/inspection runner
+    #              can resolve "Ice City" → "City of Ice" itself, no fuzzy
+    #              infrastructure) + geographic context near the player so a
+    #              propose_location call has neighbors to anchor against
     #
-    # The reasoning loop should treat `found: false, mentioned_in_events > 0` as
+    # The movement/inspection runner should treat `found: false, mentioned_in_events > 0` as
     # "exists in prose, not yet a row — propose_location to promote it"
     # and `found: false, mentioned_in_events == 0` as either
     # "ask one more clarifying question" or "invent it from scratch."
@@ -141,9 +141,8 @@ module Harness
         nil
       end
 
-      # Distance × averaged biome multiplier × MIN_PER_DISTANCE. Same shape
-      # as the retired PathBuilder.cost_for — kept inline now that PathBuilder
-      # is gone with the rest of the Path model.
+      # Travel-time estimate: distance × averaged biome multiplier ×
+      # MIN_PER_DISTANCE, floored at MIN_COST_MIN.
       MIN_PER_DISTANCE = 2.0
       MIN_COST_MIN     = 1
 

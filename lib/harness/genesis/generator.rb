@@ -13,7 +13,7 @@ module Harness
     # Pipeline:
     #   1. Generator LLM call → cluster of 0-8 past events with named
     #      participants (string names in the JSON output).
-    #   2. Eager-Hatchery every named participant into a class-4 Character
+    #   2. Eager-Hatchery every named participant into a Character
     #      row with properties.dormant = true. Dormant rows exist
     #      structurally (so event_participants can FK to them) but stay
     #      out of present_characters / recent_actors until Scene::Materializer
@@ -208,7 +208,7 @@ module Harness
                }
       end
 
-      # Materialize a class-4 Character row for EVERY entry in `characters[]`.
+      # Materialize a Character row for EVERY entry in `characters[]`.
       # The LLM declared {id, subrole}; the engine assigns a mechanical name
       # (Harness::Naming.unique_for against the kingdom culture) and Hatcheries
       # the row dormant so it exists structurally but stays out of
@@ -282,8 +282,8 @@ module Harness
       end
 
       # Hydrator output (string-keyed) → BackwardAppender keyword args
-      # (symbol-keyed, with location object). Every participant is a
-      # class-4 :character row — class-2 strings are retired post-Phase-2.
+      # (symbol-keyed, with location object). Every participant is an
+      # existing :character row — name strings are not accepted.
       # materialize_characters guarantees character_by_actor_id covers
       # every actor_id referenced by the events array.
       def to_event_kwargs(event_payload, location, character_by_actor_id)

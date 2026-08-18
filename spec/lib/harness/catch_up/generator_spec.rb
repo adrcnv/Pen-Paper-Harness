@@ -50,7 +50,7 @@ RSpec.describe Harness::CatchUp::Generator do
   describe "happy path" do
     before do
       Event.create!(game_time: 1000, scope: "local", location: tavern, details: { "summary" => "the bar opens" })
-      # Post-Phase-2: catch-up may ONLY reference names of existing class-4
+      # Catch-up may ONLY reference names of existing character rows
       # rows at this location. Korr lives at the tavern so the hydrator
       # accepts him; without this row the well_formed_payload would be rejected.
       Npc.create!(name: "Korr", location: tavern)
@@ -68,7 +68,7 @@ RSpec.describe Harness::CatchUp::Generator do
       }.to change(Event, :count).by(2)
     end
 
-    it "links participants to the existing class-4 row at this location (no row creation)" do
+    it "links participants to the existing character row at this location (no row creation)" do
       llm = stub_call_returning(well_formed_payload([ 2000 ]))
 
       expect {
@@ -116,7 +116,7 @@ RSpec.describe Harness::CatchUp::Generator do
     before do
       Event.create!(game_time: 1000, scope: "local", location: tavern, details: { "summary" => "the bar opens" })
       ev = Event.create!(game_time: 1500, scope: "local", location: tavern, details: { "summary" => "regular night" })
-      # post-class-2: recent_actors aggregates over real Character rows at this location.
+      # recent_actors aggregates over real Character rows at this location.
       korr = Npc.create!(name: "Korr", location_id: tavern.id)
       EventParticipant.create!(event: ev, character: korr, role: "patron")
       EventParticipant.create!(event: ev, character: korr, role: "patron")
@@ -161,8 +161,8 @@ RSpec.describe Harness::CatchUp::Generator do
     end
   end
 
-  describe "participants must be class-4 at this location (post-Phase-2)" do
-    # Catch-up may only reference existing class-4 names AT this location.
+  describe "participants must be existing rows at this location" do
+    # Catch-up may only reference existing character names AT this location.
     # Fresh names and names from other locations are rejected by the hydrator.
     before do
       Event.create!(game_time: 1000, scope: "local", location: tavern, details: {})
@@ -197,7 +197,7 @@ RSpec.describe Harness::CatchUp::Generator do
       expect(retry_user_calls.first).to include("Korr")
     end
 
-    it "links to an existing class-4 row when a name belongs to a character AT this location" do
+    it "links to an existing character row when a name belongs to a character AT this location" do
       korr = Npc.create!(name: "Korr", location: tavern)
       llm = stub_call_returning(cluster_with("Korr"))
 

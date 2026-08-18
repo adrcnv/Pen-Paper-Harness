@@ -6,11 +6,6 @@ module Harness
   # (an ordered list of runner steps + the model's reasoning). Executes nothing
   # and mutates nothing — the Dispatcher turns this into Step structs and the
   # executor runs them.
-  #
-  # (Formerly Shadow::Planner — a diagnostic that shadowed the agentic loop to
-  # validate the state-machine rework. That theory is validated and shipped;
-  # the shadow/two-tier/offline-replay scaffolding is gone. This is the live
-  # planner it became.)
   class Planner
     PROMPT_PATH = Rails.root.join("lib/harness/prompts/planner.txt")
     RECENT_HISTORY_CAP = 4
@@ -27,8 +22,7 @@ module Harness
     # Grammar contract for the plan emit (llama.cpp json_schema → GBNF): the
     # sampler cannot emit prose, markdown fences, or an unknown runner label —
     # parse_error stops being a failure mode on the constrained path. The
-    # retired labels (dice/agentic) stay IN the enum: the dispatcher remap is
-    # the habit-tolerance, the grammar only fences the alphabet.
+    # enum is VALID_RUNNERS: the grammar fences the alphabet.
     PLAN_SCHEMA = {
       "type" => "object",
       "properties" => {

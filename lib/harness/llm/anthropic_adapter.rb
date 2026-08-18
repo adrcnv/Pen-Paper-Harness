@@ -6,7 +6,7 @@ module Harness
   module LLM
     # Anthropic Messages API adapter.
     #
-    # The reasoning loop uses native tool_use blocks. The model emits one or
+    # Tool-calling turns use native tool_use blocks. The model emits one or
     # more tool_use content blocks per response; AnthropicTurn queues them
     # and hands them to the resolver one at a time via next_tool_call,
     # matching the shape FakeTurn established. feed_result collects
@@ -89,10 +89,10 @@ module Harness
       #
       # Prompt caching: places up to TWO cache_control: ephemeral breakpoints.
       #   1. On the static head (last tool with tools, or system without).
-      #      Cache key = system + tools, stable across every reasoning-loop
+      #      Cache key = system + tools, stable across every tool-calling
       #      call in the session.
       #   2. On the last message in the messages array. Cache key extends to
-      #      the conversation state. Within a single reasoning loop's tool-use
+      #      the conversation state. Within a single turn's tool-use
       #      round-trips, each new call adds an assistant_response + tool_result
       #      to messages; the previous extension-cache hits everything up
       #      through the prior turn, only the new pair is fresh. Saves the

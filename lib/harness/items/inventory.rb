@@ -33,8 +33,8 @@ module Harness
         end
 
         # Roll ONLY the starter coins for a player, leaving any existing
-        # items untouched. Used by the bin/play backfill for saves whose
-        # items predate Phase 3 — items already exist, coins do not.
+        # items untouched. Used by the bin/play backfill for saves created
+        # before starter coins existed — items already exist, coins do not.
         # Caller decides whether to fire (typically: only when coins == 0).
         def roll_starter_coins!(character, rng: Random.new)
           load!

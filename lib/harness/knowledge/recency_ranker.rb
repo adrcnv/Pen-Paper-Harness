@@ -1,10 +1,9 @@
 module Harness
   module Knowledge
-    # Default ranking backend for Query: newest-first, topic-blind. The seam
-    # where semantic (cosine over `embedding`) drops in later WITHOUT touching
-    # callers — a Ranker is anything responding to `call(rows, topic:)` and
-    # returning them reordered. Recency ignores `topic`; the cosine ranker will
-    # use it. See knowledge_system_design.md §5/§6.
+    # Default ranking backend for Query: newest-first, topic-blind. A Ranker
+    # is anything responding to `call(rows, topic:)` and returning them
+    # reordered — CosineRanker (semantic, over `embedding`) is the other
+    # backend. Recency ignores `topic`; the cosine ranker uses it.
     module RecencyRanker
       module_function
 
