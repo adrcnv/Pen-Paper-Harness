@@ -31,7 +31,7 @@ module Harness
         return rows if rows.empty?
         return degrade(rows, topic, "embedder has no #embed") unless @embedder.respond_to?(:embed)
 
-        q = @embedder.embed(topic.to_s)
+        q = ::Harness::CostTracker.in_subsystem(:knowledge_recall) { @embedder.embed(topic.to_s) }
         return degrade(rows, topic, "nil/empty query vector") if q.nil? || q.empty?
 
         ensure_embeddings(rows)
@@ -53,7 +53,7 @@ module Harness
       def ensure_embeddings(rows)
         missing = rows.reject { |r| stored_vector(r) }
         return if missing.empty?
-        vecs = @embedder.embed(missing.map(&:content))
+        vecs = ::Harness::CostTracker.in_subsystem(:knowledge_recall) { @embedder.embed(missing.map(&:content)) }
         missing.zip(Array(vecs)).each do |row, vec|
           next if vec.nil? || vec.empty?
           row.update_column(:embedding, JSON.generate(vec)) # cache write: skip callbacks/timestamps

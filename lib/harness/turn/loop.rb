@@ -85,6 +85,7 @@ module Harness
       def run_turn(input:, seed: nil)
         ::Harness::CostTracker.reset_turn!
         ::Harness::Timing.reset_turn!
+        ::Harness::Turn::Receipt.begin_turn!(game_time: @context.game_time)
         @context.reset_per_turn_counters!
 
         # Pin this turn's randomness: the LLM sampler seed (adapter sends it
@@ -298,6 +299,7 @@ module Harness
           persist_session_state!
           transcript.persist!
           snapshot_db(transcript.turn_log) if transcript.turn_log
+          ::Harness::Turn::Receipt.finalize!(transcript: transcript, game_time: @context.game_time)
         end
 
         transcript

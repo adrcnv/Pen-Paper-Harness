@@ -44,7 +44,9 @@ module Harness
         while attempt < MAX_RETRIES
           attempt += 1
           logger&.debug { "[Worldgen::Naming] kingdom=#{kingdom_id} attempt=#{attempt}" }
-          raw = llm.complete(system: system, user: user)
+          raw = ::Harness::CostTracker.in_subsystem(:worldgen_naming) do
+            llm.complete(system: system, user: user)
+          end
           begin
             return Hydrator.hydrate(llm_output: raw, member_ids: member_ids)
           rescue Hydrator::InvalidOutput => e

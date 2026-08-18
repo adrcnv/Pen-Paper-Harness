@@ -27,7 +27,9 @@ module Harness
         system = ::File.read(PROMPT_PATH)
         user   = build_user_payload(character, sides, initiator, inciting_beat)
 
-        raw = llm.complete(system: system, user: user)
+        raw = ::Harness::CostTracker.in_subsystem(:combat_bystander) do
+          llm.complete(system: system, user: user)
+        end
         parse(raw, logger)
       rescue StandardError => e
         logger&.warn { "[Combat::BystanderDeliberation] #{character.name} (id=#{character.id}) failed: #{e.class}: #{e.message}" }

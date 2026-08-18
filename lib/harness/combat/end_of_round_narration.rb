@@ -19,7 +19,9 @@ module Harness
           "round"   => round,
           "actions" => actions
         })
-        llm.complete(system: system, user: user).to_s.strip
+        ::Harness::CostTracker.in_subsystem(:combat_round_narration) do
+          llm.complete(system: system, user: user).to_s.strip
+        end
       rescue ::StandardError => e
         logger&.warn { "[Combat::EndOfRoundNarration] failed: #{e.class}: #{e.message}" }
         fallback(round, actions)

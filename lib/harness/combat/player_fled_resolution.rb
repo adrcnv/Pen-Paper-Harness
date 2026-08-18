@@ -53,7 +53,9 @@ module Harness
             "abilities" => Array(c.abilities).map { |a| a["name"] }
           } }
         })
-        raw = llm.complete(system: system, user: user)
+        raw = ::Harness::CostTracker.in_subsystem(:combat_fled_resolution) do
+          llm.complete(system: system, user: user)
+        end
         parse(raw, remaining, logger)
       end
 

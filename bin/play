@@ -130,7 +130,8 @@ if options[:log_level].downcase == "debug"
   logger = Logger.new(log_io)
   Rails.logger = logger
   ActiveRecord::Base.logger = logger
-  Harness::Timing.enable!  # /debug elapsed needs the per-call ledger
+  Harness::Timing.enable!        # /debug elapsed needs the per-call ledger
+  Harness::Turn::Receipt.enable! # /debug receipt needs the flight recorder
 else
   logger = Logger.new($stderr)
 end
@@ -470,6 +471,7 @@ if debug_log_path
   puts "  /debug knowledge[=<id>]     dump knowledge store (newest first; =id adds facets + supersession chain)"
   puts "  /debug knowledge character=<id>  rows the facet gate serves that character (pre-ranking, pre-gate)"
   puts "  /debug elapsed              per-call timings from the most recent turn"
+  puts "  /debug receipt              flight-recorder digest of the most recent turn (runners, tools, DB writes, clock, timings)"
   puts "  /debug levelup              level up the player one rank (fires picker inline)"
 end
 puts "  /quit                       exit"
@@ -928,6 +930,14 @@ loop do
         { id: k.id, content: k.content, current: k.current, location_id: k.location_id,
           speaker: k.speaker, source_kind: k.source_kind, supersedes_id: k.supersedes_id }
       })
+    when %r{\A/debug\s+receipt\s*\z}
+      receipt = Harness::Turn::Receipt.last
+      if receipt.nil?
+        puts "(no receipt yet — Receipt module may be off, or no turn run)"
+      else
+        puts "── last turn receipt ──"
+        puts JSON.pretty_generate(receipt)
+      end
     when %r{\A/debug\s+elapsed\s*\z}
       ledger = Harness::Timing.turn_ledger
       if ledger.empty?

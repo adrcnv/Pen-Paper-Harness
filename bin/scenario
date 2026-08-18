@@ -1,0 +1,73 @@
+#!/usr/bin/env ruby
+# Headless scenario driver REPL — smoke harness for Driver::Session and the
+# substrate the MCP wrapper sits on. Runs against the SCENARIO database only.
+#
+# Usage:
+#   bin/scenario --new [--seed N]     # wipe scenario DB, worldgen, mechanical player
+#   bin/scenario                      # continue the scenario save
+#
+# Reads player input lines from stdin (pipe a script for unattended runs).
+# Special inputs: /receipt (last turn's flight recorder), /quit.
+
+require "optparse"
+
+options = { new: false, seed: nil }
+OptionParser.new do |opts|
+  opts.banner = "Usage: bin/scenario [--new] [--seed N]"
+  opts.on("--new",           "Wipe scenario DB and generate a fresh world") { options[:new] = true }
+  opts.on("--seed N", Integer, "Session seed (worldgen + per-turn seeds)")  { |v| options[:seed] = v }
+  opts.on("-h", "--help") { puts opts; exit }
+end.parse!
+
+# Same .env convention as bin/play; shell wins.
+env_path = File.expand_path("../.env", __dir__)
+if File.exist?(env_path)
+  File.foreach(env_path) do |line|
+    line = line.strip
+    next if line.empty? || line.start_with?("#")
+    key, _, value = line.partition("=")
+    next if key.empty?
+    value = value.strip
+    value = value[1..-2] if value.start_with?('"') && value.end_with?('"')
+    value = value[1..-2] if value.start_with?("'") && value.end_with?("'")
+    ENV[key.strip] ||= value
+  end
+end
+
+ENV["RAILS_ENV"] = "scenario"
+require_relative "../config/environment"
+ActiveRecord::Tasks::DatabaseTasks.prepare_all
+
+logger = Logger.new(Rails.root.join("log/scenario.log"))
+logger.level = Logger::DEBUG
+Rails.logger = logger
+ActiveRecord::Base.logger = logger
+
+seed = options[:seed] || Random.new_seed
+session = Harness::Driver::Session.new(seed: seed, logger: logger)
+if options[:new]
+  puts "generating scenario world (seed=#{seed})..."
+  session.new_world!
+  puts "world ready — #{session.player_location.name}, t=#{session.game_time}"
+else
+  session.continue!
+  puts "continuing — #{session.player_location.name}, t=#{session.game_time}"
+end
+
+while (line = $stdin.gets)
+  input = line.strip
+  next if input.empty?
+  break if input == "/quit"
+  if input == "/receipt"
+    receipt = Harness::Turn::Receipt.last
+    puts receipt ? JSON.pretty_generate(receipt) : "(no receipt yet)"
+    next
+  end
+
+  result = session.play(input)
+  puts
+  puts result["narration"] if result["narration"]
+  puts "[OOC] #{result['notice']}" if result["notice"]
+  puts "(t=#{result['game_time']} @ #{result['location']})"
+  puts
+end

@@ -20,6 +20,12 @@ test:
   <<: *default
   database: storage/test.sqlite3
 
+# Isolated world for the headless scenario driver / MCP tester. Never the
+# play save.
+scenario:
+  <<: *default
+  database: storage/scenario.sqlite3
+
 # Store production database in the storage/ directory, which by default
 # is mounted as a persistent Docker volume in config/deploy.yml.
 production:

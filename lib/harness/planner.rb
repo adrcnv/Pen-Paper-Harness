@@ -71,7 +71,9 @@ module Harness
 
     def call_one(adapter, user)
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      raw = adapter.complete(system: preamble, user: user, schema: PLAN_SCHEMA)
+      raw = ::Harness::CostTracker.in_subsystem(:planner) do
+        adapter.complete(system: preamble, user: user, schema: PLAN_SCHEMA)
+      end
       elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
 
       parsed = parse_plan(raw)
