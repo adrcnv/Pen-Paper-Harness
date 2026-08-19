@@ -7,10 +7,19 @@ module Harness
     class << self
       def reset!(seed)
         @current = Random.new(seed)
+        # Scene randomness (draws, target counts, spawn rolls) gets its own
+        # turn-pinned stream: sharing one with the dice would let scene
+        # activity shift dice-roll positions (and vice versa), breaking
+        # seed-only reproducibility of each half.
+        @scene = Random.new(seed ^ 0x5CE0E5CE)
       end
 
       def current
         @current ||= Random.new
+      end
+
+      def scene
+        @scene ||= Random.new
       end
     end
   end

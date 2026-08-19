@@ -91,6 +91,21 @@ RSpec.describe Harness::Turn::Loop do
     end
   end
 
+  describe "#render_opening!" do
+    it "enters the scene and renders the card without a turn (no TurnLog), stamping nothing sans LLM" do
+      Npc.create!(name: "Maren", subrole: "barkeep", location: tavern)
+      loop_obj = scripted_loop([])
+      opening = nil
+      expect { opening = loop_obj.render_opening! }.not_to change(TurnLog, :count)
+      expect(opening).to include("— Tavern —")
+      expect(opening).to include("Maren (barkeep)")
+      expect(context.active_scene).not_to be_nil
+      # No LLM in this context → no establishment prose → the perception
+      # stamp stays open (turn 1 establishes normally).
+      expect(context.active_scene.perceived_view).to be_nil
+    end
+  end
+
   describe "replay rig (session state, snapshots, seeds)" do
     it "flushes the scene buffer + history to the session_states singleton at the turn boundary" do
       run(reasoning: [ event_call("the tavern is dim") ])

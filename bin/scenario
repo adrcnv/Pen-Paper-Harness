@@ -49,6 +49,11 @@ if options[:new]
   puts "generating scenario world (seed=#{seed})..."
   session.new_world!
   puts "world ready — #{session.player_location.name}, t=#{session.game_time}"
+  if session.opening
+    puts
+    puts session.opening
+    puts
+  end
 else
   session.continue!
   puts "continuing — #{session.player_location.name}, t=#{session.game_time}"

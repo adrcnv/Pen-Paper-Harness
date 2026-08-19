@@ -16,7 +16,7 @@ module Harness
       STANDARD_ARRAY = { strength: 15, dexterity: 14, constitution: 13,
                          intelligence: 12, wisdom: 10, charisma: 8 }.freeze
 
-      attr_reader :context, :player, :logger
+      attr_reader :context, :player, :logger, :seed, :snapshot_dir, :opening
 
       # grunt:/nuance: accept prebuilt adapters (tests inject stubs); nil
       # builds from ENV exactly like bin/play (HARNESS_BACKEND etc.).
@@ -52,6 +52,18 @@ module Harness
         ::Harness::Character::Hatchery.materialize!(@player, llm_grunt: @grunt)
         drain_ability_picks!
         boot!
+
+        # Mechanical opening: the world hands the player their surroundings —
+        # no planner, no TurnLog. Seed-pinned like a turn so the entry
+        # chain's draws replay for the same session seed. The baseline
+        # snapshot comes AFTER, so a rewind to turn 0 lands on the entered
+        # world (genesis doesn't re-run on retry).
+        opening_seed = @turn_rng.rand(2**31)
+        ::Harness::LLM::Seed.current = opening_seed
+        ::Harness::RNG.reset!(opening_seed)
+        @opening = @loop.render_opening!
+        @loop.baseline_snapshot! if @snapshot_dir
+        self
       end
 
       # Attach to whatever already lives in the scenario DB.
@@ -59,14 +71,22 @@ module Harness
         @player = ::Player.first
         raise "no player in the scenario DB — use new_world! first" unless @player&.location
         boot!
+        @loop.baseline_snapshot! if @snapshot_dir
+        self
       end
 
       # One turn. Returns what a player would see plus the flight recorder.
-      def play(input)
+      # `seed:` forces this turn's dice/sampler seed (retry_last! replays).
+      def play(input, seed: nil)
         raise "session not booted — new_world! or continue! first" unless @loop
-        transcript = @loop.run_turn(input: input, seed: @turn_rng.rand(2**31))
+        transcript = @loop.run_turn(input: input, seed: seed || @turn_rng.rand(2**31))
+        # The DISPLAY surface, not the fiction record: transcript.narration
+        # excludes display-only parts (perception prose) by the firewall, but
+        # the tester is a player — it must see what bin/play renders.
+        parts = Array(transcript.parts)
+        display = parts.any? ? parts.map { |p| p[:text] }.join("\n\n") : transcript.narration
         {
-          "narration" => transcript.narration,
+          "narration" => display,
           "notice"    => transcript.notice,
           "halted"    => transcript.halted ? true : false,
           "game_time" => @context.game_time,
@@ -77,6 +97,29 @@ module Harness
 
       def game_time      = @context&.game_time
       def player_location = @context&.player_location
+      def turn_number     = ::TurnLog.maximum(:turn_number) || 0
+
+      # Jump back to the save-state taken after turn N (turn 0 = baseline).
+      # Turns after N are destroyed — no branching, same as /debug rewind.
+      def rewind_to!(turn_number)
+        raise "no snapshot dir configured" if @snapshot_dir.to_s.empty?
+        snap = File.join(@snapshot_dir, "turn_#{turn_number}.sqlite")
+        raise "no snapshot for turn #{turn_number}" unless File.exist?(snap)
+
+        ::Harness::Debug::Replay.swap_db_file!(snap)
+        ::Harness::Debug::Replay.rehydrate!(context: @context, scene_manager: @scene_manager, logger: @logger)
+        self
+      end
+
+      # Rewind one turn and re-run it verbatim (same input, same seed) —
+      # the reproduce-once lever. Returns the replayed turn's play result.
+      def retry_last!
+        res = ::Harness::Debug::Replay.rewind!(
+          context: @context, scene_manager: @scene_manager,
+          snapshot_dir: @snapshot_dir, logger: @logger
+        )
+        play(res[:input], seed: res[:seed])
+      end
 
       private
 
@@ -104,7 +147,6 @@ module Harness
           scene_manager: @scene_manager,
           logger:        @logger
         )
-        @loop.baseline_snapshot! if @snapshot_dir
         self
       end
 

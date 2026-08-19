@@ -437,6 +437,17 @@ loop_obj = Harness::Turn::Loop.new(
   logger:        logger
 )
 
+# Fresh world: mechanical opening — the engine walks the player in and
+# renders first sight (scene card + perception establishment; no planner,
+# no TurnLog — see Loop#render_opening!). Runs BEFORE the baseline snapshot
+# so /debug rewind after turn 1 lands on the already-entered world.
+opening_text = nil
+if mode == :new_game
+  puts "  entering the world..."
+  opening_text = loop_obj.render_opening!
+  puts
+end
+
 loop_obj.baseline_snapshot! if options[:snapshot_dir]
 
 puts "─" * 72
@@ -480,6 +491,11 @@ if $stdout.tty?
   k = "#{Harness::Render::KNOWN_COLOR}known name#{Harness::Render::RESET}"
   q = "#{Harness::Render::QUOTE_COLOR}spoken text#{Harness::Render::RESET}"
   puts "In narration: #{k} = a person/place the world has a row for; #{q} = dialogue."
+  puts
+end
+
+if opening_text
+  puts Harness::Render.narration(opening_text, known_names: Harness::Render.entity_names, color: $stdout.tty?)
   puts
 end
 

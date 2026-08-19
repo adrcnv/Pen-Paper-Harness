@@ -33,7 +33,10 @@ module Harness
 
       attr_reader :logger, :active
 
-      def initialize(context:, logger: Rails.logger, rng: Random.new)
+      # rng: nil reads the turn-pinned Harness::RNG stream at use time (a
+      # rewound retry replays the same draws); pass an rng only to pin one
+      # for a test.
+      def initialize(context:, logger: Rails.logger, rng: nil)
         @context = context
         @logger  = logger
         @rng     = rng
@@ -149,6 +152,13 @@ module Harness
 
       private
 
+      # Turn-pinned unless a test injected its own. Resolved at use time:
+      # Harness::RNG.reset! replaces the object every turn, so a stored
+      # reference would go stale after the first turn.
+      def rng
+        @rng || ::Harness::RNG.scene
+      end
+
       # Social web: a claimed person present here (just placed, or
       # active since claim time) gets a few local NPCs who KNOW them, so asking
       # around at the destination points to them. Mechanical — reads the carried
@@ -179,7 +189,7 @@ module Harness
 
         anchor = nearest_top_level_neighbor(loc)
         ::Harness::Genesis::Generator
-          .new(llm_client: @context.llm_grunt, logger: logger)
+          .new(llm_client: @context.llm_grunt, logger: logger, rng: rng)
           .generate(
             location:          loc,
             anchor:            anchor,
@@ -245,7 +255,7 @@ module Harness
         return unless target
 
         ::Harness::Scene::Materializer
-          .new(llm_client: @context.llm_grunt, logger: logger)
+          .new(llm_client: @context.llm_grunt, logger: logger, rng: rng)
           .materialize(location: loc, target_count: target, game_time: @context.game_time)
         mark_materialized!(loc)
       rescue StandardError => e
@@ -276,7 +286,7 @@ module Harness
         ::Harness::Scene::TravelerPull.maybe_pull(
           loc,
           exclude_ids: cart_exclusions, game_time: @context.game_time,
-          rng: @rng, logger: logger
+          rng: rng, logger: logger
         )
       rescue StandardError => e
         logger.warn { "[Scene::Manager] traveler pull failed for #{loc.name}: #{e.class}: #{e.message}" }
@@ -312,7 +322,7 @@ module Harness
       # only for the spawn's stats/description dressing.
       def maybe_seed_staff(loc)
         return unless @context.llm_grunt
-        ::Harness::Scene::StaffSeeder.ensure!(loc, llm: @context.llm_grunt, logger: logger)
+        ::Harness::Scene::StaffSeeder.ensure!(loc, llm: @context.llm_grunt, logger: logger, rng: rng)
       end
 
       # Intra-city draw: at a sublocation, occasionally a same-city resident
@@ -326,7 +336,7 @@ module Harness
         ::Harness::Scene::LocalDraw.maybe_draw(
           loc,
           exclude_ids: cart_exclusions, game_time: @context.game_time,
-          rng: @rng, logger: logger
+          rng: rng, logger: logger
         )
       rescue StandardError => e
         logger.warn { "[Scene::Manager] local draw failed for #{loc.name}: #{e.class}: #{e.message}" }
@@ -344,7 +354,7 @@ module Harness
         return unless loc.parent_id.nil? && loc.x.present? && loc.y.present?
         return if loc.properties.is_a?(Hash) && loc.properties["kind"] == "wilderness_leaf"
 
-        ::Harness::Settlement::Layout.lay_out!(city: loc, rng: @rng, logger: logger)
+        ::Harness::Settlement::Layout.lay_out!(city: loc, rng: rng, logger: logger)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] settlement layout failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
@@ -354,7 +364,7 @@ module Harness
       # `shop_stocked`. No-op for non-shop locations. Failure non-fatal.
       def maybe_stock_shop(loc)
         return unless loc.properties.is_a?(Hash) && loc.properties["shop"].present?
-        ::Harness::Economy::ShopStock.stock!(loc, rng: @rng, logger: logger)
+        ::Harness::Economy::ShopStock.stock!(loc, rng: rng, logger: logger)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] shop stocking failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
@@ -363,7 +373,7 @@ module Harness
       # (bandit hideout, discovery site). Pure mechanical, idempotent via
       # `treasure_seeded`. Additive to scattered floor-loot. Failure non-fatal.
       def maybe_seed_treasure(loc)
-        ::Harness::Treasure::Seeder.seed!(loc, rng: @rng, logger: logger)
+        ::Harness::Treasure::Seeder.seed!(loc, rng: rng, logger: logger)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] treasure seeding failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
@@ -375,7 +385,7 @@ module Harness
       # re-seed. Failure is non-fatal — same posture as the other
       # maybe_run_* hooks.
       def maybe_seed_location_items(loc)
-        ::Harness::Items::LocationSeeder.seed!(loc, rng: @rng)
+        ::Harness::Items::LocationSeeder.seed!(loc, rng: rng)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] location item seeding failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
@@ -414,14 +424,14 @@ module Harness
           # propose_character(from_extra:)) and the travel encounter-spawner.
           nil
         elsif loc.parent_id
-          TARGET_COUNT_DISTRIBUTION.sample(random: @rng)
+          TARGET_COUNT_DISTRIBUTION.sample(random: rng)
         else
           # Worldgen top-level city. Genesis spawned dormant rows for every
           # named historical in the backstory cluster; the Materializer
           # selects which to wake (founders still alive, the missing courier
           # who never returned, etc) and fills remaining slots with fresh
           # public-facing locals (a town crier, a guardsman, an old merchant).
-          TARGET_COUNT_DISTRIBUTION.sample(random: @rng)
+          TARGET_COUNT_DISTRIBUTION.sample(random: rng)
         end
       end
 

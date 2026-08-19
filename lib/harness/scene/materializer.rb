@@ -29,10 +29,11 @@ module Harness
     class Materializer
       attr_reader :logger
 
-      def initialize(llm_client:, logger: Rails.logger, max_retries: 2)
+      def initialize(llm_client:, logger: Rails.logger, max_retries: 2, rng: Random.new)
         @llm         = llm_client
         @logger      = logger
         @max_retries = max_retries
+        @rng         = rng
       end
 
       def materialize(location:, target_count:, game_time: nil)
@@ -161,7 +162,7 @@ module Harness
             # Mechanical name from the kingdom's culture. unique_for avoids
             # collisions against existing rows; falls back to a Roman-numeral
             # suffix in the rare exhausted-pool case.
-            mech_name = ::Harness::Naming.unique_for(location: location)
+            mech_name = ::Harness::Naming.unique_for(location: location, rng: @rng)
             ctx_parts = []
             ctx_parts << "Spawned at #{location.name} (#{location.description.to_s.slice(0, 200)})" if location.description.present?
             ctx_parts << "Subrole: #{e['subrole']}" if e["subrole"]
@@ -173,7 +174,8 @@ module Harness
               location_id:   location.id,
               home_location_id: spawn_home_for(location),
               properties:    props,
-              prose_context: ctx_parts.any? ? ctx_parts.join("\n") : nil
+              prose_context: ctx_parts.any? ? ctx_parts.join("\n") : nil,
+              rng:           @rng
             )
           end
         end

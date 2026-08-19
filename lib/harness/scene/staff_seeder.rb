@@ -10,7 +10,7 @@ module Harness
     # drawn in by schedule. A dead keeper doesn't count as staff, so the
     # next entry seeds a successor.
     class StaffSeeder
-      def self.ensure!(location, llm:, logger: Rails.logger)
+      def self.ensure!(location, llm:, logger: Rails.logger, rng: Random.new)
         return nil unless location&.parent_id
         trade = location.properties.is_a?(Hash) ? location.properties["trade"].to_s : ""
         return nil if trade.empty?
@@ -28,11 +28,12 @@ module Harness
 
         npc = ::Harness::Character::Hatchery.spawn(
           llm_grunt:        llm,
-          name:             ::Harness::Naming.unique_for(location: location),
+          name:             ::Harness::Naming.unique_for(location: location, rng: rng),
           subrole:          trade,
           location_id:      location.id,
           home_location_id: location.id,
-          prose_context:    "Keeper of #{location.name} (#{location.description.to_s.slice(0, 200)})"
+          prose_context:    "Keeper of #{location.name} (#{location.description.to_s.slice(0, 200)})",
+          rng:              rng
         )
         logger.info { "[Scene::StaffSeeder] #{npc.name} (#{trade}) keeps #{location.name}" }
         npc

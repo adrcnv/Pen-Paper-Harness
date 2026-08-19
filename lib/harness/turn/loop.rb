@@ -314,6 +314,32 @@ module Harness
         snapshot_db(::TurnLog.new(turn_number: last))
       end
 
+      # The mechanical opening of a fresh world: enter the spawn scene and
+      # render what the player sees — scene card + perception establishment —
+      # WITHOUT a turn. No planner (the "look around" is a foregone
+      # conclusion), no TurnLog (the player typed nothing). The perception
+      # stamp is written so the next turn delta-gates instead of
+      # re-establishing a scene the player was just shown.
+      def render_opening!
+        @scene_manager.ensure_entered
+        snapshot = ::Harness::Tools::QueryScene.build(@context)
+        parts = []
+        card = ::Harness::Turn::Parts.scene_card(snapshot, @context)
+        parts << card if card
+
+        view   = ::Harness::Turn::Perception.observable_view(@context)
+        digest = ::Harness::Turn::Perception.view_digest(view)
+        eyes = ::Harness::Turn::Perception.render(
+          context: @context, parts: parts, view: view,
+          include_figures: true, logger: logger
+        )
+        if eyes
+          parts << { kind: :perception, text: scrub_player_reference(eyes) }
+          @scene_manager.active&.perceived_view = { "digest" => digest, "view" => view }
+        end
+        join_parts(parts)
+      end
+
       private
 
       # Names of NPCs who staged a line this turn — their prose already voiced

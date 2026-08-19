@@ -39,6 +39,9 @@ RSpec.describe Harness::Driver::Session do
 
     expect(result).to include("narration", "game_time", "location", "receipt")
     expect(result["location"]).to eq("Saltmere")
+    # The play surface is the DISPLAY join (includes display-only perception
+    # prose), not the bare fiction record.
+    expect(result["narration"]).to include("The room sits quiet.")
     expect(result["receipt"]).to be_a(Hash)
     expect(result["receipt"]["runners"]).to include("inspection")
     expect(result["receipt"]["input"]).to eq("look around")

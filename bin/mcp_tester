@@ -1,0 +1,131 @@
+#!/usr/bin/env ruby
+# MCP stdio server exposing the playtester verbs over Driver::Session.
+# The tester (a Claude session pointed at this command) plays the game as a
+# player with a notepad: it plays, flags what looks wrong, and ends with a
+# recount. Runs against the SCENARIO database only.
+#
+#   claude mcp add harness-playtester -- bin/mcp_tester
+#
+# Each server process owns one run folder under scenario_runs/ holding
+# per-turn snapshots, flags.jsonl (evidence bundles), and report.json.
+
+# stdout is the JSON-RPC channel — anything Rails prints during boot would
+# corrupt it. Swap in a null stdout until the transport takes over.
+real_stdout = $stdout
+$stdout = File.open(File::NULL, "w")
+
+# Same .env convention as bin/play; shell wins.
+env_path = File.expand_path("../.env", __dir__)
+if File.exist?(env_path)
+  File.foreach(env_path) do |line|
+    line = line.strip
+    next if line.empty? || line.start_with?("#")
+    key, _, value = line.partition("=")
+    next if key.empty?
+    value = value.strip
+    value = value[1..-2] if value.start_with?('"') && value.end_with?('"')
+    value = value[1..-2] if value.start_with?("'") && value.end_with?("'")
+    ENV[key.strip] ||= value
+  end
+end
+
+ENV["RAILS_ENV"] = "scenario"
+require_relative "../config/environment"
+require "mcp"
+ActiveRecord::Migration.verbose = false
+ActiveRecord::Tasks::DatabaseTasks.prepare_all
+
+logger = Logger.new(Rails.root.join("log/scenario.log"))
+logger.level = Logger::DEBUG
+Rails.logger = logger
+ActiveRecord::Base.logger = logger
+
+run_dir = Rails.root.join("scenario_runs", Time.now.strftime("run-%Y%m%d-%H%M%S")).to_s
+tester = Harness::Driver::McpTester.new(
+  run_dir: run_dir, logger: logger,
+  log_path: Rails.root.join("log/scenario.log").to_s
+)
+logger.info { "[mcp_tester] run folder: #{run_dir}" }
+
+server = MCP::Server.new(
+  name:    "harness-playtester",
+  version: "0.1.0",
+  instructions: <<~TXT
+    Playtest harness for a solo text RPG on slow local inference (a turn can
+    take a minute or more). You are a curious player, not an auditor: play
+    normally, and when something a player would notice seems wrong — a silent
+    turn, a contradiction, someone who shouldn't be there — call flag with
+    what you observed. Do not investigate causes; evidence is captured
+    server-side. When you travel, name a concrete place the narration has
+    mentioned (a venue, a settlement, a person to seek out) — vague
+    directions like "down the street" have nowhere to resolve to.
+    checkpoint/rewind jump back to a save point, retry reruns the last turn
+    verbatim once to see if an oddity reproduces. Finish every session with
+    end_scenario: what you did, what felt off, whether you achieved what you
+    set out to do.
+  TXT
+)
+
+# Every verb returns pretty JSON; errors come back as MCP tool errors with
+# the message only (no backtraces — the tester can't act on them anyway).
+answer = lambda do |&block|
+  MCP::Tool::Response.new([ { type: "text", text: JSON.pretty_generate(block.call) } ])
+rescue StandardError => e
+  logger.warn { "[mcp_tester] verb error: #{e.class}: #{e.message}" }
+  MCP::Tool::Response.new([ { type: "text", text: e.message } ], error: true)
+end
+
+# NOTE: the gem invokes tool blocks as `call(**args, server_context:)` —
+# arguments arrive as keywords, not as one positional hash.
+server.define_tool(
+  name: "start_scenario",
+  description: "Generate a fresh world and drop you in it as a level-1 player character. " \
+               "Slow (full worldgen). Optional seed reproduces a world. " \
+               "Calling it again abandons the current run and starts over.",
+  input_schema: { properties: { seed: { type: "integer" } }, required: [] }
+) { |seed: nil, server_context: nil| answer.call { tester.start_scenario(seed: seed) } }
+
+server.define_tool(
+  name: "play_turn",
+  description: "Take one turn: say what you do or say, in plain player language. " \
+               "Returns the narration a player would see. Expect a minute or more per turn.",
+  input_schema: { properties: { input: { type: "string" } }, required: [ "input" ] }
+) { |input:, server_context: nil| answer.call { tester.play_turn(input: input) } }
+
+server.define_tool(
+  name: "flag",
+  description: "Note that something looked wrong from the player's chair (a silent turn, a " \
+               "contradiction, a person or thing that makes no sense). One or two sentences of " \
+               "WHAT you observed — never why. Evidence is bundled automatically.",
+  input_schema: { properties: { observation: { type: "string" } }, required: [ "observation" ] }
+) { |observation:, server_context: nil| answer.call { tester.flag(observation: observation) } }
+
+server.define_tool(
+  name: "checkpoint",
+  description: "Save the current state under a label so you can rewind to it later.",
+  input_schema: { properties: { label: { type: "string" } }, required: [ "label" ] }
+) { |label:, server_context: nil| answer.call { tester.checkpoint(label: label) } }
+
+server.define_tool(
+  name: "rewind",
+  description: "Jump back to a checkpoint. Turns played after it are gone (no branching).",
+  input_schema: { properties: { label: { type: "string" } }, required: [ "label" ] }
+) { |label:, server_context: nil| answer.call { tester.rewind(label: label) } }
+
+server.define_tool(
+  name: "retry_turn",
+  description: "Rewind one turn and re-run it verbatim (same input, same dice) — use once to " \
+               "see whether an oddity reproduces, then move on either way.",
+  input_schema: { properties: {}, required: [] }
+) { |server_context: nil| answer.call { tester.retry_turn } }
+
+server.define_tool(
+  name: "end_scenario",
+  description: "Finish the session with your recount: what you did, what didn't work well, " \
+               "and whether you ultimately succeeded at what you set out to do.",
+  input_schema: { properties: { recount: { type: "string" }, succeeded: { type: "boolean" } },
+                  required: [ "recount", "succeeded" ] }
+) { |recount:, succeeded:, server_context: nil| answer.call { tester.end_scenario(recount: recount, succeeded: succeeded) } }
+
+$stdout = real_stdout
+MCP::Server::Transports::StdioTransport.new(server).open

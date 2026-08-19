@@ -46,3 +46,6 @@ tests/test_*
 
 # Replay-rig save-states (per-turn snapshots + scenario shelf)
 /snapshots/
+
+# MCP tester run folders (snapshots, flags, reports — perishable diagnostics)
+/scenario_runs/

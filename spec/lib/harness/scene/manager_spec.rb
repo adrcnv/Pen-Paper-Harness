@@ -31,6 +31,21 @@ RSpec.describe Harness::Scene::Manager do
 
   let(:manager) { described_class.new(context: context, logger: logger) }
 
+  describe "turn-pinned rng" do
+    it "reads the turn-pinned scene stream at use time when no rng is injected (retry replays the same draws)" do
+      mgr = described_class.new(context: context, logger: logger)
+      Harness::RNG.reset!(7)
+      first = mgr.send(:rng).rand
+      Harness::RNG.reset!(7)
+      expect(mgr.send(:rng).rand).to eq(first)
+    end
+
+    it "prefers an injected rng over the global stream" do
+      mgr = described_class.new(context: context, logger: logger, rng: Random.new(3))
+      expect(mgr.send(:rng).rand).to eq(Random.new(3).rand)
+    end
+  end
+
   describe "#enter / #ensure_entered" do
     let(:present_npc_names) { [ "Maren" ] }
 
