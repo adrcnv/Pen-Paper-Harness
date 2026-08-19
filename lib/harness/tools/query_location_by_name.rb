@@ -39,7 +39,7 @@ module Harness
         return { "error" => "name must be a non-empty string" } unless name.is_a?(String) && !name.strip.empty?
         name = name.strip
 
-        if (loc = ::Location.find_by(name: name))
+        if (loc = ::Location.find_by_name_normalized(name))
           return found_payload(loc)
         end
 

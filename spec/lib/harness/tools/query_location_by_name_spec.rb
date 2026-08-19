@@ -16,6 +16,22 @@ RSpec.describe Harness::Tools::QueryLocationByName do
       expect(result["biome"]).to eq("lowland")
     end
 
+    it "finds article/case variants of a stored name (world-fork guard)" do
+      huts = Location.create!(name: "the Upper Huts", parent: saltmere)
+      [ "Upper Huts", "THE UPPER HUTS", "upper huts" ].each do |variant|
+        result = described_class.new.call({ "name" => variant }, context)
+        expect(result["found"]).to be(true), "expected #{variant.inspect} to resolve"
+        expect(result["location_id"]).to eq(huts.id)
+      end
+    end
+
+    it "prefers the exact-name row when a forked save holds both variants" do
+      articled = Location.create!(name: "the Upper Huts", parent: saltmere)
+      bare     = Location.create!(name: "Upper Huts", parent: saltmere)
+      expect(described_class.new.call({ "name" => "Upper Huts" }, context)["location_id"]).to eq(bare.id)
+      expect(described_class.new.call({ "name" => "the Upper Huts" }, context)["location_id"]).to eq(articled.id)
+    end
+
     it "returns sublocation row data with parent_id set" do
       tavern
       result = described_class.new.call({ "name" => "Tavern" }, context)

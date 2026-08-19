@@ -66,7 +66,9 @@ module Harness
         return { "error" => "description must be a non-empty string" } unless description.is_a?(String) && !description.strip.empty?
         return { "error" => "connection must be a non-empty string" }  unless connection.is_a?(String) && !connection.strip.empty?
         return { "error" => "type must be one of #{ALLOWED_TYPES.inspect}" } unless ALLOWED_TYPES.include?(type)
-        return { "error" => "name #{name.inspect} already exists as a Location" } if ::Location.exists?(name: name)
+        if (existing = ::Location.find_by_name_normalized(name))
+          return { "error" => "name #{name.inspect} already exists as a Location (location_id=#{existing.id}, #{existing.name.inspect}) — use that id instead of creating a new place" }
+        end
         return { "error" => "name #{name.inspect} already exists as a Faction (kingdom/guild) — pick a distinct place name" } if ::Faction.exists?(name: name)
 
         case type

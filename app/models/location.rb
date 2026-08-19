@@ -39,4 +39,22 @@ class Location < ApplicationRecord
   def residence?
     settlement? || lair?
   end
+
+  # Article/case-insensitive name lookup: "Upper Huts" and "the Upper Huts"
+  # are the SAME place. The tools' exact-string checks let worldbuilding
+  # mint an article-variant duplicate row, forking a location and splitting
+  # its cast across the copies (first Sonnet tester run, 2026-08-19).
+  ARTICLES = %w[the a an].freeze
+
+  def self.name_variants(name)
+    base = name.to_s.strip.sub(/\A(?:#{ARTICLES.join('|')})\s+/i, "")
+    ([ base ] + ARTICLES.map { |a| "#{a} #{base}" }).map(&:downcase)
+  end
+
+  # Exact match wins over an article/case variant when both exist (forked
+  # saves predating the guard).
+  def self.find_by_name_normalized(name)
+    matches = where("LOWER(name) IN (?)", name_variants(name)).to_a
+    matches.find { |l| l.name.casecmp?(name.to_s.strip) } || matches.first
+  end
 end

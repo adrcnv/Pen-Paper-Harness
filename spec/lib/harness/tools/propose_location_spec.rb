@@ -214,5 +214,17 @@ RSpec.describe Harness::Tools::ProposeLocation do
       )
       expect(result["error"]).to match(/already exists/)
     end
+
+    it "rejects article/case variants of an existing name and surfaces the existing id (world-fork guard)" do
+      huts = Location.create!(name: "the Upper Huts", parent: saltmere)
+      [ "Upper Huts", "THE UPPER HUTS", "upper huts" ].each do |variant|
+        result = described_class.new.call(
+          { "name" => variant, "description" => "y", "type" => "sublocation", "parent_id" => saltmere.id, "connection" => "z" },
+          context
+        )
+        expect(result["error"]).to match(/already exists/), "expected #{variant.inspect} to collide"
+        expect(result["error"]).to include("location_id=#{huts.id}")
+      end
+    end
   end
 end
