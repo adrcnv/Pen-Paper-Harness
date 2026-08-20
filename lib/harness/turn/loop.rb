@@ -115,6 +115,7 @@ module Harness
 
         transcript = Transcript.new(input: input, location_id: @context.player_location.id)
         transcript.llm_seed = turn_seed
+        @context.turn_transcript = transcript
         logger.info { "[Turn::Loop] input=#{input.inspect} location=#{@context.player_location.name}" }
 
         begin

@@ -9,7 +9,7 @@ RSpec.describe Harness::Scene::InternalState::Prompt do
     Obligation.create!(debtor: player, creditor: torvin, kind: "coins", amount: nil,
                        terms: "A share of the barge pay", due: "after the loading", game_time: 0)
     h = described_class.character_hash(torvin)
-    expect(h["obligations"]).to eq([ "Gu owes you coins (amount unfixed) — A share of the barge pay — due: after the loading" ])
+    expect(h["obligations"]).to eq([ "Gu owes Torvin coins (amount unfixed) — A share of the barge pay — due: after the loading" ])
   end
 
   it "omits the obligations key when the character has none open" do

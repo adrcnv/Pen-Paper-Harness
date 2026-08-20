@@ -47,23 +47,31 @@ tester = Harness::Driver::McpTester.new(
 )
 logger.info { "[mcp_tester] run folder: #{run_dir}" }
 
+# Instructions arrive with the MCP handshake — the tester needs nothing
+# pasted. Three layers: the charter (how to be a tester, below), the game
+# doc (what this is and how to play), and an optional per-run brief
+# (ARGV[0], default docs/play/BRIEF.md — edit or swap that file between
+# runs; the server re-reads it at every launch).
+charter = <<~TXT
+  You are playtesting a game (rules below) on slow local inference — a turn
+  can take a minute or more. Be a curious player, not an auditor: play
+  normally toward something you want, and when something a player would
+  notice seems wrong — a silent turn, a contradiction, someone who
+  shouldn't be there — call flag with what you observed. Never investigate
+  causes; evidence is captured server-side. checkpoint/rewind jump back to
+  a save point; retry reruns the last turn verbatim once to see if an
+  oddity reproduces. Finish every session with end_scenario: what you did,
+  what felt off, whether you achieved what you set out to do.
+TXT
+
+game_doc   = File.read(Rails.root.join("docs/play/00-the-game.md")) rescue nil
+brief_path = ARGV[0] || Rails.root.join("docs/play/BRIEF.md").to_s
+brief      = File.exist?(brief_path) ? File.read(brief_path) : nil
+
 server = MCP::Server.new(
   name:    "harness-playtester",
   version: "0.1.0",
-  instructions: <<~TXT
-    Playtest harness for a solo text RPG on slow local inference (a turn can
-    take a minute or more). You are a curious player, not an auditor: play
-    normally, and when something a player would notice seems wrong — a silent
-    turn, a contradiction, someone who shouldn't be there — call flag with
-    what you observed. Do not investigate causes; evidence is captured
-    server-side. When you travel, name a concrete place the narration has
-    mentioned (a venue, a settlement, a person to seek out) — vague
-    directions like "down the street" have nowhere to resolve to.
-    checkpoint/rewind jump back to a save point, retry reruns the last turn
-    verbatim once to see if an oddity reproduces. Finish every session with
-    end_scenario: what you did, what felt off, whether you achieved what you
-    set out to do.
-  TXT
+  instructions: [ charter, game_doc, brief ].compact.join("\n\n")
 )
 
 # Every verb returns pretty JSON; errors come back as MCP tool errors with

@@ -205,6 +205,40 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Location.where("LOWER(name) = ?", "the old bridge")).to be_empty
     end
 
+    describe "machine-tense (a payment executed this turn is history, not a debt)" do
+      def ctx_with_transfer(from_id, to_id)
+        ctx = Harness::Turn::Context.new(player_location: tavern)
+        ctx.turn_transcript = Struct.new(:tool_calls).new(
+          [ { "name" => "transfer_coins", "result" => { "from_id" => from_id, "to_id" => to_id, "amount" => 3 } } ]
+        )
+        ctx
+      end
+
+      it "skips a coins deal when the matching transfer already executed this turn" do
+        expect {
+          capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "coins", "amount" => 3,
+                        "terms" => "Three coppers for the sweat"),
+                  context: ctx_with_transfer(speaker_row.id, player.id))
+        }.not_to change(Obligation, :count)
+      end
+
+      it "still mints when the executed transfer was a different pair or direction" do
+        expect {
+          capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 3,
+                        "terms" => "Three coppers for the ale"),
+                  context: ctx_with_transfer(speaker_row.id, player.id))
+        }.to change(Obligation, :count).by(1)
+      end
+
+      it "never suppresses deed deals (only coins have a transfer to match)" do
+        expect {
+          capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed",
+                        "terms" => "Haul the stone"),
+                  context: ctx_with_transfer(player.id, speaker_row.id))
+        }.to change(Obligation, :count).by(1)
+      end
+    end
+
     describe "discharged (the settle writer — rows die the way they're born, by the spoken word)" do
       def discharge(*ds) = { "discharged" => ds }
 

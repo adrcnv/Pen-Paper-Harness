@@ -246,8 +246,10 @@ module Harness
           # Seat-relative verdict, rendered in Ruby. Handed the player-centric
           # outcome ("critical_failure"), the voicing model flipped ownership
           # (Leofstan conceding a game he'd won — deixis inversion). Who won
-          # is computed here, never inferred by the model.
-          "verdict" => (player_won ? "you lost — it went the player's way#{grade}" : "you won — the player's attempt failed#{grade}")
+          # is computed here, never inferred by the model. Third person by
+          # name: second-person payload strings get echoed back as "I"
+          # (register pollution — the Bogumil first-person class).
+          "verdict" => (player_won ? "#{target['name']} lost — it went the player's way#{grade}" : "#{target['name']} won — the player's attempt failed#{grade}")
         }
         payload["effect"] = ability["description"] if ability && player_won
         active&.record_contest!(key, payload)
@@ -626,8 +628,9 @@ module Harness
       # never re-litigates whether the deal exists.
       DEBT_CAP = 4
       def debts_for(id, now = nil)
+        name = ::Character.find_by(id: id)&.name
         ::Obligation.outstanding.involving(id).order(id: :desc).limit(DEBT_CAP)
-                    .map { |o| o.line_for(id, now: now) }.reverse.presence
+                    .map { |o| o.line_for(id, now: now, name: name) }.reverse.presence
       rescue ::StandardError
         nil
       end

@@ -57,7 +57,7 @@ module Harness
         OBLIGATION_LIMIT = 3
         def self.obligations(c)
           ::Obligation.outstanding.involving(c.id).order(id: :desc).limit(OBLIGATION_LIMIT)
-                      .map { |o| o.line_for(c.id) }.presence
+                      .map { |o| o.line_for(c.id, name: c.name) }.presence
         rescue ::StandardError
           nil
         end

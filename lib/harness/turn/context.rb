@@ -28,6 +28,11 @@ module Harness
       attr_accessor :player_location, :scene_dirty, :game_time
       attr_accessor :llm_grunt, :llm_nuance
       attr_accessor :active_scene
+      # The live turn's Transcript, set by Turn::Loop at turn start. The
+      # turn's tool trail is world truth mid-turn — capture's machine-tense
+      # guard reads it (a payment that already EXECUTED this turn is
+      # history, not a debt, no matter how the prose phrased it).
+      attr_accessor :turn_transcript
       attr_reader   :history
       # Mechanical player confirmation for an irreversible scene change. A proc
       # `->(destination_name) { true|false }` set by the frontend (bin/play wires

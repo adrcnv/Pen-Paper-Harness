@@ -255,7 +255,7 @@ RSpec.describe Harness::Scene::Initiative do
     end.new
     a = active_with(present: [ maren ], agendas: {})
     run(a, transcript)
-    expect(selector_prompt).to include("Hero owes you 9 coins — For the mended cloak")
+    expect(selector_prompt).to include("Hero owes Maren 9 coins — For the mended cloak")
   end
 
   it "no-ops with no present NPCs" do

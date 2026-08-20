@@ -84,11 +84,14 @@ class Obligation < ApplicationRecord
   # payload and the seeder; the perspective belongs to `viewer_id`. With
   # `now`, a parsed due gains urgency ("(in 2 hours)" / "(OVERDUE)") —
   # computed fresh at read time, never stored.
-  def line_for(viewer_id, now: nil)
+  # `name:` renders the viewer in third person ("Bogumil owes ...") — for
+  # LLM payloads, where second-person strings get echoed back as "I"
+  # (register pollution). Without it, the player-facing "You owe ..." form.
+  def line_for(viewer_id, now: nil, name: nil)
     mine   = debtor_id == viewer_id
     other  = mine ? creditor : debtor
     amount_part = kind == "coins" ? " #{amount ? "#{amount} coins" : 'coins (amount unfixed)'}" : ""
-    head = mine ? "You owe #{other.name}#{amount_part}" : "#{other.name} owes you#{amount_part}"
+    head = mine ? "#{name || 'You'} owe#{name ? 's' : ''} #{other.name}#{amount_part}" : "#{other.name} owes #{name || 'you'}#{amount_part}"
     parts = [ terms.presence, due.presence && "due: #{due}#{due_urgency(now)}" ].compact
     parts << "BROKEN — never honoured" if status == "broken"
     tail = parts.join(" — ")

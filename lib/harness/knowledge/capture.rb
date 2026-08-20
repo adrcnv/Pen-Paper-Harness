@@ -219,6 +219,15 @@ module Harness
             pairs << pair
             next
           end
+          # Machine-tense: a coin payment that already EXECUTED this turn is
+          # history, not a debt — judged from the turn's tool trail, never
+          # from the prose's tense (the model narrating the handover it also
+          # performed must not double-book it as owed).
+          if d["kind"] == "coins" && transfer_executed_this_turn?(debtor, creditor)
+            @logger.info { "[Knowledge::Capture] deal skipped (transfer #{debtor.name}→#{creditor.name} already executed this turn — paid, not owed)" }
+            pairs << pair
+            next
+          end
           amount = d["amount"].is_a?(::Integer) && d["amount"].positive? ? d["amount"] : nil
           row = ::Obligation.create!(
             debtor: debtor, creditor: creditor, kind: d["kind"].to_s, amount: amount,
@@ -253,6 +262,14 @@ module Harness
           names = ::Character.where(id: pair).pluck(:name)
           names.size == 2 && names.all? { |n| content.match?(/\b#{::Regexp.escape(n.split.first)}\b/i) }
         end
+      end
+
+      def transfer_executed_this_turn?(debtor, creditor)
+        calls = @context.respond_to?(:turn_transcript) ? @context&.turn_transcript&.tool_calls : nil
+        Array(calls).any? { |tc|
+          tc["name"] == "transfer_coins" &&
+            tc.dig("result", "from_id") == debtor.id && tc.dig("result", "to_id") == creditor.id
+        }
       end
 
       def extract_discharges(parsed)

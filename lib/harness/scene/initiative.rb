@@ -195,8 +195,9 @@ module Harness
       end
 
       def debt_lines(id)
+        name = ::Character.find_by(id: id)&.name
         ::Obligation.outstanding.involving(id).order(id: :desc).limit(2)
-                    .map { |o| o.line_for(id, now: @context.game_time) }.presence
+                    .map { |o| o.line_for(id, now: @context.game_time, name: name) }.presence
       rescue ::StandardError
         nil
       end

@@ -100,7 +100,7 @@ RSpec.describe Harness::Runners::Conversation do
     scene = Harness::Tools::QueryScene.build(ctx)
 
     described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step)
-    expect(voicing).to include("Hero owes you 12 coins — For the room — due: by first light")
+    expect(voicing).to include("Hero owes Tomas 12 coins — For the room — due: by first light")
   end
 
   it "renders an event's cast into the you-block line, excluding the holder (participation as visible links)" do
@@ -520,7 +520,7 @@ RSpec.describe Harness::Runners::Conversation do
       outcome = described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
 
       expect(voiced.first).to include('"contest"')
-      expect(voiced.first).to include("you lost — it went the player's way")
+      expect(voiced.first).to include("Tomas lost — it went the player's way")
       contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
       expect(contest_record).to be_present
       expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:social" ])
@@ -535,7 +535,7 @@ RSpec.describe Harness::Runners::Conversation do
       runner.run(context: ctx, scene: scene, input: "press Tomas", step: contest_step("target" => "Tomas"))
       runner.run(context: ctx, scene: scene, input: "press Tomas HARDER", step: contest_step("target" => "Tomas"))
 
-      expect(voiced.last).to include("you won — the player's attempt failed") # verdict re-served, not rerolled
+      expect(voiced.last).to include("Tomas won — the player's attempt failed") # verdict re-served, not rerolled
     end
 
     it "binds a planner stat as a symmetric opposed game, ledger-keyed by stat" do
