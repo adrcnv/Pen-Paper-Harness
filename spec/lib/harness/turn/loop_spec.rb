@@ -63,8 +63,9 @@ RSpec.describe Harness::Turn::Loop do
       expect(transcript.tool_calls.size).to eq(2)
       expect(transcript.tool_calls.first["name"]).to eq("query_scene")
       expect(transcript.tool_calls.last["result"]).to include("name" => "Maren")
-      # No narration model exists; reads produce no display parts.
-      expect(transcript.parts).to eq([])
+      # Reads produce no diegetic parts — the display floor covers the
+      # visual blank; narration (the fiction record) stays empty.
+      expect(transcript.parts).to eq([ { kind: :stock, text: "Nothing comes of it." } ])
       expect(transcript.narration).to eq("")
     end
 
@@ -88,6 +89,35 @@ RSpec.describe Harness::Turn::Loop do
     it "appends input/narration to the context history" do
       run(reasoning: [ event_call("the tavern is dim") ])
       expect(context.history).to eq([ { "input" => "player input", "narration" => "the tavern is dim" } ])
+    end
+  end
+
+  describe "display floor (mini-narrators)" do
+    class NullRunner < Harness::Runners::Base
+      def initialize(null_line) = @null_line = null_line
+      def run(context:, scene:, input:, step:)
+        Harness::Runners::Outcome.new(tool_calls: [], status: :ok, null_line: @null_line)
+      end
+    end
+
+    def null_loop(null_line)
+      allow(Harness::Planner).to receive(:plan_for).and_return(
+        "plan" => [ { "runner" => "nullr", "reason" => "x", "args" => {} } ],
+        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
+      )
+      described_class.new(adapter: Harness::LLM::FakeAdapter.new(narration: ""), context: context,
+                          registry: { "nullr" => NullRunner.new(null_line) })
+    end
+
+    it "renders the runner's null_line when the turn ends visually empty" do
+      transcript = null_loop("Nothing around you stirs in answer.").run_turn(input: "call out")
+      expect(transcript.parts).to eq([ { kind: :stock, text: "Nothing around you stirs in answer." } ])
+      expect(transcript.narration).to eq("")   # display-only: fiction record stays clean
+    end
+
+    it "falls back to the stock line when no runner voiced a null" do
+      transcript = null_loop(nil).run_turn(input: "hm")
+      expect(transcript.parts).to eq([ { kind: :stock, text: "Nothing comes of it." } ])
     end
   end
 

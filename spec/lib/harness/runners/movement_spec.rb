@@ -85,6 +85,8 @@ RSpec.describe Harness::Runners::Movement do
     expect(outcome.status).to eq(:redispatch)
     expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "query_location_by_name" ])
     expect(player.reload.location_id).to eq(tavern.id) # didn't move
+    # Mini-narrator: if the whole turn dies empty, the player learns why.
+    expect(outcome.null_line).to include("Nowheresville")
   end
 
   it "yields (early-exit no-op) on a 'none' decision — approaching a present person is not a move" do

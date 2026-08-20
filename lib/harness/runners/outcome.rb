@@ -25,8 +25,13 @@ module Harness
     #                 Hard terminator: the executor aborts remaining steps, and
     #                 the turn loop narrates/records NOTHING and shows `note` as
     #                 an OOC notice — the turn leaves no trace (reset to before).
-    Outcome = Struct.new(:tool_calls, :scene_dirty, :status, :note, keyword_init: true) do
-      def initialize(tool_calls: [], scene_dirty: false, status: :ok, note: nil)
+    # null_line: the runner's own player-readable sentence for "this step
+    # did nothing" (the mini-narrator). Rendered ONLY by the turn loop's
+    # display floor when the WHOLE turn ends visually empty — a null step
+    # chained beside a rendering sibling stays blank, as ruled. `note` stays
+    # machine-facing; null_line is the player-facing twin.
+    Outcome = Struct.new(:tool_calls, :scene_dirty, :status, :note, :null_line, keyword_init: true) do
+      def initialize(tool_calls: [], scene_dirty: false, status: :ok, note: nil, null_line: nil)
         super
       end
 

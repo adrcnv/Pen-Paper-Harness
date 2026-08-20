@@ -71,7 +71,11 @@ module Harness
           }.compact, tcs, subsystem: :runner_environment_fragment)
         end
 
-        Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
+        # A pure-flavor poke that committed nothing stays blank when a sibling
+        # runner renders; the null_line covers the solo case (the old "let
+        # narration render it" assumed the executed narrator).
+        Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok,
+                    null_line: (tcs.empty? ? "Nothing comes of it — #{action}." : nil))
       end
 
       private

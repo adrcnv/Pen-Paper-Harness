@@ -95,8 +95,8 @@ module Harness
         end
       end
 
-      def redispatch(note, tool_calls = [])
-        Outcome.new(tool_calls: tool_calls, scene_dirty: false, status: :redispatch, note: note)
+      def redispatch(note, tool_calls = [], null_line: nil)
+        Outcome.new(tool_calls: tool_calls, scene_dirty: false, status: :redispatch, note: note, null_line: null_line)
       end
 
       # Deterministic dead end (the referent doesn't exist) — the executor

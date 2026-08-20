@@ -23,6 +23,9 @@ RSpec.describe Harness::Runners::Environment do
     out = run(ctx_emitting("action" => "kick the locked gate", "roll" => nil, "yields_item" => nil, "location_change" => nil), "kick the gate")
     expect(out.status).to eq(:ok)
     expect(out.tool_calls).to be_empty
+    # Mini-narrator: carries its null explanation for the display floor
+    # (rendered only if the whole turn ends empty).
+    expect(out.null_line).to eq("Nothing comes of it — kick the locked gate.")
   end
 
   it "renders its own fragment after committing a delta" do

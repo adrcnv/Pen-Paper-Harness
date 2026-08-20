@@ -282,6 +282,19 @@ module Harness
             end
           end
 
+          # The display floor (mini-narrator backstop): a turn must never end
+          # visually EMPTY — the first Sonnet tester run proved blank turns
+          # read as broken. Runners voice their own nulls via Outcome#null_line
+          # (causal authority = rendering authority; the first recorded is the
+          # root cause); anything that still slips through gets the stock
+          # line. Display-only: narration and scene history stay clean —
+          # nothing diegetic happened. Halted turns keep their no-trace
+          # contract (the notice explains), combat renders elsewhere.
+          if transcript.parts.empty? && narration.to_s.strip.empty? &&
+             !transcript.halted && !combat_result && !@scene_manager.active&.in_combat?
+            transcript.parts << { kind: :stock, text: transcript.null_lines.first || "Nothing comes of it." }
+          end
+
           # Record only the diegetic narration to scene history (keeps the
           # fiction record clean). The OOC notice below is display-only. A turn
           # with nothing diegetic to say (a meta-only no-op) records nothing.
@@ -454,6 +467,7 @@ module Harness
 
           outcome = runner.run(context: @context, scene: scene, input: input, step: step)
           transcript.runners_ran << step.runner
+          transcript.null_lines << outcome.null_line if outcome.null_line
           transcript.record_tool_calls(outcome.tool_calls)
           outcome.tool_calls.each do |tc|
             next unless tc["name"] == "propose_location"

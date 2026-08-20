@@ -59,8 +59,11 @@ module Harness
             Outcome.new(tool_calls: tcs, scene_dirty: true, status: :ok)
           else
             # A named place that doesn't exist yet → a real move that needs the
-            # place created first. Re-dispatch (→ worldbuilding, once built).
-            redispatch("destination '#{name}' not found", tcs)
+            # place created first. Re-dispatch (→ worldbuilding). The null_line
+            # renders only if the whole turn ends empty — the player learns the
+            # real reason instead of staring at a blank turn.
+            redispatch("destination '#{name}' not found", tcs,
+                       null_line: "There's no place called \"#{name}\" that you know of.")
           end
 
         else

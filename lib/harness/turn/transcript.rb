@@ -17,6 +17,10 @@ module Harness
       # initiative skips a turn where the player was already in conversation, so
       # an NPC isn't forced to pipe up on top of the dialogue they just had.
       attr_accessor :runners_ran
+      # Player-readable null explanations collected from runner outcomes
+      # (Outcome#null_line), in chain order. The display floor renders the
+      # FIRST one — the root cause — if the turn ends visually empty.
+      attr_accessor :null_lines
 
       def initialize(input:, location_id: nil)
         @input            = input
@@ -38,6 +42,7 @@ module Harness
         # refusal, and can rephrase. The frontend prints it after narration.
         @notice           = nil
         @runners_ran      = []
+        @null_lines       = []
         @parts            = []
       end
 
