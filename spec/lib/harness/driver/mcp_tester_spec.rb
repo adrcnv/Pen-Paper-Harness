@@ -63,6 +63,16 @@ RSpec.describe Harness::Driver::McpTester do
     expect(entry["receipts"].last).to include("turn" => 1, "input" => "look around")
   end
 
+  it "sheet and map return the player surface" do
+    tester.start_scenario(seed: 7)
+    sheet = tester.sheet
+    expect(sheet["sheet"]).to include("── Tester the Fighter ──")
+    expect(sheet["sheet"]).to include("stats:")
+
+    result = tester.map
+    expect(result.key?("map") || result.key?("note")).to be(true)
+  end
+
   it "checkpoint records the turn; rewind rejects unknown labels" do
     tester.start_scenario(seed: 7)
     tester.play_turn(input: "look around")

@@ -113,6 +113,19 @@ server.define_tool(
 ) { |label:, server_context: nil| answer.call { tester.rewind(label: label) } }
 
 server.define_tool(
+  name: "sheet",
+  description: "Your character sheet — level, XP, HP, coins, stats, active effects, abilities, " \
+               "inventory, debts, followers. The same view a human player gets from /sheet.",
+  input_schema: { properties: {}, required: [] }
+) { |server_context: nil| answer.call { tester.sheet } }
+
+server.define_tool(
+  name: "map",
+  description: "The ASCII world map with settlements — the same view a human player gets from /map.",
+  input_schema: { properties: {}, required: [] }
+) { |server_context: nil| answer.call { tester.map } }
+
+server.define_tool(
   name: "retry_turn",
   description: "Rewind one turn and re-run it verbatim (same input, same dice) — use once to " \
                "see whether an oddity reproduces, then move on either way.",

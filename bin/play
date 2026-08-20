@@ -636,72 +636,7 @@ loop do
     if p.nil?
       puts "no player"
     else
-      next_threshold = Harness::Character::XP.threshold_for(p.level + 1)
-      puts "── #{p.name} the #{p.character_class.capitalize} ──"
-      puts "  level:  #{p.level}  (XP #{p.xp} / #{next_threshold} to next)"
-      puts "  HP:     #{p.current_hp}/#{p.max_hp}"
-      puts "  coins:  #{p.coins}"
-      puts "  stats:  STR=#{p.strength}  DEX=#{p.dexterity}  CON=#{p.constitution}  INT=#{p.intelligence}  WIS=#{p.wisdom}  CHA=#{p.charisma}"
-      now = SessionState.current&.game_time.to_i
-      fx  = Harness::Character::ActiveEffects.active_for(p, now: now)
-      if fx.any?
-        puts "  effects:"
-        fx.each { |e| puts "    #{e['name']}  (#{[ e['expires_at'].to_i - now, 0 ].max} min left)" }
-      end
-      abilities = Array(p.abilities)
-      if abilities.empty?
-        puts "  abilities: (none — basic attacks only at this level)"
-      else
-        puts "  abilities:"
-        abilities.each do |a|
-          dmg = if a["effect_kind"] == "damage" && a["damage_dice"]
-            scale = a["damage_per_level"] ? " +#{a['damage_per_level']}/lvl" : ""
-            "  damage=#{a['damage_dice']}#{scale}"
-          else
-            ""
-          end
-          area  = a["area"] && a["area"] != "self" ? "  area=#{a['area']}" : ""
-          stat  = a["stat"] || Harness::Abilities::Library.stat_for_ability(ability: a, character_class: p.character_class)
-          puts "    [#{a['effect_kind']}] #{a['name']}  (uses #{a['uses_remaining'].to_i}/#{a['uses_per_rest']}, range=#{a['range']}#{area}, stat=#{stat})"
-          puts "      #{a['description']}"
-          puts "      #{dmg}" unless dmg.empty?
-        end
-      end
-      items = p.items.order(:id).to_a
-      if items.empty?
-        puts "  inventory: (empty)"
-      else
-        puts "  inventory:"
-        items.each do |it|
-          tags = Array(it.properties["tags"]).join(",")
-          mods = Array(it.properties["modifiers"]).map { |m|
-            if m["stat"]        then "#{m['stat'][0,3]}+#{m['value']}"
-            elsif m["damage_dice"] then "#{m['damage_dice']} on #{m['on']}"
-            else m.inspect
-            end
-          }.join(" ")
-          eff  = Array(it.properties["effects"]).map { |e| e["trigger"] }.join(",")
-          line = "    #{it.name}  [#{tags}]"
-          line << "  mods: #{mods}" unless mods.empty?
-          line << "  effect: #{eff}" unless eff.empty?
-          puts line
-        end
-      end
-      debts = Obligation.outstanding.involving(p.id).order(:id)
-      if debts.any?
-        now = context.game_time
-        puts "  debts:"
-        debts.each { |o| puts "    #{o.line_for(p.id, now: now)}" }
-      end
-      followers = Npc.where(location_id: p.location_id).select { |c|
-        c.properties.is_a?(Hash) && c.properties["following_player"] == true
-      }
-      if followers.any?
-        puts "  followers:"
-        followers.each do |f|
-          puts "    [#{f.id}] #{f.name} (#{f.subrole})  L#{f.level} #{f.character_class}  HP #{f.current_hp}/#{f.max_hp}"
-        end
-      end
+      puts Harness::Render.character_sheet(p, now: context.game_time)
     end
     puts
     next

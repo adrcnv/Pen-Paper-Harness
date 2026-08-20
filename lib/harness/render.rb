@@ -196,6 +196,84 @@ module Harness
     end
 
 
+    # The player-facing character sheet — one string, shared by bin/play's
+    # /sheet and the MCP tester's `sheet` verb (a tester is a player; it
+    # gets the player's surface, never ground truth).
+    def character_sheet(player, now:)
+      lines = []
+      next_threshold = ::Harness::Character::XP.threshold_for(player.level + 1)
+      lines << "── #{player.name} the #{player.character_class.capitalize} ──"
+      lines << "  level:  #{player.level}  (XP #{player.xp} / #{next_threshold} to next)"
+      lines << "  HP:     #{player.current_hp}/#{player.max_hp}"
+      lines << "  coins:  #{player.coins}"
+      lines << "  stats:  STR=#{player.strength}  DEX=#{player.dexterity}  CON=#{player.constitution}  INT=#{player.intelligence}  WIS=#{player.wisdom}  CHA=#{player.charisma}"
+
+      fx = ::Harness::Character::ActiveEffects.active_for(player, now: now)
+      if fx.any?
+        lines << "  effects:"
+        fx.each { |e| lines << "    #{e['name']}  (#{[ e['expires_at'].to_i - now, 0 ].max} min left)" }
+      end
+
+      abilities = Array(player.abilities)
+      if abilities.empty?
+        lines << "  abilities: (none — basic attacks only at this level)"
+      else
+        lines << "  abilities:"
+        abilities.each do |a|
+          dmg = if a["effect_kind"] == "damage" && a["damage_dice"]
+            scale = a["damage_per_level"] ? " +#{a['damage_per_level']}/lvl" : ""
+            "  damage=#{a['damage_dice']}#{scale}"
+          else
+            ""
+          end
+          area = a["area"] && a["area"] != "self" ? "  area=#{a['area']}" : ""
+          stat = a["stat"] || ::Harness::Abilities::Library.stat_for_ability(ability: a, character_class: player.character_class)
+          lines << "    [#{a['effect_kind']}] #{a['name']}  (uses #{a['uses_remaining'].to_i}/#{a['uses_per_rest']}, range=#{a['range']}#{area}, stat=#{stat})"
+          lines << "      #{a['description']}"
+          lines << "      #{dmg}" unless dmg.empty?
+        end
+      end
+
+      items = player.items.order(:id).to_a
+      if items.empty?
+        lines << "  inventory: (empty)"
+      else
+        lines << "  inventory:"
+        items.each do |it|
+          tags = Array(it.properties["tags"]).join(",")
+          mods = Array(it.properties["modifiers"]).map { |m|
+            if m["stat"]           then "#{m['stat'][0,3]}+#{m['value']}"
+            elsif m["damage_dice"] then "#{m['damage_dice']} on #{m['on']}"
+            else m.inspect
+            end
+          }.join(" ")
+          eff  = Array(it.properties["effects"]).map { |e| e["trigger"] }.join(",")
+          line = "    #{it.name}  [#{tags}]"
+          line << "  mods: #{mods}" unless mods.empty?
+          line << "  effect: #{eff}" unless eff.empty?
+          lines << line
+        end
+      end
+
+      debts = ::Obligation.outstanding.involving(player.id).order(:id)
+      if debts.any?
+        lines << "  debts:"
+        debts.each { |o| lines << "    #{o.line_for(player.id, now: now)}" }
+      end
+
+      followers = ::Npc.where(location_id: player.location_id).select { |c|
+        c.properties.is_a?(Hash) && c.properties["following_player"] == true
+      }
+      if followers.any?
+        lines << "  followers:"
+        followers.each do |f|
+          lines << "    [#{f.id}] #{f.name} (#{f.subrole})  L#{f.level} #{f.character_class}  HP #{f.current_hp}/#{f.max_hp}"
+        end
+      end
+
+      lines.join("\n")
+    end
+
     # Splice precomputed replacement strings into the text in order. Overlaps
     # were already prevented at collection time, so this is a plain left-to-
     # right weave. Replacements carry their own ANSI (zero display width), so

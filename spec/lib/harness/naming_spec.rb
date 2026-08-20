@@ -82,6 +82,15 @@ RSpec.describe Harness::Naming do
       expect(name).to match(/\AAex (II|III|IV|V|VI|VII)\z/)
     end
 
+    it "rejects the PLAYER's first name in every settlement, not just theirs" do
+      elsewhere = Location.create!(name: "Farhold", x: 90.0, y: 90.0)
+      would_be = described_class.for(location: sub, rng: Random.new(7))
+      Player.create!(name: "#{would_be.split(' ').first} Wanderer", location: elsewhere,
+                     character_class: "fighter", level: 1)
+      name = described_class.unique_for(location: sub, rng: Random.new(7))
+      expect(name.split(" ").first).not_to eq(would_be.split(" ").first)
+    end
+
     it "rejects a first name already taken in the settlement (a first name is an address)" do
       would_be = described_class.for(location: sub, rng: Random.new(7))
       taken_first = would_be.split(" ").first

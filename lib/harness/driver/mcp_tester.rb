@@ -36,6 +36,7 @@ module Harness
         seed ||= Random.new_seed % (2**31)
         @session = @session_factory.call(seed, File.join(@run_dir, "snapshots-#{@starts}"))
         { "status" => "world ready", "seed" => seed,
+          "you_are" => @session.player&.name,
           "location" => @session.player_location&.name, "game_time" => @session.game_time,
           "opening" => @session.opening }.compact
       end
@@ -79,6 +80,20 @@ module Harness
         forget_after(turn)
         { "status" => "rewound", "label" => label, "turn" => turn,
           "location" => @session.player_location&.name, "game_time" => @session.game_time }
+      end
+
+      # Player-surface reads — the same views a human gets from /sheet and
+      # /map in bin/play. NOT ground truth: the no-diagnosis line holds.
+      def sheet
+        ensure_started!
+        { "sheet" => ::Harness::Render.character_sheet(::Player.first, now: @session.game_time) }
+      end
+
+      def map
+        ensure_started!
+        m = ::Harness::Worldgen::FromDb.load
+        return { "note" => "no map — this world wasn't created via worldgen" } if m.cities.empty?
+        { "map" => ::Harness::Worldgen::Ascii.render(m, color: false) }
       end
 
       # Reproduce-once: rewind one turn and re-run it verbatim.

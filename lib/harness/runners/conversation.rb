@@ -928,9 +928,18 @@ module Harness
             },
             "required" => %w[who_owes owed_to kind amount terms due where],
             "additionalProperties" => false
+          } },
+          "discharged" => { "type" => "array", "items" => {
+            "type" => "object",
+            "properties" => {
+              "who_owed" => { "type" => "string" },
+              "kind"     => { "type" => "string", "enum" => %w[coins deed meet] }
+            },
+            "required" => %w[who_owed kind],
+            "additionalProperties" => false
           } }
         },
-        "required" => %w[facts people places deals],
+        "required" => %w[facts people places deals discharged],
         "additionalProperties" => false
       }.freeze
 

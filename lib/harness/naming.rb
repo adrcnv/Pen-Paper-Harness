@@ -89,9 +89,14 @@ module Harness
         root = location
         root = root.parent while root.parent
         ids = [ root.id ] + descendant_ids(root)
-        ::Character.where("location_id IN (:ids) OR home_location_id IN (:ids)", ids: ids).pluck(:name)
-                   .filter_map { |n| n.to_s.strip.split(/\s+/).first&.downcase }
-                   .to_set
+        names = ::Character.where("location_id IN (:ids) OR home_location_id IN (:ids)", ids: ids).pluck(:name)
+        # The player's first name is taken EVERYWHERE, not just where they
+        # stand: first-token-tolerant roster matching means a same-first-name
+        # NPC two towns over walks into every scene as a duplicate-person bug
+        # aimed at the player.
+        names += ::Player.pluck(:name)
+        names.filter_map { |n| n.to_s.strip.split(/\s+/).first&.downcase }
+             .to_set
       end
 
       def descendant_ids(loc)

@@ -34,7 +34,10 @@ module Harness
       end
 
       # Wipe the scenario DB and generate a fresh world + a mechanical player.
-      def new_world!(name: "Tester", character_class: "fighter", cities: nil, kingdoms: nil)
+      # name: nil mints an in-fiction name from the spawn city's culture pools
+      # — a player literally named "Tester" leaks the meta-label into every
+      # NPC line and check description (first Sonnet runs proved it).
+      def new_world!(name: nil, character_class: "fighter", cities: nil, kingdoms: nil)
         wipe_db!
         opts = { seed: @seed, llm: @grunt, logger: @logger }
         opts[:city_count]    = cities   if cities
@@ -46,7 +49,8 @@ module Harness
         raise "worldgen produced no spawn city" unless city
 
         @player = ::Player.create!(
-          name: name, location: city, character_class: character_class,
+          name: name || ::Harness::Naming.unique_for(location: city, rng: @turn_rng),
+          location: city, character_class: character_class,
           level: 1, **STANDARD_ARRAY
         )
         ::Harness::Character::Hatchery.materialize!(@player, llm_grunt: @grunt)

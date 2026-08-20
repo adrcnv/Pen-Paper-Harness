@@ -205,6 +205,47 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Location.where("LOWER(name) = ?", "the old bridge")).to be_empty
     end
 
+    describe "discharged (the settle writer — rows die the way they're born, by the spoken word)" do
+      def discharge(*ds) = { "discharged" => ds }
+
+      it "settles an open obligation when the CREDITOR speaks the release" do
+        ob = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
+                                terms: "Secure the crates", status: "open", game_time: 90)
+        capture(discharge("who_owed" => "Gu", "kind" => "deed"))
+        expect(ob.reload.status).to eq("settled")
+      end
+
+      it "settles the OLDEST open row of that kind between the pair" do
+        older = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
+                                   terms: "Secure the crates", status: "open", game_time: 80)
+        newer = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
+                                   terms: "Move the bunks", status: "open", game_time: 90)
+        capture(discharge("who_owed" => "Gu", "kind" => "deed"))
+        expect(older.reload.status).to eq("settled")
+        expect(newer.reload.status).to eq("open")
+      end
+
+      it "the DEBTOR claiming it's done releases nothing (only the one owed may settle)" do
+        ob = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
+                                terms: "Mend the net for Gu", status: "open", game_time: 90)
+        capture(discharge("who_owed" => "Tomas", "kind" => "deed"))
+        expect(ob.reload.status).to eq("open")
+      end
+
+      it "an imagined debt (no matching open row) settles nothing and doesn't raise" do
+        ob = Obligation.create!(debtor: player, creditor: speaker_row, kind: "coins", amount: 3,
+                                terms: "Three coppers", status: "open", game_time: 90)
+        capture(discharge("who_owed" => "Gu", "kind" => "deed"))
+        expect(ob.reload.status).to eq("open")
+      end
+
+      it "a deal struck and acknowledged done in the same pass settles at birth" do
+        capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed",
+                      "terms" => "Haul the stone").merge(discharge("who_owed" => "Gu", "kind" => "deed")))
+        expect(Obligation.last).to have_attributes(kind: "deed", status: "settled")
+      end
+    end
+
     it "drops a deal whose parties are not the speaker and the player (hearsay doesn't bind)" do
       expect {
         capture(deals("who_owes" => "Mirek", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Mend the fence"))

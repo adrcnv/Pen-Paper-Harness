@@ -75,6 +75,9 @@ module Harness
         # emitted again under `facts`, usually in past tense ("Jay paid…"
         # while the ledger says owed — the split-brain).
         @deal_pairs = write_deals(deals)
+        # Discharges AFTER deals: a bargain struck and acknowledged done in
+        # the same breath (the paid-on-the-spot wage) settles at birth.
+        settle_discharges(extract_discharges(@payload))
         written = facts.filter_map { |f| route(f) }
         persist_embeddings(written)
         # Places named in dialogue → the PlaceRealizer (the buildings twin: mint a
@@ -249,6 +252,38 @@ module Harness
         Array(@deal_pairs).any? do |pair|
           names = ::Character.where(id: pair).pluck(:name)
           names.size == 2 && names.all? { |n| content.match?(/\b#{::Regexp.escape(n.split.first)}\b/i) }
+        end
+      end
+
+      def extract_discharges(parsed)
+        Array(parsed.is_a?(::Hash) ? parsed["discharged"] : nil).select do |d|
+          d.is_a?(::Hash) && ::Obligation::KINDS.include?(d["kind"].to_s) && d["who_owed"].to_s.strip != ""
+        end
+      end
+
+      # The discharge writer — the mirror of write_deals: rows are born when
+      # a deal is spoken, they die when release is spoken. The razor is
+      # mechanical: only the CREDITOR releases, and the creditor is the
+      # SPEAKER — the debtor claiming it's done settles nothing. Matches the
+      # oldest open row of that kind between the pair; no row → the model
+      # imagined a debt, drop silently.
+      def settle_discharges(discharges)
+        return if discharges.empty?
+        creditor = deal_party(@speaker)
+        return unless creditor
+
+        discharges.each do |d|
+          debtor = deal_party(d["who_owed"])
+          next unless debtor && debtor.id != creditor.id
+          ob = ::Obligation.open_now.where(debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s).order(:id).first
+          unless ob
+            @logger.info { "[Knowledge::Capture] discharge dropped (no open #{d['kind']} obligation #{debtor.name}→#{creditor.name})" }
+            next
+          end
+          ob.update!(status: "settled")
+          @logger.info { "[Knowledge::Capture] OBLIGATION ##{ob.id} SETTLED by #{creditor.name}'s word: #{ob.terms}" }
+        rescue ::StandardError => e
+          @logger.warn { "[Knowledge::Capture] discharge failed: #{e.class}: #{e.message}" }
         end
       end
 
