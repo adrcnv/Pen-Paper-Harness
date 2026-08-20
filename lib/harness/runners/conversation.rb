@@ -14,7 +14,7 @@ module Harness
     # two at once, as in life.
     #
     # Per-character emit: speech (dialogue → staged propose_event), persuasion
-    # (resolve_call → resolve), asserted ignorance (→ personal event), and a
+    # (resolve_call → resolve), and a
     # durable beat (memorable → propose_event). World-facts / named people /
     # named places are harvested by a per-speaker REFLECTION pass: a second ask
     # on the speaker's still-hot voicing context ("you just said this — what
@@ -478,7 +478,7 @@ module Harness
         return "not valid JSON" unless emit.is_a?(::Hash)
         dlg   = emit["dialogue"]
         prose = dlg.is_a?(::Hash) ? dlg["prose"].to_s.strip : ""
-        if emit["speak"] && prose.empty? && !emit["resolve_call"] && !emit["ignorance"] && !emit["memorable"]
+        if emit["speak"] && prose.empty? && !emit["resolve_call"] && !emit["memorable"]
           # Explicit prose: "" is the grammar's escape hatch — a break-off,
           # handled (and logged) by apply_emit. Absent/null dialogue is
           # format loss of a line that likely existed — worth one bounce.
@@ -505,20 +505,20 @@ module Harness
 
       # Commit one character's emit. Returns true if the character SPOKE (so the
       # caller counts it toward the two-speaker cap). Raw dialogue is STAGED for
-      # narration only; resolve / ignorance / memorable / claims persist on their
+      # narration only; resolve / memorable / claims persist on their
       # own consequential paths.
       def apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
         dlg     = emit["dialogue"]
         prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
-        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["ignorance"] || emit["memorable"]
+        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["memorable"]
         @logger.debug do
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           "[Runner conversation] #{who} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
-          "resolve=#{!emit['resolve_call'].nil?} ignorance=#{!emit['ignorance'].nil?} memorable=#{emit['memorable'].is_a?(Hash)} " \
+          "resolve=#{!emit['resolve_call'].nil?} memorable=#{emit['memorable'].is_a?(Hash)} " \
           "thought=#{emit['thought'].to_s[0, 120].inspect}"
         end
         return false unless engaged
-        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["resolve_call"] && !emit["ignorance"] && !emit["memorable"]
+        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["resolve_call"] && !emit["memorable"]
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           @logger.info { "[Runner conversation] #{who} spoke-empty (in-grammar break-off) — treated as silence" }
           return false
@@ -546,7 +546,6 @@ module Harness
           spoke = true
         end
         commit_resolve(resolver, emit["resolve_call"], player, actor_id, tcs)
-        commit_ignorance(resolver, emit["ignorance"], player, actor_id, tcs)
         commit_memorable(resolver, emit["memorable"], player, actor_id, tcs)
         spoke
       end
@@ -763,7 +762,7 @@ module Harness
       # slams her mug" as a durable event is what fills a thin character's soul
       # with atmosphere and feeds it back as knowledge next turn. Intra-scene
       # memory comes from exchange_so_far; durable memory comes only from
-      # memorable (+ resolve / ignorance / claims, consequential by nature).
+      # memorable (+ resolve / claims, consequential by nature).
       #
       # NOTE: a `[Name] ` speaker-label prefix was tried here (attribution for
       # the thread — the Vaela role-swap) and RETIRED same day: the weak model
@@ -796,23 +795,6 @@ module Harness
           "target_id"    => target_id,
           "difficulty"   => rc["difficulty"],
           "time_minutes" => rc["time_minutes"] || 5
-        }, into: tcs)
-      end
-
-      # A durable "told the player they have not heard of X" record (personal
-      # scope), so a later turn knows this character already denied the topic.
-      def commit_ignorance(resolver, ig, player, actor_id, tcs)
-        return unless ig.is_a?(Hash) && ig["topic"].to_s.strip != ""
-        who = ::Npc.find_by(id: actor_id)&.name || "The NPC"
-        execute_tool(resolver, "propose_event", {
-          "scope"        => "personal",
-          "participants" => [
-            { "character_id" => actor_id,  "role" => "actor" },
-            { "character_id" => player.id, "role" => "participant" }
-          ],
-          "trigger"      => "asserted ignorance",
-          "details"      => "#{who} told the player they have not heard of #{ig['topic']}",
-          "time_minutes" => 1
         }, into: tcs)
       end
 
@@ -867,10 +849,6 @@ module Harness
               "difficulty" => { "type" => "string", "enum" => %w[easy moderate hard] }
             },
             "required" => %w[stat action difficulty], "additionalProperties" => false
-          } ] },
-          "ignorance" => { "anyOf" => [ { "type" => "null" }, {
-            "type" => "object", "properties" => { "topic" => { "type" => "string" } },
-            "required" => %w[topic], "additionalProperties" => false
           } ] },
           "memorable" => { "anyOf" => [ { "type" => "null" }, {
             "type" => "object", "properties" => { "gist" => { "type" => "string" } },

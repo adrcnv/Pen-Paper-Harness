@@ -184,17 +184,6 @@ RSpec.describe Harness::Runners::Conversation do
     expect(resolve.dig("args", "target_id")).to eq(barkeep.id)
   end
 
-  it "records asserted ignorance as a personal-scope event" do
-    ctx = context_with do
-      { "speak" => true, "ignorance" => { "topic" => "the Shadow Hand" } }.to_json
-    end
-    scene = Harness::Tools::QueryScene.build(ctx)
-
-    described_class.new.run(context: ctx, scene: scene, input: "heard of the Shadow Hand?", step: step)
-    ev = Event.where(scope: "personal").last
-    expect(ev.details.to_s).to match(/have not heard of the Shadow Hand/)
-  end
-
   # Named people are now realized by the post-turn Knowledge::Capture pass (the
   # single entity pipe), not a per-emit `claims` field. The capture LLM returns
   # a `people` list; capture hands each to the Realizer.
