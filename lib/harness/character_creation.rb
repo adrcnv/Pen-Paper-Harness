@@ -36,6 +36,7 @@ module Harness
       out.puts "─" * 72
 
       name            = prompt_name(io, out)
+      gender          = ::Harness::Naming.gender_for(name) || prompt_gender(io, out)
       stats           = prompt_stats(io, out, rng: rng)
       character_class = prompt_class(io, out)
 
@@ -43,7 +44,7 @@ module Harness
       out.puts "  → #{name}, the #{character_class.capitalize} (#{stats_summary(stats)})"
       out.puts
 
-      { name: name, stats: stats, character_class: character_class }
+      { name: name, gender: gender, stats: stats, character_class: character_class }
     end
 
     def self.prompt_name(io, out)
@@ -52,6 +53,19 @@ module Harness
       out.print "> "
       input = io.gets.to_s.strip
       input.empty? ? "Hero" : input
+    end
+
+    # Only asked when the name pools don't already imply it (a pool-known
+    # name IS its gender — same grounding rule as NPC spawns). Without an
+    # answer NPCs guess ("sir" at Helga — the misgendering class), so Enter
+    # skips only for players who accept that ambiguity.
+    def self.prompt_gender(io, out)
+      out.puts "Gender? (m/f, Enter to leave unsaid)"
+      out.print "> "
+      case io.gets.to_s.strip.downcase
+      when "m", "male"   then "male"
+      when "f", "female" then "female"
+      end
     end
 
     def self.prompt_stats(io, out, rng:)

@@ -427,7 +427,8 @@ module Harness
         # varying blocks (others_present, you) come LAST. JSON is order-agnostic
         # to the model, so this is a pure prefill win, no behaviour change.
         invariant = {
-          "player"          => { "id" => player.id, "name" => player.name },
+          "player"          => { "id" => player.id, "name" => player.name,
+                                 "gender" => (player.properties.is_a?(::Hash) ? player.properties["gender"] : nil) }.compact,
           "player_input"    => input,
           "intent"          => step&.intent,
           "location"        => location_payload(context),

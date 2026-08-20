@@ -48,9 +48,11 @@ module Harness
                          .where.not(faction_id: nil).to_a.sample(random: @turn_rng)
         raise "worldgen produced no spawn city" unless city
 
+        player_name = name || ::Harness::Naming.unique_for(location: city, rng: @turn_rng)
+        gender      = ::Harness::Naming.gender_for(player_name)
         @player = ::Player.create!(
-          name: name || ::Harness::Naming.unique_for(location: city, rng: @turn_rng),
-          location: city, character_class: character_class,
+          name: player_name, location: city, character_class: character_class,
+          properties: (gender ? { "gender" => gender } : {}),
           level: 1, **STANDARD_ARRAY
         )
         ::Harness::Character::Hatchery.materialize!(@player, llm_grunt: @grunt)

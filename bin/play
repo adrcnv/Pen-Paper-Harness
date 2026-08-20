@@ -300,6 +300,7 @@ when :new_game
     name:            creation[:name],
     location:        starting_city,
     character_class: creation[:character_class],
+    properties:      (creation[:gender] ? { "gender" => creation[:gender] } : {}),
     level:           1,
     strength:        creation[:stats][:strength],
     dexterity:       creation[:stats][:dexterity],

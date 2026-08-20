@@ -11,13 +11,15 @@ RSpec.describe Harness::CharacterCreation do
   describe ".run end-to-end" do
     it "runs the roll path: name → roll → accept → class" do
       io, out = with_io([
-        "Aelin",   # name
+        "Aelin",   # name (not in any pool → gender prompt fires)
+        "f",       # gender
         "1",       # method = roll
         "a",       # accept rolled stats
         "1"        # class = fighter
       ])
       result = described_class.run(io: io, out: out, rng: Random.new(42))
       expect(result[:name]).to eq("Aelin")
+      expect(result[:gender]).to eq("female")
       expect(result[:character_class]).to eq("fighter")
       expect(result[:stats].keys).to contain_exactly(:strength, :dexterity, :constitution, :intelligence, :wisdom, :charisma)
       expect(result[:stats].values).to all(be_between(2, 20))  # 2d10 range
@@ -26,12 +28,14 @@ RSpec.describe Harness::CharacterCreation do
     it "runs the distribute path: name → distribute → 60 points → class" do
       io, out = with_io([
         "Marn",
+        "",        # gender skipped (unsaid)
         "2",       # method = distribute
         "10", "10", "10", "10", "10",  # auto-balances last to 10
         "4"        # class = mage (index 4 in: fighter, rogue, ranger, mage, sorcerer, cleric)
       ])
       result = described_class.run(io: io, out: out)
       expect(result[:name]).to eq("Marn")
+      expect(result[:gender]).to be_nil
       expect(result[:character_class]).to eq("mage")
       expect(result[:stats].values.sum).to eq(60)
       expect(result[:stats].values).to all(be_between(6, 15))
@@ -40,11 +44,23 @@ RSpec.describe Harness::CharacterCreation do
     it "defaults name to Hero on empty input" do
       io, out = with_io([
         "",        # empty name
+        "",        # gender skipped
         "1", "a",  # roll, accept
         "1"        # fighter
       ])
       result = described_class.run(io: io, out: out, rng: Random.new(1))
       expect(result[:name]).to eq("Hero")
+    end
+
+    it "derives gender silently from a pool-known name (the name IS its gender)" do
+      io, out = with_io([
+        "Astrid",  # nord given_female — no gender prompt fires
+        "1", "a",  # roll, accept
+        "1"        # fighter
+      ])
+      result = described_class.run(io: io, out: out, rng: Random.new(1))
+      expect(result[:gender]).to eq("female")
+      expect(out.string).not_to include("Gender?")
     end
   end
 

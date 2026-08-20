@@ -121,7 +121,8 @@ module Harness
         # and without identity the render splits the player into "you and
         # the sorcerer". Identity is dressing, not view — it can't delta.
         if (player = ::Player.first)
-          payload["you"] = { "name" => player.name, "role" => player.subrole }.compact
+          payload["you"] = { "name" => player.name, "role" => player.subrole,
+                             "gender" => (player.properties.is_a?(::Hash) ? player.properties["gender"] : nil) }.compact
         end
         just_now = Array(parts).reject { |p| p[:kind] == :dialogue }.map { |p| p[:text] }.join("\n")
         payload["just_now"] = just_now unless just_now.empty?
