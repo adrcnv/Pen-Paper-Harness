@@ -266,6 +266,19 @@ module Harness
                   delta["people"] = delta["people"].reject { |p| spoke.include?(p["name"]) }
                   delta.delete("people") if delta["people"].empty?
                 end
+                # An item the player just took (pickup/buy) leaves the room's
+                # "things" — but the taking already rendered with causal
+                # authority (the tool's own line), and the eyes re-narrating
+                # the room-side vanishing gets the direction wrong ("the
+                # sharpened stake leaves your hand"). When the things change
+                # is fully explained by this turn's acquisitions, it drops.
+                taken = acquired_item_names(transcript)
+                if taken.any? && delta["things"].is_a?(Array)
+                  prev_things = Array(stamp.dig("view", "things"))
+                  gone  = prev_things - delta["things"]
+                  added = delta["things"] - prev_things
+                  delta.delete("things") if added.empty? && (gone - taken).empty?
+                end
                 if delta.empty?
                   active&.perceived_view = { "digest" => digest, "view" => view }
                   nil
@@ -359,6 +372,16 @@ module Harness
       # Names of NPCs who staged a line this turn — their prose already voiced
       # their own state shift. Resolved from the in-RAM scene snapshot, no DB
       # hit; a promoted extra absent from the snapshot just isn't suppressed.
+      # Names of items that moved INTO the player's hands this turn — their
+      # disappearance from the room is the pickup's own story, not the eyes'.
+      def acquired_item_names(transcript)
+        Array(transcript.tool_calls).filter_map { |tc|
+          next unless %w[pickup buy_item].include?(tc["name"])
+          next if tc.dig("result", "error")
+          tc.dig("result", "item_name")
+        }
+      end
+
       def staged_speaker_names(transcript)
         ids = Array(transcript.tool_calls).filter_map { |tc|
           next unless tc["name"] == "propose_event" && tc.dig("result", "staged")

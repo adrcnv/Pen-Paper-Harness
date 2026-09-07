@@ -101,8 +101,8 @@ module Harness
 
       # Deterministic dead end (the referent doesn't exist) — the executor
       # stalls this step and continues the chain instead of re-planning.
-      def skip(note, tool_calls = [])
-        Outcome.new(tool_calls: tool_calls, scene_dirty: false, status: :skipped, note: note)
+      def skip(note, tool_calls = [], null_line: nil)
+        Outcome.new(tool_calls: tool_calls, scene_dirty: false, status: :skipped, note: note, null_line: null_line)
       end
 
       # Present-roster lookup, first-token tolerant ("Dobrila" matches

@@ -24,16 +24,16 @@ module Harness
         # independent steps behind it.
         case spec["action"]
         when "pickup"
-          return skip("pickup without item_id", tcs) unless spec["item_id"]
+          return skip("pickup without item_id", tcs, null_line: "There's nothing like that here to take.") unless spec["item_id"]
           execute_tool(resolver, "pickup", { "item_id" => spec["item_id"], "by_character_id" => player.id }, into: tcs)
         when "drop"
-          return skip("drop without item_id", tcs) unless spec["item_id"]
+          return skip("drop without item_id", tcs, null_line: "You aren't carrying anything like that.") unless spec["item_id"]
           execute_tool(resolver, "drop", { "item_id" => spec["item_id"], "by_character_id" => player.id }, into: tcs)
         when "give"
-          return skip("give without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          return skip("give without item_id/to_id", tcs, null_line: "There's nothing like that to hand over.") unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "give_item", { "item_id" => spec["item_id"], "from_id" => from, "to_id" => spec["to_id"], "reason" => spec["reason"] }, into: tcs)
         when "transfer_coins"
-          return skip("transfer without amount", tcs) unless spec["amount"]
+          return skip("transfer without amount", tcs, null_line: "No sum was settled — nothing changes hands.") unless spec["amount"]
           if spec["to_id"]
             execute_tool(resolver, "transfer_coins", { "from_id" => from, "to_id" => spec["to_id"], "amount" => spec["amount"], "reason" => spec["reason"] }, into: tcs)
           else
@@ -42,7 +42,7 @@ module Harness
             # hands only when a real payee exists. Recorded as a personal
             # event so voicing/initiative see the stake as committed truth
             # instead of confabulating its fate.
-            return skip("stake exceeds carried coins", tcs) if player.coins.to_i < spec["amount"].to_i
+            return skip("stake exceeds carried coins", tcs, null_line: "You don't have that much coin.") if player.coins.to_i < spec["amount"].to_i
             execute_tool(resolver, "propose_event", {
               "scope"        => "personal",
               "trigger"      => "coins set out openly",
@@ -51,13 +51,13 @@ module Harness
             }, into: tcs)
           end
         when "buy"
-          return skip("buy without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          return skip("buy without item_id/to_id", tcs, null_line: "That isn't for sale here.") unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "buy_item", { "item_id" => spec["item_id"], "merchant_id" => spec["to_id"], "buyer_id" => player.id }, into: tcs)
         when "sell"
-          return skip("sell without item_id/to_id", tcs) unless spec["item_id"] && spec["to_id"]
+          return skip("sell without item_id/to_id", tcs, null_line: "You aren't carrying anything like that to sell.") unless spec["item_id"] && spec["to_id"]
           execute_tool(resolver, "sell_item", { "item_id" => spec["item_id"], "merchant_id" => spec["to_id"], "seller_id" => player.id }, into: tcs)
         when "open"
-          return skip("open without item_id", tcs) unless spec["item_id"]
+          return skip("open without item_id", tcs, null_line: "There's nothing like that here to open.") unless spec["item_id"]
           execute_tool(resolver, "open_container", { "item_id" => spec["item_id"], "by_character_id" => player.id }, into: tcs)
         else
           return redispatch("unknown inventory action #{spec['action'].inspect}", tcs)

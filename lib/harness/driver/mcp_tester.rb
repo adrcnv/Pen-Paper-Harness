@@ -17,10 +17,14 @@ module Harness
 
       # session_factory: ->(seed, snapshot_dir) { booted Session } — the
       # default generates a fresh world; tests inject a stub-backed session.
-      def initialize(run_dir:, logger: Rails.logger, log_path: nil, session_factory: nil)
+      # brief: the per-run scenario text. Returned from start_scenario because
+      # MCP handshake `instructions` never reach the tester's context in
+      # practice (run-20260820-115058: tester played blind until hand-fed).
+      def initialize(run_dir:, logger: Rails.logger, log_path: nil, session_factory: nil, brief: nil)
         @run_dir         = run_dir.to_s
         @logger          = logger
         @log_path        = log_path
+        @brief           = brief
         @session_factory = session_factory || method(:build_session)
         @starts          = 0
         @flag_count      = 0
@@ -38,7 +42,8 @@ module Harness
         { "status" => "world ready", "seed" => seed,
           "you_are" => @session.player&.name,
           "location" => @session.player_location&.name, "game_time" => @session.game_time,
-          "opening" => @session.opening }.compact
+          "opening" => @session.opening,
+          "your_briefing" => @brief }.compact
       end
 
       def play_turn(input:)

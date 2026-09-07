@@ -5,6 +5,7 @@ module Harness
     # structured call classifies the act; Ruby orchestrates the real tools:
     #   - resolve         when the attempt is uncertain (a roll)
     #   - propose_item    when it yields something collectible (anchored here)
+    #   - mutate_item     when it reworks a real item into something else
     #   - mutate_location when it persistently alters the place
     # A pure-flavor poke (kick a wall, rattle a stuck gate) emits nothing and
     # lets narration render it. This is the runner the "blast the tree, collect
@@ -46,8 +47,13 @@ module Harness
           botched = outcome == "critical_failure"
         end
 
+        transformed = nil
+        destroyed   = nil
+        consumed    = nil
         if roll_ok
-          spawn_item(resolver, spec["yields_item"], action, context, tcs)
+          spawn_item(resolver, spec["yields_item"], action, player, tcs)
+          transformed = transform_item(resolver, spec["transforms_item"], action, player, context, tcs)
+          consumed    = transformed&.delete("consumed")
           alter_location(resolver, spec["location_change"], context, tcs)
         elsif botched
           # The emit is declared BEFORE the roll, so location_change is the
@@ -55,6 +61,7 @@ module Harness
           # critical failure commits the pre-declared botch mark instead, so
           # the damage narration renders is real world-state, not prose-only.
           alter_location(resolver, spec["location_change_on_botch"], context, tcs)
+          destroyed = ruin_item(resolver, spec["transforms_item"], action, player, context, tcs)
         end
 
         # The act's own prose island — rendered only when something was
@@ -62,11 +69,23 @@ module Harness
         # nothing stays blank by ruling.
         if tcs.any?
           rolled = tcs.find { |t| t["name"] == "resolve" }&.dig("result")
+          failed = rolled && rolled["outcome"].to_s.include?("fail")
+          # Margin words prime ruin prose on plain failures ("decisive"
+          # rendered as a destroyed item — run-20260821-132705); a failure
+          # carries the bare result plus the positive fact of what survived,
+          # so the model has truth to render instead of a vacuum to fill.
+          unchanged = if failed && !destroyed && spec["transforms_item"].is_a?(::Hash)
+            ::Item.find_by(id: spec["transforms_item"]["item_id"])&.name
+          end
           emit_fragment(context, FRAGMENT_PROMPT_PATH, {
             "act"           => action,
             "place"         => context.player_location&.name,
-            "outcome"       => (rolled && { "result" => rolled["outcome"], "margin" => rolled["margin"] }),
+            "outcome"       => (rolled && { "result" => rolled["outcome"], "margin" => (failed ? nil : rolled["margin"]) }.compact),
             "yielded"       => tcs.find { |t| t["name"] == "propose_item" }&.dig("args", "name"),
+            "transformed"   => transformed,
+            "consumed"      => consumed,
+            "destroyed"     => destroyed,
+            "unchanged"     => unchanged,
             "place_changed" => tcs.find { |t| t["name"] == "mutate_location" }&.dig("args", "alteration")
           }.compact, tcs, subsystem: :runner_environment_fragment)
         end
@@ -80,20 +99,82 @@ module Harness
 
       private
 
-      # Loot from the environment: a real Item anchored to the current location
-      # so a follow-up pickup finds something. The engine rolls the item's real
-      # properties; the emit only names what kind of thing it is.
-      def spawn_item(resolver, item, action, context, tcs)
+      # Loot from the environment: a real Item straight into the player's
+      # hands — gather-acts are acquisitive, and the narration says "in your
+      # grasp", so the row must agree (anchored-here yields read as vanished:
+      # run-20260820-115058, three turns lost to a branch "on the ground").
+      def spawn_item(resolver, item, action, player, tcs)
         return unless item.is_a?(Hash)
         name = item["name"].to_s.strip
         return if name.empty?
         execute_tool(resolver, "propose_item", {
-          "name"        => name,
-          "subrole"     => item["subrole"].to_s.strip.presence || "object",
-          "connection"  => "yielded by the player's interaction: #{action}",
-          "location_id" => context.player_location.id,
-          "properties"  => item["properties"].is_a?(Hash) ? item["properties"] : {}
+          "name"         => name,
+          "subrole"      => item["subrole"].to_s.strip.presence || "object",
+          "connection"   => "yielded by the player's interaction: #{action}",
+          "character_id" => player.id,
+          "properties"   => item["properties"].is_a?(Hash) ? item["properties"] : {}
         }, into: tcs)
+      end
+
+      # Rework an existing REAL item — held by the player or anchored here —
+      # into something else via mutate_item: the row persists, changed
+      # (sharpen a branch into a stake). Items elsewhere or in someone
+      # else's hands are out of reach. Returns {"was","now"} for the
+      # fragment, or nil when nothing committed.
+      def transform_item(resolver, spec, action, player, context, tcs)
+        return nil unless spec.is_a?(Hash)
+        item = ::Item.find_by(id: spec["item_id"])
+        return nil unless item
+        held = item.character_id == player.id
+        here = item.location_id && item.location_id == context.player_location&.id
+        return nil unless held || here
+        was = item.name
+        committed = false
+        { "name" => spec["name"], "subrole" => spec["subrole"] }.each do |field, value|
+          v = value.to_s.strip
+          next if v.empty? || v == item.read_attribute(field)
+          _res, ok = execute_tool(resolver, "mutate_item", { "item_id" => item.id, "field" => field, "value" => v }, into: tcs)
+          committed ||= ok
+        end
+        return nil unless committed
+        consumed = consume_component(resolver, spec["consumes_item_id"], item, action, player, context, tcs)
+        { "was" => was, "now" => item.reload.name, "consumed" => consumed }.compact
+      end
+
+      # The making can bind in a SECOND real item (rope wrapped onto the
+      # club) — used up, so destroyed, but only when the work itself
+      # committed. Same reach guard as the item being worked.
+      def consume_component(resolver, component_id, worked_item, action, player, context, tcs)
+        return nil unless component_id.is_a?(Integer) && component_id != worked_item.id
+        comp = ::Item.find_by(id: component_id)
+        return nil unless comp
+        held = comp.character_id == player.id
+        here = comp.location_id && comp.location_id == context.player_location&.id
+        return nil unless held || here
+        res, ok = execute_tool(resolver, "destroy_item", {
+          "item_id" => comp.id,
+          "reason"  => "used up in: #{action}"
+        }, into: tcs)
+        ok ? res["item_name"] : nil
+      end
+
+      # The botch with teeth: a CRITICAL failure while reworking an item
+      # destroys the item being worked ("falls apart into scrap" narration
+      # had no state behind it — run-20260821-130253). Same reach guard as
+      # the transform; plain failures leave the item untouched. Returns the
+      # destroyed item's name for the fragment, or nil.
+      def ruin_item(resolver, spec, action, player, context, tcs)
+        return nil unless spec.is_a?(Hash)
+        item = ::Item.find_by(id: spec["item_id"])
+        return nil unless item
+        held = item.character_id == player.id
+        here = item.location_id && item.location_id == context.player_location&.id
+        return nil unless held || here
+        res, ok = execute_tool(resolver, "destroy_item", {
+          "item_id" => item.id,
+          "reason"  => "ruined in a badly botched attempt: #{action}"
+        }, into: tcs)
+        ok ? res["item_name"] : nil
       end
 
       def alter_location(resolver, change, context, tcs)
@@ -124,8 +205,10 @@ module Harness
           }.compact,
           # The concrete objects actually anchored here — so the act grounds in
           # a real thing (search THIS crate) instead of one the model invents.
-          # Names only; environment acts on free-text features, not by id.
-          "present_objects" => Array(scene && scene["present_items"]).map { |i| i["name"] }.compact
+          # Ids ride along so transforms_item can reference the row; free-text
+          # features still have no id and can never transform.
+          "present_objects" => Array(scene && scene["present_items"]).map { |i| { "id" => i["id"], "name" => i["name"] } },
+          "held_items"      => ::Item.where(character_id: player.id).order(:id).map { |i| { "id" => i.id, "name" => i.name } }
         )
         raw = ::Harness::CostTracker.in_subsystem(:runner_environment) do
           llm(context).complete(system: preamble, user: "INPUT:\n#{user}")

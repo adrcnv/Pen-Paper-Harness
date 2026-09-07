@@ -41,9 +41,13 @@ Rails.logger = logger
 ActiveRecord::Base.logger = logger
 
 run_dir = Rails.root.join("scenario_runs", Time.now.strftime("run-%Y%m%d-%H%M%S")).to_s
+brief_path = ARGV[0] || Rails.root.join("docs/play/BRIEF.md").to_s
+brief      = File.exist?(brief_path) ? File.read(brief_path) : nil
+
 tester = Harness::Driver::McpTester.new(
   run_dir: run_dir, logger: logger,
-  log_path: Rails.root.join("log/scenario.log").to_s
+  log_path: Rails.root.join("log/scenario.log").to_s,
+  brief: brief
 )
 logger.info { "[mcp_tester] run folder: #{run_dir}" }
 
@@ -59,15 +63,14 @@ charter = <<~TXT
   notice seems wrong — a silent turn, a contradiction, someone who
   shouldn't be there — call flag with what you observed. Never investigate
   causes; evidence is captured server-side. checkpoint/rewind jump back to
-  a save point; retry reruns the last turn verbatim once to see if an
-  oddity reproduces. Finish every session with end_scenario: what you did,
+  a save point; retry reruns the last turn verbatim. When a turn earns a
+  flag, flag it, then retry once or twice: a fault that survives retries
+  is deterministic, one that vanishes was a one-off lapse — say which in
+  a follow-up flag. Finish every session with end_scenario: what you did,
   what felt off, whether you achieved what you set out to do.
 TXT
 
 game_doc   = File.read(Rails.root.join("docs/play/00-the-game.md")) rescue nil
-brief_path = ARGV[0] || Rails.root.join("docs/play/BRIEF.md").to_s
-brief      = File.exist?(brief_path) ? File.read(brief_path) : nil
-
 server = MCP::Server.new(
   name:    "harness-playtester",
   version: "0.1.0",

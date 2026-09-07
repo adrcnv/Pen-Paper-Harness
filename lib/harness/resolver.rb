@@ -20,6 +20,7 @@ module Harness
       Tools::MutateFaction,
       Tools::MutateItem,
       Tools::MutateLocation,
+      Tools::DestroyItem,
       Tools::TransferCoins,
       Tools::Pickup,
       Tools::Drop,

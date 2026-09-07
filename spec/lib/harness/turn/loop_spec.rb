@@ -383,6 +383,36 @@ RSpec.describe Harness::Turn::Loop do
       expect(Harness::Turn::Perception).not_to have_received(:render_delta)
     end
 
+    it "delta suppression: a picked-up item's room-side vanishing is absorbed (the pickup line renders it)" do
+      stake = Item.create!(name: "sharpened stake", subrole: "object", location: tavern)
+      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
+      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("The stake leaves your hand.")
+      taker_runner = Class.new(Harness::Runners::Base) do
+        def initialize(item_id) = @item_id = item_id
+        def run(context:, **)
+          item = ::Item.find(@item_id)
+          item.update!(character_id: ::Player.first.id, location_id: nil)
+          Harness::Runners::Outcome.new(status: :ok, scene_dirty: false, tool_calls: [ {
+            "name"   => "pickup",
+            "args"   => { "item_id" => @item_id, "by_character_id" => ::Player.first.id },
+            "result" => { "item_id" => @item_id, "item_name" => "sharpened stake" }
+          } ])
+        end
+      end
+      allow(Harness::Planner).to receive(:plan_for).and_return(
+        "plan" => [ { "runner" => "take", "reason" => "take", "args" => {} } ],
+        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
+      )
+      adapter  = Harness::LLM::FakeAdapter.new(narration: "(n)")
+      loop_obj = described_class.new(adapter: adapter, context: context,
+                                     registry: { "take" => taker_runner.new(stake.id) })
+      loop_obj.run_turn(input: "look at the stake")   # establishment stamps view with the stake in things
+      loop_obj.run_turn(input: "take the stake")      # things loses it — fully explained by the pickup
+      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
+      loop_obj.run_turn(input: "wait")                # stamp absorbed the change — still silent
+      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
+    end
+
     it "delta gate: an ABSENT character's doing is invisible — no fire" do
       allow(Harness::Turn::Perception).to receive(:render).and_return("The room shifts.")
       loop_obj = scripted_loop([ event_call("You pocket the coin.") ])

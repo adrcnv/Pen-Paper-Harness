@@ -57,6 +57,7 @@ RSpec.describe Harness::Runners::Inventory do
     outcome = described_class.new.run(context: ctx, scene: scene, input: "put 500 coins on the table", step: step)
 
     expect(outcome.status).to eq(:skipped)
+    expect(outcome.null_line).to eq("You don't have that much coin.")
     expect(Event.count).to eq(0)
   end
 
@@ -66,6 +67,10 @@ RSpec.describe Harness::Runners::Inventory do
     outcome = described_class.new.run(context: ctx, scene: scene, input: "take the ale", step: step)
     expect(outcome.status).to eq(:skipped)
     expect(outcome.note).to eq("pickup without item_id")
+    # Mini-narrator: the dead end voices itself instead of an OOC shrug
+    # (run-20260820-115058: two "deterministic pickup failure" flags were
+    # the engine rightly refusing a nonexistent object, reported as nothing).
+    expect(outcome.null_line).to eq("There's nothing like that here to take.")
   end
 
   describe "shop buy/sell dispatch (to_id is the merchant)" do
