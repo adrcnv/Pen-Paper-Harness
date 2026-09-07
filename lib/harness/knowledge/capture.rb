@@ -95,11 +95,11 @@ module Harness
       # entirely when the LLM client can't embed (test stubs, embed-less builds).
       def persist_embeddings(rows)
         return unless @llm.respond_to?(:embed)
-        pending = rows.select { |r| r.is_a?(::Knowledge) && r.embedding.blank? }
+        pending = rows.select { |r| r.is_a?(::Knowledge) && stored_embedding(r).nil? }
         return if pending.empty?
-        vecs = @llm.embed(pending.map(&:content))
+        vecs = Embedding.embed(@llm, pending.map(&:content), kind: :passage)
         pending.zip(Array(vecs)).each do |row, vec|
-          row.update_column(:embedding, JSON.generate(vec)) if vec.present?
+          row.update_column(:embedding, Embedding.pack(vec, embed_model_stamp)) if vec.present?
         end
       rescue StandardError => e
         @logger.warn { "[Knowledge::Capture] embedding persist failed (non-fatal): #{e.class}: #{e.message}" }
@@ -452,7 +452,7 @@ module Harness
           source_kind: "conversation",
           speaker:     @speaker.presence,
           game_time:   @game_time,
-          embedding:   (JSON.generate(vec) if vec.present?)
+          embedding:   (Embedding.pack(vec, embed_model_stamp) if vec.present?)
         )
         @logger.info { "[Knowledge::Capture] knowledge ##{row.id} subrole=#{subrole.inspect} loc=#{location_id.inspect} min_int=#{min_int.inspect} :: #{content}" }
         row
@@ -469,7 +469,7 @@ module Harness
         candidates = revision_candidates
         return [ nil, nil ] if candidates.empty?
 
-        vec = Array(@llm.embed([ content ])).first
+        vec = Array(Embedding.embed(@llm, [ content ], kind: :passage)).first
         return [ nil, nil ] if vec.nil? || vec.empty?
 
         scored = candidates.filter_map do |row|
@@ -500,11 +500,11 @@ module Harness
       end
 
       def stored_embedding(row)
-        raw = row.embedding
-        return nil if raw.to_s.strip.empty?
-        JSON.parse(raw)
-      rescue JSON::ParserError
-        nil
+        Embedding.unpack(row.embedding, embed_model_stamp)
+      end
+
+      def embed_model_stamp
+        @embed_model_stamp ||= Embedding.model_of(@llm)
       end
 
       # One grunt call: extends / contradicts / unrelated (+ merged text).

@@ -48,7 +48,7 @@ RSpec.describe Harness::Knowledge::Capture do
       llm = StubLLM.new { |_p| "{}" }
       llm.define_singleton_method(:embed) { |texts| Array(texts).map { [ 0.5, 0.5 ] } }
       capture(facts("content" => "clerk lore", "subrole" => "clerk"), llm: llm)
-      expect(JSON.parse(Knowledge.last.embedding)).to eq([ 0.5, 0.5 ])
+      expect(JSON.parse(Knowledge.last.embedding)).to eq({ "m" => "unknown", "v" => [ 0.5, 0.5 ] })
     end
 
     it "passes an integer min_int through and ignores a non-integer" do
@@ -472,7 +472,7 @@ RSpec.describe Harness::Knowledge::Capture do
         content: "The town's founder drowned in the fog near an abandoned hut.",
         location_id: city.id, min_int: 9, current: true,
         source_kind: "conversation", game_time: 50,
-        embedding: JSON.generate([ 1.0, 0.0 ])
+        embedding: Harness::Knowledge::Embedding.pack([ 1.0, 0.0 ], "unknown")
       )
     end
 

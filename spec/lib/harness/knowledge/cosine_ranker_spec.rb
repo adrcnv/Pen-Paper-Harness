@@ -13,8 +13,9 @@ RSpec.describe Harness::Knowledge::CosineRanker do
     end
   end
 
-  def fact(content, embedding: nil, game_time: 0)
-    Knowledge.create!(content: content, embedding: embedding && JSON.generate(embedding), current: true, game_time: game_time)
+  # Stub embedders carry no model id, so their stamp is "unknown".
+  def fact(content, embedding: nil, game_time: 0, model: "unknown")
+    Knowledge.create!(content: content, embedding: embedding && Harness::Knowledge::Embedding.pack(embedding, model), current: true, game_time: game_time)
   end
 
   let(:log) { Logger.new(IO::NULL) }
@@ -31,7 +32,33 @@ RSpec.describe Harness::Knowledge::CosineRanker do
     row = fact("clerk lore", embedding: nil)
     emb = embedder("q" => [ 1.0, 0.0 ], "clerk lore" => [ 1.0, 0.0 ])
     described_class.new(embedder: emb, logger: log).call([ row ], topic: "q")
-    expect(JSON.parse(row.reload.embedding)).to eq([ 1.0, 0.0 ])
+    expect(JSON.parse(row.reload.embedding)).to eq({ "m" => "unknown", "v" => [ 1.0, 0.0 ] })
+  end
+
+  it "treats a vector from ANOTHER model as missing and re-embeds it (migrate-on-open)" do
+    row = fact("clerk lore", embedding: [ 0.0, 1.0 ], model: "old-model")
+    emb = embedder("q" => [ 1.0, 0.0 ], "clerk lore" => [ 1.0, 0.0 ])
+    described_class.new(embedder: emb, logger: log).call([ row ], topic: "q")
+    expect(JSON.parse(row.reload.embedding)).to eq({ "m" => "unknown", "v" => [ 1.0, 0.0 ] })
+  end
+
+  it "treats a legacy bare-array vector as missing and re-embeds it" do
+    row = Knowledge.create!(content: "clerk lore", embedding: JSON.generate([ 0.0, 1.0 ]), current: true, game_time: 0)
+    emb = embedder("q" => [ 1.0, 0.0 ], "clerk lore" => [ 1.0, 0.0 ])
+    described_class.new(embedder: emb, logger: log).call([ row ], topic: "q")
+    expect(JSON.parse(row.reload.embedding)["v"]).to eq([ 1.0, 0.0 ])
+  end
+
+  it "passes kind: :query for the topic and :passage for rows when the embedder accepts it" do
+    seen = []
+    emb = Object.new
+    emb.define_singleton_method(:embed) do |input, kind: :passage|
+      seen << kind
+      input.is_a?(Array) ? input.map { [ 1.0, 0.0 ] } : [ 1.0, 0.0 ]
+    end
+    row = fact("clerk lore", embedding: nil)
+    described_class.new(embedder: emb, logger: log).call([ row ], topic: "q")
+    expect(seen).to eq([ :query, :passage ])
   end
 
   it "falls back to recency when the embedder cannot embed" do

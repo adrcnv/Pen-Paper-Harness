@@ -371,4 +371,84 @@ RSpec.describe Harness::LLM::OpenAICompatAdapter do
       expect(http.calls).to be_empty
     end
   end
+
+  describe "dialects" do
+    let(:schema) { { "type" => "object", "properties" => { "x" => { "type" => "string" } } } }
+
+    it "llamacpp (default): DRY sampling + response_format json_schema + chat_template_kwargs" do
+      http = stub_http([ chat_response(text_message("{}")) ])
+      adapter(http).complete(system: "s", user: "u", schema: schema)
+      body = http.calls.first[:body]
+      expect(body["dry_multiplier"]).to eq(0.8)
+      expect(body.dig("response_format", "type")).to eq("json_schema")
+      expect(body).not_to have_key("nvext")
+      expect(body["chat_template_kwargs"]).to eq({ "enable_thinking" => false })
+    end
+
+    it "nvidia: no DRY keys, standard response_format json_schema, chat_template_kwargs kept" do
+      http = stub_http([ chat_response(text_message("{}")) ])
+      adapter(http, dialect: "nvidia").complete(system: "s", user: "u", schema: schema)
+      body = http.calls.first[:body]
+      expect(body.keys).not_to include("dry_multiplier", "dry_base", "dry_allowed_length", "nvext", "cache_prompt")
+      expect(body.dig("response_format", "json_schema", "schema")).to eq(schema)
+      expect(body["chat_template_kwargs"]).to eq({ "enable_thinking" => false })
+    end
+
+    it "openai: strict baseline — no DRY, no chat_template_kwargs, standard response_format" do
+      http = stub_http([ chat_response(text_message("{}")) ])
+      adapter(http, dialect: "openai").complete(system: "s", user: "u", schema: schema)
+      body = http.calls.first[:body]
+      expect(body.keys).not_to include("dry_multiplier", "chat_template_kwargs", "nvext")
+      expect(body.dig("response_format", "type")).to eq("json_schema")
+    end
+
+    it "merges extra_body last so operator knobs win" do
+      http = stub_http([ chat_response(text_message("ok")) ])
+      adapter(http, dialect: "nvidia", extra_body: '{"chat_template_kwargs":{"thinking":false},"temperature":0.3}')
+        .complete(system: "s", user: "u")
+      body = http.calls.first[:body]
+      expect(body["chat_template_kwargs"]).to eq({ "thinking" => false })
+      expect(body["temperature"]).to eq(0.3)
+    end
+
+    it "embeds with a separate embed model and extra body" do
+      http = stub_http([ { status: 200, body: JSON.generate("data" => [ { "index" => 0, "embedding" => [ 0.1 ] } ]) } ])
+      adapter(http, embed_model: "nvidia/nv-embedqa-e5-v5", embed_extra_body: '{"input_type":"query"}').embed("hello")
+      body = http.calls.first[:body]
+      expect(body["model"]).to eq("nvidia/nv-embedqa-e5-v5")
+      expect(body["input_type"]).to eq("query")
+    end
+
+    it "sends input_type from kind: on the nvidia dialect only" do
+      ok = { status: 200, body: JSON.generate("data" => [ { "index" => 0, "embedding" => [ 0.1 ] } ]) }
+      nv = stub_http([ ok, ok ])
+      a  = adapter(nv, dialect: "nvidia", embed_model: "nvidia/nemotron-3-embed-1b")
+      a.embed("what is asked", kind: :query)
+      a.embed("a stored fact")
+      expect(nv.calls[0][:body]["input_type"]).to eq("query")
+      expect(nv.calls[1][:body]["input_type"]).to eq("passage")
+      local = stub_http([ ok ])
+      adapter(local).embed("a stored fact", kind: :query)
+      expect(local.calls.first[:body]).not_to have_key("input_type")
+    end
+
+    it "embed model defaults to the chat model when unset" do
+      http = stub_http([ { status: 200, body: JSON.generate("data" => [ { "index" => 0, "embedding" => [ 0.1 ] } ]) } ])
+      adapter(http).embed("hello")
+      expect(http.calls.first[:body]["model"]).to eq("test-model")
+    end
+
+    it "rejects an unknown dialect and a non-object extra body loudly" do
+      expect { adapter(stub_http([]), dialect: "banana") }.to raise_error(ArgumentError, /dialect/)
+      expect { adapter(stub_http([]), extra_body: "[1,2]") }.to raise_error(ArgumentError, /JSON object/)
+    end
+
+    it "display_model skips the /v1/models lookup on hosted dialects" do
+      get = ->(url:) { raise "should not be called" }
+      a = described_class.new(base_url: "http://x/v1", api_key: "k", model: "vendor/big-model",
+                              http_client: stub_http([]), http_get_client: get, dialect: "nvidia",
+                              logger: Logger.new(IO::NULL))
+      expect(a.display_model).to eq("vendor/big-model")
+    end
+  end
 end

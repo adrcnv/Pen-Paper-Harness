@@ -25,13 +25,14 @@ module Harness
         @fallback = fallback
         @logger   = logger
         @cache    = {}
+        @model    = Embedding.model_of(embedder)
       end
 
       def call(rows, topic: nil)
         return rows if rows.empty?
         return degrade(rows, topic, "embedder has no #embed") unless @embedder.respond_to?(:embed)
 
-        q = ::Harness::CostTracker.in_subsystem(:knowledge_recall) { @embedder.embed(topic.to_s) }
+        q = ::Harness::CostTracker.in_subsystem(:knowledge_recall) { Embedding.embed(@embedder, topic.to_s, kind: :query) }
         return degrade(rows, topic, "nil/empty query vector") if q.nil? || q.empty?
 
         ensure_embeddings(rows)
@@ -47,16 +48,18 @@ module Harness
         @fallback.call(rows, topic: topic)
       end
 
-      # Embed candidates that don't yet have a stored vector, in ONE batched
-      # call, and persist (JSON in the embedding column) so later recalls skip
-      # the work. Self-healing backfill; the facet gate bounds the set size.
+      # Embed candidates that don't yet have a stored vector FOR THIS MODEL,
+      # in ONE batched call, and persist (stamped envelope in the embedding
+      # column) so later recalls skip the work. Self-healing backfill — a
+      # model swap or a legacy bare array re-embeds here; the facet gate
+      # bounds the set size.
       def ensure_embeddings(rows)
         missing = rows.reject { |r| stored_vector(r) }
         return if missing.empty?
-        vecs = ::Harness::CostTracker.in_subsystem(:knowledge_recall) { @embedder.embed(missing.map(&:content)) }
+        vecs = ::Harness::CostTracker.in_subsystem(:knowledge_recall) { Embedding.embed(@embedder, missing.map(&:content), kind: :passage) }
         missing.zip(Array(vecs)).each do |row, vec|
           next if vec.nil? || vec.empty?
-          row.update_column(:embedding, JSON.generate(vec)) # cache write: skip callbacks/timestamps
+          row.update_column(:embedding, Embedding.pack(vec, @model)) # cache write: skip callbacks/timestamps
           @cache[cache_key(row)] = vec
         end
       end
@@ -75,10 +78,7 @@ module Harness
       def stored_vector(row)
         key = cache_key(row)
         return @cache[key] if @cache.key?(key)
-        raw = row.embedding
-        @cache[key] = (raw.nil? || raw.to_s.strip.empty? ? nil : JSON.parse(raw))
-      rescue JSON::ParserError
-        @cache[key] = nil
+        @cache[key] = Embedding.unpack(row.embedding, @model)
       end
 
       # True cosine — correct whether or not the server pre-normalizes; cheap

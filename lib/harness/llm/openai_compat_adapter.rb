@@ -33,10 +33,25 @@ module Harness
     #
     # Why off for complete: narration and materializers want direct output;
     # no thinking budget needed.
+    #
+    # DIALECT (HARNESS_LLM_DIALECT, default llamacpp): the same shape is
+    # served by servers that disagree on the extras. llamacpp takes DRY
+    # sampling, cache_prompt, and response_format json_schema (GBNF).
+    # nvidia (integrate.api.nvidia.com) 400s on unknown sampler keys but
+    # honors standard response_format json_schema and chat_template_kwargs
+    # (the self-hosted NIM docs' `nvext.guided_json` is NOT accepted by the
+    # hosted gateway — probed 2026-09-07). openai is the strict baseline:
+    # no extras at all.
+    # HARNESS_LLM_EXTRA_BODY (JSON) merges into every chat payload last, for
+    # per-model knobs (thinking toggles) without another code path;
+    # HARNESS_EMBED_MODEL / HARNESS_EMBED_EXTRA_BODY do the same for
+    # /embeddings, where hosted retrieval models are separate ids that need
+    # e.g. input_type.
     class OpenAICompatAdapter < Adapter
       DEFAULT_BASE_URL   = "http://127.0.0.1:8080/v1".freeze
       DEFAULT_MODEL      = "local".freeze
       DEFAULT_MAX_TOKENS = 8192
+      DIALECTS           = %w[llamacpp nvidia openai].freeze
       # Max texts per /v1/embeddings request. llama.cpp caps a batch at its
       # --ubatch / -np window; chunk under it so a big backfill can't overflow
       # the server in one shot. Recall sends one text; capture a handful.
@@ -60,9 +75,13 @@ module Harness
         max_tokens: DEFAULT_MAX_TOKENS,
         http_client: nil,
         http_get_client: nil,
-        max_retries: 3,
+        max_retries: (ENV["HARNESS_LLM_MAX_RETRIES"] || 3).to_i,
         think_in_reasoning: false,
         think_in_complete: false,
+        dialect: nil,
+        extra_body: nil,
+        embed_model: nil,
+        embed_extra_body: nil,
         logger: Rails.logger,
         name: :openai_compat
       )
@@ -75,9 +94,16 @@ module Harness
         @max_retries        = max_retries
         @think_in_reasoning = think_in_reasoning
         @think_in_complete  = think_in_complete
+        @dialect            = (dialect || ENV["HARNESS_LLM_DIALECT"] || "llamacpp").to_s.downcase
+        raise ArgumentError, "unknown LLM dialect #{@dialect.inspect} (want #{DIALECTS.join('|')})" unless DIALECTS.include?(@dialect)
+        @extra_body         = parse_extra_body(extra_body || ENV["HARNESS_LLM_EXTRA_BODY"], "HARNESS_LLM_EXTRA_BODY")
+        @embed_model        = (embed_model || ENV["HARNESS_EMBED_MODEL"]).to_s.strip.then { |m| m.empty? ? model : m }
+        @embed_extra_body   = parse_extra_body(embed_extra_body || ENV["HARNESS_EMBED_EXTRA_BODY"], "HARNESS_EMBED_EXTRA_BODY")
         @logger             = logger
         @name               = name
       end
+
+      attr_reader :dialect, :embed_model
 
       def start_turn(system:, user:, tools:)
         OpenAICompatTurn.new(
@@ -117,12 +143,15 @@ module Harness
       # An array is chunked to EMBED_BATCH per request so a large backfill can't
       # overflow the server's batch window. Raises APIError on a hard failure —
       # callers that must not fail (recall ranking) rescue and fall back.
-      def embed(input)
+      # kind: :passage (a stored fact) or :query (the thing being asked) —
+      # retrieval models are asymmetric. Sent as input_type on the nvidia
+      # dialect; llama.cpp and strict OpenAI servers never see it.
+      def embed(input, kind: :passage)
         array = input.is_a?(Array)
         texts = (array ? input : [ input ]).map(&:to_s)
         return array ? [] : nil if texts.empty?
 
-        vectors = texts.each_slice(EMBED_BATCH).flat_map { |slice| embed_batch(slice) }
+        vectors = texts.each_slice(EMBED_BATCH).flat_map { |slice| embed_batch(slice, kind: kind) }
         array ? vectors : vectors.first
       end
 
@@ -135,7 +164,9 @@ module Harness
       # load-bearing enough to fail startup.
       def display_model
         return @display_model if defined?(@display_model)
-        @display_model = fetch_loaded_model || @model || "local"
+        # Only llama.cpp's /v1/models answers "what is loaded"; a hosted
+        # catalog lists hundreds of ids and data[0] is somebody else's model.
+        @display_model = (@dialect == "llamacpp" ? fetch_loaded_model : nil) || @model || "local"
       end
 
       # Anti-parrot sampling: llama.cpp's DRY sampler penalizes tokens that
@@ -161,12 +192,14 @@ module Harness
           "model"      => @model,
           "max_tokens" => max_tokens || @max_tokens,
           "messages"   => messages
-        }.merge(DRY_SAMPLING)
+        }
+        payload.merge!(DRY_SAMPLING) if @dialect == "llamacpp"
         payload["tools"] = tools if tools.is_a?(Array) && !tools.empty?
-        # Grammar-constrained output: llama.cpp compiles the JSON schema to a
-        # GBNF sampler constraint — the model CANNOT emit the wrong shape.
+        # Grammar-constrained output: the model CANNOT emit the wrong shape.
         # Kills the whole retry economy (schema-collision bounces, truncated
-        # JSON, stray prose) at the sampler, not in Ruby.
+        # JSON, stray prose) at the sampler, not in Ruby. llama.cpp compiles
+        # the schema to GBNF behind response_format; hosted vLLM/TRT-LLM
+        # gateways take the same field.
         if schema
           payload["response_format"] = {
             "type" => "json_schema",
@@ -183,15 +216,17 @@ module Harness
         # splits, reproducible logits — at the cost of ALL cache reuse
         # (expect several extra seconds per call). Debug-session lever;
         # both runs being compared must use it.
-        payload["cache_prompt"] = false if ENV["HARNESS_STRICT_REPLAY"] == "1"
+        payload["cache_prompt"] = false if ENV["HARNESS_STRICT_REPLAY"] == "1" && @dialect == "llamacpp"
 
-        # llama.cpp passes chat_template_kwargs through to the jinja template.
-        # Qwen 3.6's template reads `enable_thinking` to gate the <think> block.
-        # Servers that ignore it (vanilla OpenAI, vLLM without the flag) will
-        # just drop it silently, which is the right fallback behavior.
-        unless enable_thinking.nil?
+        # llama.cpp and vLLM-backed servers (NIM) pass chat_template_kwargs
+        # through to the jinja template; Qwen 3.6 / Nemotron templates read
+        # `enable_thinking` to gate the <think> block. A strict OpenAI server
+        # would reject the key, so the openai dialect never sends it.
+        unless enable_thinking.nil? || @dialect == "openai"
           payload["chat_template_kwargs"] = { "enable_thinking" => enable_thinking }
         end
+        # Operator knobs win last (per-model thinking toggles and the like).
+        payload.merge!(@extra_body) unless @extra_body.empty?
 
         with_retries { call_api(payload) }
       end
@@ -278,8 +313,10 @@ module Harness
       # One /v1/embeddings request for up to EMBED_BATCH texts. Returns the
       # vectors sorted by the response's `index` (input order), each a Float
       # array. Reuses the @http POST seam + retry policy.
-      def embed_batch(texts)
-        body = JSON.generate({ "model" => @model, "input" => texts })
+      def embed_batch(texts, kind: :passage)
+        payload = { "model" => @embed_model, "input" => texts }
+        payload["input_type"] = kind.to_s if @dialect == "nvidia"
+        body = JSON.generate(payload.merge(@embed_extra_body))
         headers = {
           "authorization" => "Bearer #{@api_key}",
           "content-type"  => "application/json"
@@ -303,6 +340,18 @@ module Harness
         Array(parsed["data"])
           .sort_by { |d| d["index"].to_i }
           .map { |d| Array(d["embedding"]).map(&:to_f) }
+      end
+
+      # A JSON object from the environment (or a Hash from the constructor);
+      # anything else is a configuration error worth failing loudly on.
+      def parse_extra_body(value, label)
+        return {} if value.nil?
+        return value if value.is_a?(Hash)
+        str = value.to_s.strip
+        return {} if str.empty?
+        parsed = JSON.parse(str)
+        raise ArgumentError, "#{label} must be a JSON object" unless parsed.is_a?(Hash)
+        parsed
       end
 
       def log_request(payload, bytes)
