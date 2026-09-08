@@ -62,10 +62,15 @@ module Harness
       # suffix keeps its first token, so pretending would be worse than a
       # rare honest duplicate. Never blocks a spawn.
       def unique_for(location:, rng: Random.new, attempts: 10)
-        taken = settlement_first_names(location)
+        taken    = settlement_first_names(location)
+        families = player_family_names
         attempts.times do
-          name = self.for(location: location, rng: rng)
-          next if taken.include?(name.split(/\s+/).first.downcase)
+          name   = self.for(location: location, rng: rng)
+          tokens = name.split(/\s+/)
+          next if taken.include?(tokens.first.downcase)
+          # The player's family name is off-limits everywhere too: a stranger
+          # who shares it reads as kin ("your father Roderic") to every model.
+          next if tokens.size > 1 && families.include?(tokens.last.downcase)
           return name unless ::Character.exists?(name: name)
         end
         Rails.logger.warn { "[Naming] first-name pool exhausted near #{location&.name} — allowing a duplicate first name" }
@@ -77,6 +82,13 @@ module Harness
           suffix += 1
         end
         "#{base} #{roman(suffix)}"
+      end
+
+      def player_family_names
+        ::Player.pluck(:name).filter_map { |n|
+          t = n.to_s.strip.split(/\s+/)
+          t.last.downcase if t.size > 1
+        }.to_set
       end
 
       # First tokens of every character name belonging to this location's

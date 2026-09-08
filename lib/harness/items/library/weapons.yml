@@ -11,7 +11,7 @@
 #   modifier_table  array of modifiers, each rolled per instance
 #                   shapes:
 #                     {stat: <stat>, op: add, range: [min, max]}     → rolls integer in range
-#                     {damage_dice: "1d4", op: add, on: attack, chance: 0.3} → 30% chance to apply
+#                     {damage_dice: "1d4", op: add, "on": attack, chance: 0.3} → 30% chance to apply ("on" quoted: bare on is YAML true)
 #   weight          spawn rarity within the weapons category
 
 - id: short_blade
@@ -28,7 +28,7 @@
   base_tags:    [weapon, edged, two_handed]
   modifier_table:
     - { stat: strength, op: add, range: [0, 3] }
-    - { damage_dice: "1d4", op: add, on: attack, chance: 0.3 }
+    - { damage_dice: "1d4", op: add, "on": attack, chance: 0.3 }
   weight: 18
 
 - id: blunt_weapon

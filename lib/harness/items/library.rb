@@ -94,6 +94,7 @@ module Harness
           table.each_with_index do |m, j|
             mp = "#{prefix}.modifier_table[#{j}]"
             raise InvalidLibrary, "#{mp}: must be an object" unless m.is_a?(Hash)
+            raise InvalidLibrary, "#{mp}: keys must be strings (a bare `on` is YAML true — quote it)" unless m.keys.all?(String)
             raise InvalidLibrary, "#{mp}: missing op"        unless m["op"].is_a?(String)
             if m["range"]
               raise InvalidLibrary, "#{mp}: range must be [min, max] integers" unless m["range"].is_a?(Array) && m["range"].size == 2 && m["range"].all? { |n| n.is_a?(Integer) }

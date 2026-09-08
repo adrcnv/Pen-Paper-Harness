@@ -19,6 +19,11 @@ RSpec.describe Harness::Items::Library do
     end
   end
 
+  it "keeps the damage die's phase as a string key (bare `on` is YAML true — the die never fired)" do
+    die = described_class.find("longblade")["modifier_table"].find { |m| m["damage_dice"] }
+    expect(die["on"]).to eq("attack")
+  end
+
   it "find returns the entry by id" do
     expect(described_class.find("short_blade")["id"]).to eq("short_blade")
     expect(described_class.find("nonexistent")).to be_nil
