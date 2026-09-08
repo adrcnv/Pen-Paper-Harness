@@ -159,6 +159,7 @@ module Harness
       payload = {
         "player_input"        => @input,
         "present_characters"  => world["present_characters"] || [],
+        "present_extras"      => world["present_extras"] || [],
         "present_items"       => world["present_items"] || [],
         "nearby_locations"    => world["nearby_locations"] || [],
         "travel_destinations" => world["travel_destinations"] || [],
@@ -177,11 +178,15 @@ module Harness
       active = @scene_manager.active
 
       present_characters = []
+      present_extras = []
       present_items = []
       if active && active.location.id == loc.id
         present_characters = active.present_characters.map { |c|
           { "id" => c.id, "name" => c.name, "subrole" => c.subrole }
         }
+        # Painted figures are in the room too: addressing one is conversation
+        # (promotion mints them), not worldbuilding of someone "missing".
+        present_extras = Array(active.present_extras)
         present_items = active.present_items.map { |i| { "id" => i.id, "name" => i.name } }
       else
         # Fall back to a direct assembly if no matching active scene (rare:
@@ -195,6 +200,7 @@ module Harness
 
       {
         "present_characters"  => present_characters,
+        "present_extras"      => present_extras,
         "present_items"       => present_items,
         "nearby_locations"    => nearby_locations(loc),
         "travel_destinations" => travel_destinations(loc),

@@ -14,7 +14,7 @@ RSpec.describe Harness::Planner do
     end.new
   end
 
-  def scene_manager_for(location, characters: [], items: [], narrations: [])
+  def scene_manager_for(location, characters: [], items: [], narrations: [], extras: [])
     snap = Struct.new(:location, :present_characters, :present_items).new(location, characters, items)
     active = Harness::Scene::Active.new(
       location:             location,
@@ -22,7 +22,7 @@ RSpec.describe Harness::Planner do
       narrations:           narrations,
       internal_state:       {},
       agendas:              {},
-      extras:               [],
+      extras:               extras,
       entered_at_game_time: 0
     )
     Struct.new(:active).new(active)
@@ -64,6 +64,15 @@ RSpec.describe Harness::Planner do
       expect(captured).to include("Tomas")
       expect(captured).to include("smooth locket")
       expect(captured).to include("Oakenford") # parent city in nearby_locations
+    end
+
+    it "surfaces painted figures (extras) so addressing one reads as conversation, not worldbuilding" do
+      captured = nil
+      a = adapter(->(user) { captured = user; { "plan" => [] }.to_json })
+
+      plan_for(model: a, location: tavern, sm: scene_manager_for(tavern, extras: [ "a hunched figure mending a net" ]), input: "talk to the figure")
+
+      expect(JSON.parse(captured.sub(/\AINPUT:\n/, ""))["present_extras"]).to eq([ "a hunched figure mending a net" ])
     end
   end
 

@@ -43,7 +43,7 @@ WHEN to add extras (use judgment):
 - Busy or social locations (taverns, markets, common rooms) — 1–2 extras lend life.
 - Quiet or single-occupant locations (a private study, a craftsman's workshop with one master) — 0 extras. Don't pad.
 - Wilderness or empty places — 0 extras unless the location description explicitly suggests passersby.
-- POPULATED PLACE WITH NO NAMED CHARACTERS YET (INPUT.characters is empty but the location is a town, market, common room, dock, etc): emit 2–4 extras representing the place's typical ambient occupants. The location IS populated even though no character rows exist here yet — narration needs scene flavor to render. The engine materializes one into a real character if the player engages them consequentially.
+- PLACE WITH NO NAMED CHARACTERS YET (INPUT.characters is empty): emit the figures the place plainly holds — first the people its description already paints, then the occupants a place of its kind keeps (a market's stallholders, a common room's drinkers). A lone hut holds one; a clearing may hold none. The engine materializes one into a real character if the player engages them consequentially.
 
 CONSTRAINTS on extras:
 - Each is a single sentence, 10–200 characters.
@@ -82,6 +82,6 @@ HARD RULES
 - "internal_states" is a top-level object keyed by character NAME exactly as it appeared in INPUT.characters. May be `{}` if INPUT.characters is empty.
 - EVERY character in INPUT.characters MUST appear as a key in internal_states.
 - Each internal_states value is a non-empty string between 10 and 400 characters.
-- "extras" is a top-level array of 0–4 strings, each 10–200 characters. Empty array is fine for genuinely-empty places. For populated-place-with-no-named-characters, lean toward 2–4.
+- "extras" is a top-level array of 0–4 strings, each 10–200 characters. Empty array is fine for genuinely-empty places.
 - "agendas" is an object keyed by character name, one line (up to 250 chars) per present character. Followers and anyone with a clear reason to ignore the player may be omitted; otherwise cover everyone.
 - No extra fields in the output beyond internal_states, extras, and (optional) agendas.

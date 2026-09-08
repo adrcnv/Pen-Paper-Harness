@@ -28,12 +28,6 @@ module Harness
       end
 
       # Returns Result(internal_state: {char_id => prose}, agendas: {char_id => text}, extras: [str, ...]).
-      # Skipped (returns empty Result) when no NPCs are present — saves
-      # the LLM call when the scene is genuinely sleepy. Extras COULD have
-      # value in empty scenes (a market with no named NPCs could still have
-      # ambient fishmongers) but are skipped today; revisit if those feel
-      # worth the tokens. Agendas without NPCs are nonsensical (an agenda
-      # belongs to a specific NPC) so the empty-NPCs path stays correct.
       def generate(location:, characters:)
         npcs = characters.select { |c| c.is_a?(::Npc) }
 

@@ -436,12 +436,20 @@ module Harness
       end
 
       # Returns a hash {internal_state: {char_id => prose}, agendas: {char_id => text}, extras: [...]}.
-      # Skipped (empty everything) when no llm_grunt or no present NPCs.
+      # Skipped (empty everything) when no llm_grunt, or when the scene is
+      # empty AND the venue is shut for the hour (nobody to paint in). An
+      # empty scene at an open place still runs: the seeder's extras are the
+      # only writer of the people a description implies — a street's
+      # merchants, the figure a hut was minted around — and skipping it left
+      # those places describing people nobody could address.
       # Failures bubble up — generation is allowed to fail with a typed
       # error; the loop's outer ensure catches and persists.
       def generate_internal_state(location, present_characters)
         return empty_flavor if @context.llm_grunt.nil?
-        return empty_flavor if present_characters.empty?
+        if present_characters.empty?
+          phase = ::Harness::Clock.phase(@context.game_time || 0)
+          return empty_flavor if ::Harness::Scene::VenueHours.closed?(location, phase)
+        end
 
         result = ::Harness::Scene::InternalState
           .new(llm_client: @context.llm_grunt, logger: logger)
@@ -452,6 +460,12 @@ module Harness
           agendas:        result.agendas,
           extras:         result.extras
         }
+      rescue StandardError => e
+        # An extras-only entry has nothing to lose but garnish — a flaky
+        # endpoint must not cost the scene. Populated scenes keep bubbling.
+        raise unless present_characters.empty?
+        logger.warn { "[Scene::Manager] extras-only internal state failed for #{location.name}: #{e.class}: #{e.message}" }
+        empty_flavor
       end
 
       def empty_flavor

@@ -12,7 +12,7 @@ RSpec.describe Harness::Scene::Manager do
   let(:stub_llm) {
     StubLLM.new { |prompt|
       if prompt.include?("INTERNAL STATE")
-        states = present_npc_names.each_with_object({}) { |n, h|
+        states = present_npc_names.select { |n| prompt.include?(n) }.each_with_object({}) { |n, h|
           h[n] = "#{n} is in a perfectly ordinary mood today, neither up nor down."
         }
         { "internal_states" => states }.to_json
@@ -113,11 +113,32 @@ RSpec.describe Harness::Scene::Manager do
       expect(active.internal_state).to eq({})
     end
 
-    it "skips internal-state generation when no NPCs are present" do
-      # warehouse has no characters
-      context.player_location = warehouse
-      active = manager.ensure_entered
-      expect(active.internal_state).to eq({})
+    context "with no NPCs present" do
+      let(:stub_llm) {
+        StubLLM.new { |prompt|
+          if prompt.include?("INTERNAL STATE")
+            { "internal_states" => {}, "extras" => [ "a clerk tallying crates by lamplight" ] }.to_json
+          else
+            { "events" => [] }.to_json
+          end
+        }
+      }
+
+      it "still runs the seeder for its extras — the only writer of the people a description implies" do
+        context.player_location = warehouse   # no character rows here
+        context.game_time = 12 * 60           # noon — the venue is open
+        active = manager.ensure_entered
+        expect(active.internal_state).to eq({})
+        expect(active.extras).to eq([ "a clerk tallying crates by lamplight" ])
+      end
+
+      it "skips the seeder when the venue is shut for the hour (nobody to paint in)" do
+        smithy = Location.create!(name: "Smithy", parent: city)
+        context.player_location = smithy
+        context.game_time = 3 * 60   # night — a trade venue is closed
+        active = manager.ensure_entered
+        expect(active.extras).to eq([])
+      end
     end
 
     it "fires LocationSeeder on enter and marks the location as seeded" do
