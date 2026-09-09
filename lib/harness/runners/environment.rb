@@ -50,6 +50,7 @@ module Harness
         transformed = nil
         destroyed   = nil
         consumed    = nil
+        hurt        = nil
         if roll_ok
           spawn_item(resolver, spec["yields_item"], action, player, tcs)
           transformed = transform_item(resolver, spec["transforms_item"], action, player, context, tcs)
@@ -62,6 +63,7 @@ module Harness
           # the damage narration renders is real world-state, not prose-only.
           alter_location(resolver, spec["location_change_on_botch"], context, tcs)
           destroyed = ruin_item(resolver, spec["transforms_item"], action, player, context, tcs)
+          hurt      = harm_player(spec["harm_on_botch"], player, tcs)
         end
 
         # The act's own prose island — rendered only when something was
@@ -86,6 +88,7 @@ module Harness
             "consumed"      => consumed,
             "destroyed"     => destroyed,
             "unchanged"     => unchanged,
+            "hurt"          => hurt,
             "place_changed" => tcs.find { |t| t["name"] == "mutate_location" }&.dig("args", "alteration")
           }.compact, tcs, subsystem: :runner_environment_fragment)
         end
@@ -175,6 +178,24 @@ module Harness
           "reason"  => "ruined in a badly botched attempt: #{action}"
         }, into: tcs)
         ok ? res["item_name"] : nil
+      end
+
+      # The third payer on a botch, beside the place and the thing: the body.
+      # The emit names only WHAT hurts; the engine owns how much — a slight
+      # 1d3 from the turn's dice stream (replay-stable), never below 1 HP
+      # (a botched carving cannot kill). Recorded like the fragment, as the
+      # runner's own committed change, so Parts renders the number and the
+      # fragment dresses a written fact instead of inventing a cut.
+      HARM_DIE = 3
+      def harm_player(what, player, tcs)
+        what = what.to_s.strip
+        return nil if what.empty?
+        damage = [ ::Harness::RNG.current.rand(1..HARM_DIE), player.current_hp.to_i - 1 ].min
+        return nil if damage <= 0
+        player.update!(current_hp: player.current_hp - damage)
+        tcs << { "name" => "harm", "args" => { "what" => what },
+                 "result" => { "damage" => damage, "current_hp" => player.current_hp, "max_hp" => player.max_hp } }
+        { "what" => what, "damage" => damage }
       end
 
       def alter_location(resolver, change, context, tcs)

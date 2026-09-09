@@ -479,6 +479,11 @@ RSpec.describe Harness::Turn::Loop do
       expect(parts.map { |p| p[:kind] }).to eq([ :card, :card ])
     end
 
+    it "renders a botch's harm as a mechanical line" do
+      harm = { "name" => "harm", "args" => { "what" => "the blade slips" }, "result" => { "damage" => 2, "current_hp" => 8, "max_hp" => 10 } }
+      expect(compose([ harm ])).to eq([ { kind: :line, text: "You take 2 damage: the blade slips." } ])
+    end
+
     it "renders a staged line as a verbatim :dialogue part; reads render nothing" do
       parts = compose([ { "name" => "query_events", "args" => {}, "result" => {} }, staged ])
       expect(parts).to eq([ { kind: :dialogue, text: "Bess doesn't stop moving. 'I just pour the ale, sir.'" } ])

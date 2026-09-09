@@ -87,6 +87,7 @@ module Harness
         when "propose_location" then discovery_line(args, result, context)
         when "propose_item"     then found_line(args, result, context)
         when "start_combat"     then line("⚔ The fight begins.")
+        when "harm"             then line("You take #{result['damage']} damage: #{args['what']}.")
         when "npc_leave"        then line("#{args['name']} leaves for #{args['to']}.")
         when "conversation_silence" then { kind: :stock, text: "No one reacts." }
         when "meta"             then { kind: :stock, text: "(The moment passes.)" }

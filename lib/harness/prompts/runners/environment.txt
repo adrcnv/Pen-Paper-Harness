@@ -11,7 +11,8 @@ The roll, when the attempt is uncertain, is part of THIS action — you declare 
   "yields_item": { "name": "<short item name>", "subrole": "<one-word kind: firewood, salvage, currency, tool, document, ...>", "properties": { } } | null,
   "transforms_item": { "item_id": <id from present_objects or held_items>, "name": "<what it becomes>" | null, "subrole": "<its new one-word kind>" | null, "consumes_item_id": <id of a second listed item the work uses up> | null } | null,
   "location_change": "<short note of a PERSISTENT change to the place>" | null,
-  "location_change_on_botch": "<the persistent mark a badly botched attempt would leave>" | null
+  "location_change_on_botch": "<the persistent mark a badly botched attempt would leave>" | null,
+  "harm_on_botch": "<what would hurt the player's own body if the attempt went badly wrong: a fall, a slipped blade, a burn>" | null
 }
 
 Decide which fields apply — most interactions set only some:
@@ -28,7 +29,7 @@ Decide which fields apply — most interactions set only some:
 - ALL THREE may be null: a pure-flavor poke (rattling a locked gate that won't give, kicking a wall) just needs the action, and narration renders it.
 
 Hard rules:
-- The engine gates on the roll's result: SUCCESS commits yields_item, transforms_item, and location_change; a CRITICAL failure commits location_change_on_botch instead (no loot); a plain failure commits nothing. Declare the fields for what the attempt WOULD do — you do not know the outcome. Set location_change_on_botch ONLY when a bad failure would genuinely leave its own persistent mark (something jammed, torn, collapsed, alight); most failed attempts just fail — leave it null.
+- The engine gates on the roll's result: SUCCESS commits yields_item, transforms_item, and location_change; a CRITICAL failure commits location_change_on_botch and harm_on_botch instead (no loot); a plain failure commits nothing. Declare the fields for what the attempt WOULD do — you do not know the outcome. Set location_change_on_botch ONLY when a bad failure would genuinely leave its own persistent mark (something jammed, torn, collapsed, alight); most failed attempts just fail — leave it null. Set harm_on_botch ONLY when a bad failure would hurt the body itself (a fall, a blade, fire, a current) — the engine sets how much, always slight; most botches spoil the work, not the worker — leave it null.
 - This is about OBJECTS, FEATURES, and the player's own physical attempts against the terrain. Do NOT invent named characters, factions, or places. A stealth attempt is a roll against the situation, not a new NPC.
 - GROUND the act in what is actually here: INPUT.present_objects lists the concrete things anchored in this scene, INPUT.location.description the fixed features, INPUT.location.alterations any prior changes. Act on THOSE. The player may also act on a feature the description plainly implies (a fire has wood, a shore has stones) — but do not conjure a specific object the scene gives no basis for.
 - Items are RARE. When unsure, leave yields_item null.

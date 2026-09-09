@@ -95,6 +95,62 @@ RSpec.describe Harness::Runners::Environment do
     expect(loc.properties["alterations"].join).not_to include("realigned")
   end
 
+  describe "harm on a botch (the body pays, slightly)" do
+    let(:botched) { Harness::Dice::Outcome.new(result: "critical_failure", margin: "decisive", critical: true) }
+    let(:emit) do
+      { "action" => "climb the rock face",
+        "roll" => { "stat" => "strength", "difficulty" => "hard" },
+        "harm_on_botch" => "a fall onto the scree" }
+    end
+
+    it "takes 1..3 HP on a critical failure and records it for Parts and the fragment" do
+      player.update!(current_hp: 10, max_hp: 10)
+      allow(Harness::Dice).to receive(:check).and_return(botched)
+      fragment_input = nil
+      ctx = Harness::Turn::Context.new(player_location: loc, game_time: 100,
+        llm_nuance: StubLLM.new { |prompt|
+          if prompt.include?("physical act on the world")
+            fragment_input = prompt; "You slip and land hard."
+          else
+            emit.to_json
+          end
+        })
+      out = run(ctx, "climb the rock face")
+      harm = out.tool_calls.find { |t| t["name"] == "harm" }
+      expect(harm).not_to be_nil
+      expect(harm["args"]["what"]).to eq("a fall onto the scree")
+      expect(harm["result"]["damage"]).to be_between(1, 3)
+      expect(player.reload.current_hp).to eq(10 - harm["result"]["damage"])
+      expect(fragment_input).to include("hurt", "a fall onto the scree")
+    end
+
+    it "never takes the last HP — a botched climb cannot kill" do
+      player.update!(current_hp: 1, max_hp: 10)
+      allow(Harness::Dice).to receive(:check).and_return(botched)
+      out = run(ctx_emitting(emit), "climb the rock face")
+      expect(names(out)).not_to include("harm")
+      expect(player.reload.current_hp).to eq(1)
+    end
+
+    it "a PLAIN failure with harm declared leaves the body untouched" do
+      player.update!(current_hp: 10, max_hp: 10)
+      allow(Harness::Dice).to receive(:check).and_return(
+        Harness::Dice::Outcome.new(result: "failure", margin: "decisive", critical: false)
+      )
+      out = run(ctx_emitting(emit), "climb the rock face")
+      expect(names(out)).not_to include("harm")
+      expect(player.reload.current_hp).to eq(10)
+    end
+
+    it "a critical failure with no harm declared hurts nobody" do
+      player.update!(current_hp: 10, max_hp: 10)
+      allow(Harness::Dice).to receive(:check).and_return(botched)
+      out = run(ctx_emitting(emit.merge("harm_on_botch" => nil)), "climb the rock face")
+      expect(names(out)).not_to include("harm")
+      expect(player.reload.current_hp).to eq(10)
+    end
+  end
+
   it "a plain failure with a declared botch mark still commits nothing" do
     allow(Harness::Dice).to receive(:check).and_return(
       Harness::Dice::Outcome.new(result: "failure", margin: "narrow", critical: false)
