@@ -47,6 +47,23 @@ RSpec.describe Harness::Turn::Perception do
     expect(llm.user_calls.last).to include("stacking tankards behind the bar")
   end
 
+  it "omits a doing that merely restates the bearing — one fact, rendered once; a real shift still shows" do
+    bess = Npc.create!(name: "Bess", subrole: "barkeep", location: tavern)
+    active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [],
+                                        internal_state: { bess.id => "polishing the bar, half-listening" })
+    context = ctx
+    context.active_scene = active
+
+    active.update_doing!(bess.id, "polishing the bar, half-listening")
+    person = described_class.observable_view(context)["people"].find { |p| p["name"] == "Bess" }
+    expect(person).not_to have_key("doing")
+    expect(person["bearing"]).to eq("polishing the bar, half-listening")
+
+    active.update_doing!(bess.id, "stacking tankards behind the bar")
+    person = described_class.observable_view(context)["people"].find { |p| p["name"] == "Bess" }
+    expect(person["doing"]).to eq("stacking tankards behind the bar")
+  end
+
   it "withholds figures (extras) on a non-establishing render — no writer, never a delta" do
     active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [],
                                         extras: [ "a lone gull crying over the water" ])

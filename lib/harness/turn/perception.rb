@@ -55,11 +55,15 @@ module Harness
           # to a freshly built one, or every restore false-fires the gate.
           "time_of_day" => ::Harness::Clock.phase(context.game_time.to_i).to_s,
           "people" => Array(snap["present_characters"]).map { |c|
+            doing = active&.doing_for(c["id"])
+            # The seeded doing IS the bearing until something shifts it —
+            # one fact, rendered once.
+            doing = nil if doing == c["internal_state"]
             { "name"       => c["name"],
               "role"       => c["subrole"],
               "gender"     => c["gender"],
               "appearance" => looks[c["id"]],
-              "doing"      => active&.doing_for(c["id"]),
+              "doing"      => doing,
               "bearing"    => c["internal_state"] }.compact
           },
           "things"  => Array(snap["present_items"]).map { |i| i["name"] }.compact,

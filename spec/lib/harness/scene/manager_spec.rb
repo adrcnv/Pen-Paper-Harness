@@ -105,6 +105,12 @@ RSpec.describe Harness::Scene::Manager do
       expect(active.state_for(maren.id)).to match(/Maren/)
     end
 
+    it "seeds each NPC's doing from their seeded state — the decliner's null duty needs a reference" do
+      maren
+      active = manager.ensure_entered
+      expect(active.doing_for(maren.id)).to eq(active.state_for(maren.id))
+    end
+
     it "skips internal-state generation when llm_grunt is nil" do
       maren
       context.llm_grunt  = nil

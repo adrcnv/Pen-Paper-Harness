@@ -12,7 +12,7 @@ RSpec.describe Harness::Scene::Initiative do
   # v4: the initiative pass is a SELECTOR; the chosen NPC then speaks through
   # the conversation runner's full voicing (+ reflection + taking-stock).
   # The stub serves all four surfaces by prompt sniffing.
-  def stub_llm(selector:, line: nil, speak: true)
+  def stub_llm(selector:, line: nil, speak: true, beat: nil)
     Class.new do
       define_method(:complete) do |system:, user:, schema: nil|
         full = "#{system}\n#{user}"
@@ -23,7 +23,7 @@ RSpec.describe Harness::Scene::Initiative do
         elsif full.include?("filter stored facts")
           { "relevant" => [] }.to_json
         elsif full.include?("You voice ONE character")
-          { "speak" => speak, "dialogue" => (speak ? { "summary" => "acts", "prose" => line.to_s } : nil) }.to_json
+          { "speak" => speak, "dialogue" => (speak ? { "summary" => "acts", "prose" => line.to_s } : nil), "beat" => beat }.compact.to_json
         else
           selector.to_json
         end
@@ -133,6 +133,21 @@ RSpec.describe Harness::Scene::Initiative do
     expect(rec).to be_present                       # the voicing's own staging, recorded for the turn log
     expect(a.spoken?(maren.id)).to be(true)          # a real speaking turn — thread ownership follows
     expect(a.last_initiator).to eq(maren.id)
+  end
+
+  it "an unprompted beat with no line still acts: the silent payment goes through the hands" do
+    ivo = npc(name: "Ivo")
+    ivo.update!(coins: 6)
+    player.update!(coins: 0)
+    Obligation.create!(debtor_id: ivo.id, creditor_id: player.id, kind: "coins", amount: 3, terms: "for the ale", status: "open", game_time: 0)
+    context.llm_nuance = stub_llm(selector: { "actor" => "Ivo", "cause" => "settle what he owes" }, speak: false,
+                                  beat: [ { "step" => "give", "who" => player.name, "where" => nil, "coins" => 3 } ])
+    active = active_with(present: [ ivo ], agendas: { ivo.id => "pay the player back" })
+    t = transcript
+    run(active, t)
+    expect(names(t)).to include("transfer_coins")
+    expect(player.reload.coins).to eq(3)
+    expect(Obligation.last.status).to eq("settled")
   end
 
   it "appends nothing when the selector picks nobody" do

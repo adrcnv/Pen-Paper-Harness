@@ -284,14 +284,27 @@ module Harness
       # SPEAKER — the debtor claiming it's done settles nothing. Matches the
       # oldest open row of that kind between the pair; no row → the model
       # imagined a debt, drop silently.
+      # A release is the CREDITOR's spoken word. Two legal shapes: the speaker
+      # releasing a debt owed to them (who_owed = the debtor), or the player
+      # releasing a debt the speaker owes (who_owed = the speaker). The player
+      # has no reflection pass, so the debtor's own pass reports the player's
+      # release — the same seat already reports the player's spoken acceptance
+      # when a deal is struck. Never a third party, never self-to-self.
       def settle_discharges(discharges)
         return if discharges.empty?
-        creditor = deal_party(@speaker)
-        return unless creditor
+        speaker = deal_party(@speaker)
+        return unless speaker
+        player = ::Player.first
 
         discharges.each do |d|
-          debtor = deal_party(d["who_owed"])
-          next unless debtor && debtor.id != creditor.id
+          named = deal_party(d["who_owed"])
+          next unless named
+          if named.id == speaker.id
+            next unless player && player.id != speaker.id
+            debtor, creditor = speaker, player
+          else
+            debtor, creditor = named, speaker
+          end
           ob = ::Obligation.open_now.where(debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s).order(:id).first
           unless ob
             @logger.info { "[Knowledge::Capture] discharge dropped (no open #{d['kind']} obligation #{debtor.name}→#{creditor.name})" }

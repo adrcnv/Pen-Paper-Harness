@@ -153,6 +153,20 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicings[1].split("exchange_so_far").last).to include("any news, folks?") # ...as this turn's entry
   end
 
+  it "the planner's intent never widens the address: a name only in the intent is not polled first" do
+    bruna = Npc.create!(name: "Bruna", subrole: "fisher", location: tavern)
+    polled = []
+    ctx = context_with { |full| polled << full; { "speak" => false }.to_json }
+    scene = Harness::Tools::QueryScene.build(ctx)
+    intent = Harness::Dispatcher::Step.new(runner: "conversation", intent: "asks Bruna who she waits for", args: {})
+
+    described_class.new.run(context: ctx, scene: scene, input: "who are you all waiting for?", step: intent)
+
+    first_you = polled.first.split('"you"').last
+    expect(first_you).to include(barkeep.name)      # roster order, nobody addressed
+    expect(first_you).not_to include(bruna.name)
+  end
+
   it "persists a durable event only when the exchange is flagged memorable" do
     ctx = context_with do
       { "speak" => true,
@@ -513,6 +527,22 @@ RSpec.describe Harness::Runners::Conversation do
       contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
       expect(contest_record).to be_present
       expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:social" ])
+    end
+
+    it "frames the LOSING target's voicing with the settled verdict — the dice decide engagement, not the decline duty" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+      described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
+      expect(voiced.first).to include("--- VERDICT ---", '"player_won": true')
+    end
+
+    it "does not frame a target who WON the contest (refusal is a legitimate render of winning)" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "failure", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+      described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
+      expect(voiced.first).not_to include("--- VERDICT ---")
     end
 
     it "reuses the scene's standing verdict instead of rerolling on a repeat attempt" do
@@ -1221,6 +1251,152 @@ RSpec.describe Harness::Runners::Conversation do
         described_class.new.run(context: ctx, scene: scene, input: "hello barkeep", step: step("greet the barkeep"))
       }.not_to change(Npc, :count)                          # no phantom character minted
       expect(voiced.any? { |v| v.include?("lone horse") }).to be(false) # the horse was never voiced
+    end
+  end
+  describe "the beat (hands): give / leave / attack" do
+    let(:city)   { Location.create!(name: "Saltmere") }
+    let(:tavern) { Location.create!(name: "The Drowned Rat", parent: city) }
+    let!(:docks) { Location.create!(name: "the Docks", parent: city, description: "wet planks") }
+
+    # One stub for the whole turn: the voicing answers with `emit` (or the
+    # retry answer when the bounce fires); reflection/taking-stock get empty
+    # memory. `seen` collects every prompt so the retry text can be asserted.
+    def beat_ctx(emit, retry_emit: nil, seen: [])
+      context_with do |full|
+        seen << full
+        if full.include?("WORLD MEMORY") || full.include?("TAKING STOCK")
+          { "facts" => [], "people" => [], "places" => [] }.to_json
+        elsif full.include?("--- RETRY ---") && retry_emit
+          retry_emit.to_json
+        else
+          emit.to_json
+        end
+      end
+    end
+
+    def line_with(beat, speak: true, prose: "Here.")
+      { "thought" => "Tomas decides.", "speak" => speak,
+        "dialogue" => (speak ? { "summary" => "acts", "prose" => prose } : nil),
+        "beat" => beat }
+    end
+
+    it "surfaces the purse so a give can be sized" do
+      barkeep.update!(coins: 7)
+      seen = []
+      ctx = beat_ctx({ "speak" => false }, seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "hello barkeep", step: step)
+      payload = seen.first.split("INPUT:\n", 2).last
+      you = JSON.parse(payload[0..payload.rindex("}")])["you"]
+      expect(you["coins"]).to eq(7)
+    end
+
+    it "give moves real coins through transfer_coins and settles the open debt" do
+      barkeep.update!(coins: 10)
+      ob = Obligation.create!(debtor_id: barkeep.id, creditor_id: player.id, kind: "coins", amount: 5, terms: "for the fish", status: "open", game_time: 0)
+      seen = []
+      ctx = beat_ctx(line_with([ { "step" => "give", "who" => "Hero", "where" => nil, "coins" => 5 } ]), seen: seen)
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "you owe me", step: step)
+
+      tc = outcome.tool_calls.find { |t| t["name"] == "transfer_coins" }
+      expect(tc.dig("args", "from_id")).to eq(barkeep.id)
+      expect(tc.dig("args", "to_id")).to eq(player.id)
+      expect(tc.dig("args", "amount")).to eq(5)
+      expect(barkeep.reload.coins).to eq(5)
+      expect(player.reload.coins).to eq(5)
+      expect(ob.reload.status).to eq("settled")
+      reflection = seen.find { |s| s.include?("WORLD MEMORY") }
+      expect(reflection).to include("You also did", "paid Hero 5 coins, settling the debt")
+      expect(outcome.status).to eq(:ok)
+    end
+
+    it "pre-flights the beat: an unaffordable give bounces once with the purse named, then executes the corrected step" do
+      barkeep.update!(coins: 3)
+      seen = []
+      ctx = beat_ctx(line_with([ { "step" => "give", "who" => "Hero", "where" => nil, "coins" => 5 } ]),
+                     retry_emit: line_with([ { "step" => "give", "who" => "Hero", "where" => nil, "coins" => 3 } ]), seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "pay up", step: step)
+      bounce = seen.find { |s| s.include?("--- RETRY ---") }
+      expect(bounce).to include("you have 3 coins, not 5")
+      expect(barkeep.reload.coins).to eq(0)
+      expect(player.reload.coins).to eq(3)
+    end
+
+    it "drops a step that is still wrong after the bounce and lets the line stand" do
+      barkeep.update!(coins: 3)
+      emit = line_with([ { "step" => "give", "who" => "Hero", "where" => nil, "coins" => 5 } ], prose: "Take it.")
+      ctx = beat_ctx(emit, retry_emit: emit)
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "pay up", step: step)
+      expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("transfer_coins")
+      expect(outcome.tool_calls.find { |t| t["name"] == "propose_event" }.dig("args", "details")).to eq("Take it.")
+      expect(barkeep.reload.coins).to eq(3)
+    end
+
+    it "a silent beat (speak false + give) still engages and executes" do
+      barkeep.update!(coins: 4)
+      ctx = beat_ctx(line_with([ { "step" => "give", "who" => "Hero", "where" => nil, "coins" => 2 } ], speak: false))
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "well?", step: step)
+      expect(outcome.tool_calls.map { |t| t["name"] }).to include("transfer_coins")
+      expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("conversation_silence")
+      expect(player.reload.coins).to eq(2)
+    end
+
+    it "leave relocates to the named nearby place, pins them there, records the departure, and renders a line" do
+      ctx = beat_ctx(line_with([ { "step" => "leave", "who" => nil, "where" => "the Docks", "coins" => nil } ], prose: "See you."))
+      outcome = nil
+      expect {
+        outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "bye", step: step)
+      }.to change(Event, :count).by(1)
+      expect(barkeep.reload.location_id).to eq(docks.id)
+      expect(barkeep.properties.dig("pin", "location_id")).to eq(docks.id)
+      expect(Event.last.details.dig("narrative", "details")).to eq("Tomas leaves for the Docks.")
+      gone = outcome.tool_calls.find { |t| t["name"] == "npc_leave" }
+      expect(gone.dig("args", "to")).to eq("the Docks")
+      expect(Harness::Turn::Parts.render_call(gone, ctx, nil)[:text]).to eq("Tomas leaves for the Docks.")
+    end
+
+    it "leave with no place goes home, or up a level when home is here" do
+      barkeep.update!(home_location_id: tavern.id)
+      ctx = beat_ctx(line_with([ { "step" => "leave", "who" => nil, "where" => nil, "coins" => nil } ]))
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "bye", step: step)
+      expect(barkeep.reload.location_id).to eq(city.id)
+    end
+
+    it "nothing follows a terminal step: a give after leave is bounced, then dropped" do
+      barkeep.update!(coins: 9)
+      emit = line_with([ { "step" => "leave", "who" => nil, "where" => "the Docks", "coins" => nil },
+                         { "step" => "give", "who" => "Hero", "where" => nil, "coins" => 2 } ])
+      seen = []
+      ctx = beat_ctx(emit, retry_emit: emit, seen: seen)
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "bye", step: step)
+      expect(seen.find { |s| s.include?("--- RETRY ---") }).to include("nothing follows leaving or attacking")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to include("npc_leave")
+      expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("transfer_coins")
+      expect(barkeep.reload.coins).to eq(9)
+    end
+
+    it "attack is refused for anyone who is not the fighting kind (the tavern-keep guarantee)" do
+      emit = line_with([ { "step" => "attack", "who" => "Hero", "where" => nil, "coins" => nil } ], prose: "Get out.")
+      seen = []
+      ctx = beat_ctx(emit, retry_emit: emit, seen: seen)
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "insult the barkeep", step: step)
+      expect(seen.find { |s| s.include?("--- RETRY ---") }).to include("not the kind who draws steel")
+      expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("start_combat")
+      expect(outcome.status).to eq(:ok)
+    end
+
+    it "attack from a fighter starts combat against the player and terminates the turn as :combat" do
+      barkeep.destroy!
+      guard = Npc.create!(name: "Bruno", subrole: "guard", location: tavern, current_hp: 9, max_hp: 9, level: 1)
+      allow_any_instance_of(Harness::Combat::Tools::StartCombat).to receive(:call).and_return({ "combat" => "started" })
+      ctx = beat_ctx({ "thought" => "Bruno has had enough.", "speak" => true,
+                       "dialogue" => { "summary" => "draws", "prose" => "Enough." },
+                       "beat" => [ { "step" => "attack", "who" => "Hero", "where" => nil, "coins" => nil } ] })
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "shove the guard", step: step("shove the guard"))
+      fight = outcome.tool_calls.find { |t| t["name"] == "start_combat" }
+      expect(fight.dig("args", "sides")).to eq([ { "name" => "player_party", "members" => [ player.id ] },
+                                                { "name" => "hostiles",     "members" => [ guard.id ] } ])
+      expect(fight.dig("args", "initiator_id")).to eq(guard.id)
+      expect(outcome.status).to eq(:combat)
     end
   end
 end

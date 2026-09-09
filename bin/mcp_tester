@@ -14,9 +14,12 @@
 real_stdout = $stdout
 $stdout = File.open(File::NULL, "w")
 
-# Same .env convention as bin/play; shell wins.
-env_path = File.expand_path("../.env", __dir__)
-if File.exist?(env_path)
+# Same .env convention as bin/play; shell wins. HARNESS_ENV_FILE names an
+# extra profile (a hosted endpoint's key + model + dialect) loaded BEFORE the
+# repo .env, so a spawned tester can run hosted without the key ever sitting
+# in a config file: shell > profile > .env.
+load_env = lambda do |env_path|
+  next unless env_path && File.exist?(env_path)
   File.foreach(env_path) do |line|
     line = line.strip
     next if line.empty? || line.start_with?("#")
@@ -28,6 +31,8 @@ if File.exist?(env_path)
     ENV[key.strip] ||= value
   end
 end
+load_env.call(File.expand_path(ENV["HARNESS_ENV_FILE"])) if ENV["HARNESS_ENV_FILE"].to_s != ""
+load_env.call(File.expand_path("../.env", __dir__))
 
 ENV["RAILS_ENV"] = "scenario"
 require_relative "../config/environment"

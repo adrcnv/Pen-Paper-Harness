@@ -83,7 +83,8 @@ module Harness
           break if spoken >= MAX_SPEAKERS
           recall_gate = !any_addressed || v[:addressed] ||
                         (contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id])
-          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest, recall_gate: recall_gate)
+          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest,
+                                         frame: verdict_frame(contest, v), recall_gate: recall_gate)
           next unless emit
           parsed_any = true
           applied = apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
@@ -111,6 +112,7 @@ module Harness
               reflect_knowledge(context, { char: { "name" => minted.name } }, emit, voicing_user)
             end
           end
+          break if combat_started?(tcs)
         end
 
         return redispatch("conversation emit unparseable", tcs) unless parsed_any
@@ -119,20 +121,25 @@ module Harness
         # vacuum with invented dialogue (the model's strongest prior on a
         # charged line is to write the reply itself).
         tcs << tool_call("conversation_silence", {}, { "nobody_spoke" => true }) if spoken.zero?
-        Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
+        # An attack step is a hard terminator, exactly as the combat runner's.
+        Outcome.new(tool_calls: tcs, scene_dirty: false, status: combat_started?(tcs) ? :combat : :ok)
       end
 
       private
 
       # Poll order: characters the player NAMED (by first name or role, in the
-      # input or the planner intent) go FIRST — so an addressee is always asked
-      # before the two-speaker cap can be filled by chime-ins (otherwise two
-      # bystanders piping up could silence the person actually addressed). Extras
+      # INPUT) go FIRST — so an addressee is always asked before the two-speaker
+      # cap can be filled by chime-ins (otherwise two bystanders piping up could
+      # silence the person actually addressed). The planner's intent never
+      # widens the address: it is a lossy paraphrase ("asks Irenka, Zhenya and
+      # Tomash…" for a question that named nobody), and the prompt already
+      # tells the voicing it is not a ruling on who is addressed — a name it
+      # resolved from a pronoun still self-selects from the payload. Extras
       # last: ambient figures only get drawn in if the named cast didn't already
       # answer the room. This is poll ORDER, not a speech ruling — each character
       # still self-decides whether it speaks.
-      def poll_order(present, extras, input, step)
-        hay = "#{input} #{step&.intent}".downcase
+      def poll_order(present, extras, input, _step)
+        hay = input.to_s.downcase
         npcs = present.map { |c| { kind: :npc, char: c } }
         named, rest = npcs.partition { |v| addressed_by_name?(v[:char], hay) }
         named.each { |v| v[:addressed] = true }
@@ -251,7 +258,8 @@ module Harness
           # (register pollution — the Bogumil first-person class).
           "verdict" => (player_won ? "#{target['name']} lost — it went the player's way#{grade}" : "#{target['name']} won — the player's attempt failed#{grade}")
         }
-        payload["effect"] = ability["description"] if ability && player_won
+        payload["effect"]     = ability["description"] if ability && player_won
+        payload["player_won"] = player_won
         active&.record_contest!(key, payload)
         @logger.info { "[Runner conversation] contest #{key} → #{res['outcome']}#{res['xp_gained'] ? " (+#{res['xp_gained']}xp)" : ""}" }
         { target_id: target["id"], payload: payload }
@@ -353,8 +361,25 @@ module Harness
       UNPROMPTED_FRAME = <<~FRAME
         --- UNPROMPTED ---
         No one has addressed you this turn. You have RESOLVED to act on your own: <<CAUSE>>
-        The are-you-speaking deliberation is settled — output the same JSON with "speak": true. Your dialogue.prose is you seizing the moment: say or do the thing, in your manner, grounded in what you actually know. player_input above is what the player just did, not words aimed at you.
+        The are-you-speaking deliberation is settled — output the same JSON with "speak": true, or with a beat when what you resolved on is a thing you DO. Your dialogue.prose is you seizing the moment: say or do the thing, in your manner, grounded in what you actually know. player_input above is what the player just did, not words aimed at you.
       FRAME
+
+      # A LOST contest settles the are-you-speaking deliberation the way the
+      # unprompted frame does — the dice ruled, the prose renders. Without it
+      # the verdict sat in the payload as advice while the decline duty
+      # ("silence is correct and common") stayed a duty: Irenka "still
+      # smarting from the player's successful persuasion" answered a direct
+      # question with silence. Rides after the payload, prefix-safe.
+      VERDICT_FRAME = <<~FRAME
+        --- VERDICT ---
+        The dice ruled this press against you: <<KIND>>. The are-you-speaking deliberation is settled — output the same JSON with "speak": true and yield in your manner: say or give what was pressed for.
+      FRAME
+
+      def verdict_frame(contest, v)
+        return nil unless contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
+        return nil unless contest[:payload].is_a?(::Hash) && contest[:payload]["player_won"] == true
+        VERDICT_FRAME.sub("<<KIND>>") { contest[:payload]["kind"].to_s }
+      end
 
       def voice_unprompted(context:, npc:, cause:, input:, transcript: nil)
         player = ::Player.first
@@ -377,7 +402,8 @@ module Harness
                                        nearby_places(context), wares_here(context),
                                        resolver, tcs, active, nil, frame: frame)
         prose = emit&.dig("dialogue", "prose").to_s.strip
-        if emit.nil? || !emit["speak"] || prose.empty?
+        acts  = emit ? Array(emit["beat"]).any? : false
+        if emit.nil? || (!emit["speak"] && !acts) || (prose.empty? && !acts)
           @logger.info { "[Runner conversation] unprompted voicing declined for #{npc.name} (speak=#{emit && emit['speak'].inspect})" }
           transcript&.record_tool_calls(tcs)
           return nil
@@ -454,11 +480,11 @@ module Harness
           # One correction bounce: a malformed emit (bad JSON, or a speaker with
           # no line — the "pro"-for-"prose" class) goes back to the model with
           # the defect named. Same prefix, so the retry is KV-cache-hot.
-          if (defect = emit_defect(e1))
+          if (defect = emit_defect(e1) || beat_defect(e1, v, context))
             @logger.warn { "[Runner conversation] #{who} emit malformed (#{defect}) — retrying once" }
             raw = llm(context).complete(system: preamble, user: "#{sent_user}\n\n#{retry_tail(defect, raw)}", schema: VOICING_SCHEMA)
             e1  = parse_emit(raw)
-            if (still = emit_defect(e1))
+            if (still = emit_defect(e1) || beat_defect(e1, v, context))
               @logger.warn { "[Runner conversation] #{who} emit still malformed (#{still}) — dropped" }
             end
           end
@@ -510,7 +536,7 @@ module Harness
       def apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
         dlg     = emit["dialogue"]
         prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
-        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["memorable"]
+        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["memorable"] || Array(emit["beat"]).any?
         @logger.debug do
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           "[Runner conversation] #{who} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
@@ -518,7 +544,7 @@ module Harness
           "thought=#{emit['thought'].to_s[0, 120].inspect}"
         end
         return false unless engaged
-        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["resolve_call"] && !emit["memorable"]
+        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["resolve_call"] && !emit["memorable"] && Array(emit["beat"]).empty?
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           @logger.info { "[Runner conversation] #{who} spoke-empty (in-grammar break-off) — treated as silence" }
           return false
@@ -547,7 +573,8 @@ module Harness
         end
         commit_resolve(resolver, emit["resolve_call"], player, actor_id, tcs)
         commit_memorable(resolver, emit["memorable"], player, actor_id, tcs)
-        spoke
+        acted = execute_beat(resolver, context, emit, actor_id, player, tcs)
+        spoke || acted
       end
 
       # A parrot: the new line reproduces ANY character's previous staged line
@@ -597,7 +624,8 @@ module Harness
         events = Array(res.is_a?(Hash) ? res["events"] : res)
           .map { |e| event_text(e, exclude_id: char["id"]) }
           .reject(&:empty?)
-        props = ::Npc.find_by(id: char["id"])&.properties
+        row   = ::Npc.find_by(id: char["id"])
+        props = row&.properties
         # Mood and agenda ride EVERY turn — the post-emit reevaluation
         # keeps them current, so they can't yank a spoken NPC back to a stale
         # seed. Mood leads with the disposition-ladder word: the standing
@@ -617,6 +645,8 @@ module Harness
           "doing"       => active&.doing_for(char["id"]),
           "agenda"      => active&.agenda_for(char["id"]),
           "debts"       => debts_for(char["id"], now),
+          # The purse: the most a give step can hand over.
+          "coins"       => row&.coins.to_i,
           "events"      => events
         }.compact
       end
@@ -697,15 +727,7 @@ module Harness
       # The semantic kind lives in the name ("the Smith's"), so name + a short
       # description snippet is enough for the model to pick the right one.
       def nearby_places(context)
-        loc = context.player_location
-        return [] unless loc
-        rows = []
-        rows << loc.parent if loc.parent
-        if loc.parent_id
-          rows.concat(::Location.where(parent_id: loc.parent_id).where.not(id: loc.id).limit(PLACES_CAP).to_a)
-        end
-        rows.concat(::Location.where(parent_id: loc.id).limit(PLACES_CAP).to_a)
-        rows.uniq(&:id).first(PLACES_CAP).map do |l|
+        nearby_rows(context).map do |l|
           entry = { "name" => l.name }
           d = l.description.to_s.strip
           # Sanity ceiling — 80 cut one-liner descriptions mid-word
@@ -714,6 +736,18 @@ module Harness
           entry["about"] = d[0, 240] unless d.empty?
           entry
         end
+      end
+
+      def nearby_rows(context)
+        loc = context.player_location
+        return [] unless loc
+        rows = []
+        rows << loc.parent if loc.parent
+        if loc.parent_id
+          rows.concat(::Location.where(parent_id: loc.parent_id).where.not(id: loc.id).limit(PLACES_CAP).to_a)
+        end
+        rows.concat(::Location.where(parent_id: loc.id).limit(PLACES_CAP).to_a)
+        rows.uniq(&:id).first(PLACES_CAP)
       end
 
       # For-sale stock anchored at the scene, with the settlement's mechanical
@@ -817,6 +851,154 @@ module Harness
         }, into: tcs)
       end
 
+      # THE BEAT — the NPC's hands. One judgment (the emit) declared what the
+      # character does; everything from here is Ruby. The whole beat was
+      # pre-flighted when the emit landed (beat_defect, one bounce with the
+      # defect named), so a step still wrong here is dropped and logged and
+      # the line stands as a lapse — prose never moves a coin. Order is the
+      # model's; leave and attack are terminal. Returns true if anything ran.
+      MAX_BEAT_STEPS = 2
+      TERMINAL_STEPS = %w[leave attack].freeze
+
+      def execute_beat(resolver, context, emit, actor_id, player, tcs)
+        steps = Array(emit["beat"])
+        return false if steps.empty?
+        npc = ::Npc.find_by(id: actor_id)
+        return false unless npc
+        did = []
+        steps.each do |s|
+          if (defect = step_defect(s, npc, context, player))
+            @logger.info { "[Runner conversation] #{npc.name} beat step dropped (#{defect})" }
+            next
+          end
+          case s["step"]
+          when "give"
+            target = beat_target(s["who"], context, player)
+            res, ok = execute_tool(resolver, "transfer_coins", {
+              "from_id" => npc.id, "to_id" => target.id, "amount" => s["coins"].to_i,
+              "reason"  => "handed over in conversation"
+            }, into: tcs)
+            next unless ok
+            settled = res.is_a?(Hash) && res.dig("obligation", "status") == "settled"
+            did << "paid #{target.name} #{s['coins'].to_i} coins#{settled ? ', settling the debt' : ''}"
+          when "leave"
+            dest = leave_destination(s["where"], npc, context)
+            leave!(npc, dest, context, player, tcs)
+            did << "left for #{dest.name}"
+            break
+          when "attack"
+            _, ok = execute_tool(resolver, "start_combat", {
+              "sides" => [
+                { "name" => "player_party", "members" => [ player.id ] },
+                { "name" => "hostiles",     "members" => [ npc.id ] }
+              ],
+              "initiator_id"  => npc.id,
+              "inciting_beat" => "#{npc.name} turns on #{player.name}"
+            }, into: tcs)
+            did << "attacked #{player.name}" if ok
+            break
+          end
+        end
+        emit["did"] = did
+        did.any?
+      end
+
+      def combat_started?(tcs)
+        tcs.any? { |t| t["name"] == "start_combat" && !(t["result"].is_a?(Hash) && t["result"].key?("error")) }
+      end
+
+      # Whole-beat pre-flight, run against the emit before it is accepted so
+      # the bounce can name the defect. Nil when every step would execute.
+      def beat_defect(emit, v, context)
+        return nil unless emit.is_a?(::Hash)
+        steps = emit["beat"]
+        return nil if steps.nil?
+        return "beat must be an array" unless steps.is_a?(::Array)
+        return nil if steps.empty?
+        return "unnamed figures do not act — beat must be empty" if v[:kind] == :extra
+        return "beat has #{steps.size} steps; at most #{MAX_BEAT_STEPS}" if steps.size > MAX_BEAT_STEPS
+        npc = ::Npc.find_by(id: v[:char]["id"])
+        return nil unless npc
+        player = ::Player.first
+        steps.each_with_index do |s, i|
+          if i > 0 && TERMINAL_STEPS.include?(steps[i - 1].is_a?(::Hash) ? steps[i - 1]["step"].to_s : "")
+            return "beat[#{i}]: nothing follows leaving or attacking"
+          end
+          if (d = step_defect(s, npc, context, player))
+            return "beat[#{i}]: #{d}"
+          end
+        end
+        nil
+      end
+
+      def step_defect(s, npc, context, player)
+        return "step must be an object" unless s.is_a?(::Hash)
+        case s["step"]
+        when "give"
+          amount = s["coins"]
+          return "give needs a positive integer coins" unless amount.is_a?(::Integer) && amount > 0
+          target = beat_target(s["who"], context, player)
+          return "give: #{s['who'].inspect} is not here" unless target
+          return "give: cannot give to yourself" if target.id == npc.id
+          return "give: you have #{npc.coins.to_i} coins, not #{amount}" if amount > npc.coins.to_i
+        when "leave"
+          return "leave: #{s['where'].inspect} is not among nearby_places" unless leave_destination(s["where"], npc, context)
+        when "attack"
+          return "attack: you are not the kind who draws steel" unless ::Harness::Combat::FightCapable.fight_capable?(npc)
+          target = beat_target(s["who"], context, player)
+          return "attack: #{s['who'].inspect} is not here" unless target
+          return "attack: only the player can be attacked here" unless target.is_a?(::Player)
+          return "attack: already in combat" if context.active_scene&.in_combat?
+        else
+          return "unknown step #{s['step'].inspect}"
+        end
+        nil
+      end
+
+      # A give/attack target by name: the player or an NPC standing here.
+      def beat_target(name, context, player)
+        loc = context.player_location
+        rows = [ player ] + (loc ? ::Npc.where(location_id: loc.id).to_a : [])
+        hit = find_present(rows.map { |c| { "id" => c.id, "name" => c.name } }, name)
+        hit && rows.find { |c| c.id == hit["id"] }
+      end
+
+      # Where a leaving character goes: a nearby place by name, or — for a
+      # bare "away" — home when home is not here, else the place this one
+      # sits in. Nil means nowhere to go (a defect, not a silent stay).
+      def leave_destination(where, npc, context)
+        loc = context.player_location
+        return nil unless loc
+        name = where.to_s.strip.downcase
+        if name.empty?
+          home = ::Location.find_by(id: npc.home_location_id)
+          return home if home && home.id != loc.id
+          return loc.parent
+        end
+        nearby_rows(context).find { |l| l.name.to_s.strip.downcase == name } ||
+          nearby_rows(context).find { |l| l.name.to_s.strip.downcase.split(/\s+/).include?(name) }
+      end
+
+      # The exit: relocate, pin until the next phase boundary (the schedule
+      # would otherwise snap them back at the next refresh), record a legible
+      # departure, and drop them from the live roster so nothing later this
+      # turn (initiative, a second speaker) addresses an empty stool.
+      def leave!(npc, dest, context, player, tcs)
+        from = context.player_location
+        npc.update!(location_id: dest.id)
+        ::Harness::Scene::Whereabouts.pin!(npc, dest, context.game_time)
+        event = ::Harness::Event::ForwardAppender.append(
+          game_time: context.game_time || 0,
+          scope:     "local",
+          location:  from,
+          details:   { "narrative" => { "trigger" => "#{npc.name} leaves", "details" => "#{npc.name} leaves for #{dest.name}." } },
+          participants: [ { character: npc, role: "actor" }, { character: player, role: "participant" } ]
+        )
+        context.active_scene&.present_characters&.reject! { |c| c.id == npc.id }
+        tcs << tool_call("npc_leave", { "character_id" => npc.id, "name" => npc.name, "to" => dest.name }, { "left" => true, "event_id" => event&.id })
+        @logger.info { "[Runner conversation] #{npc.name} leaves for #{dest.name}" }
+      end
+
       # REFLECTION — the knowledge write path. A second ask on the speaker's
       # still-hot voicing context: same system, same user prefix (KV-cache
       # reuse), plus a tail quoting what they just said and asking what they
@@ -858,7 +1040,19 @@ module Harness
           # doing ("turns back to his ropes"). Optional — null/absent is the
           # normal answer; honored only on the decline path (speakers' doing
           # belongs to the taking-stock pass).
-          "doing" => { "type" => %w[string null] }
+          "doing" => { "type" => %w[string null] },
+          # THE HANDS: what the character does this turn besides speaking,
+          # in order. Pre-flighted at emit time, executed after the line.
+          "beat" => { "type" => "array", "items" => {
+            "type" => "object",
+            "properties" => {
+              "step"  => { "type" => "string", "enum" => %w[give leave attack] },
+              "who"   => { "type" => %w[string null] },
+              "where" => { "type" => %w[string null] },
+              "coins" => { "type" => %w[integer null] }
+            },
+            "required" => %w[step who where coins], "additionalProperties" => false
+          } }
         },
         "required" => %w[thought speak],
         "additionalProperties" => false
@@ -930,7 +1124,7 @@ module Harness
         return if prose.empty? || voicing_user.nil?
 
         speaker = v[:char]["name"]
-        user    = "#{voicing_user}\n\n#{reflection_tail(prose)}"
+        user    = "#{voicing_user}\n\n#{reflection_tail(prose, did: emit["did"])}"
         raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
           llm(context).complete(system: preamble, user: user, schema: REFLECTION_SCHEMA)
         end
@@ -1020,10 +1214,12 @@ module Harness
       # <<...>> markers are runtime substitutions owned by THIS runner —
       # deliberately not {{...}}, which is Prompts::Preamble's vocabulary
       # namespace (its integration spec rejects unexpanded {{ in prompt files).
-      def reflection_tail(prose)
+      def reflection_tail(prose, did: nil)
         @reflection_template ||= File.read(REFLECTION_PROMPT_PATH)
                                      .sub("<<SUBROLES>>") { ::Harness::Vocations.all.join(", ") }
-        @reflection_template.sub("<<SAID>>") { prose }
+        acts = Array(did).map(&:to_s).reject(&:empty?)
+        done = acts.empty? ? "" : "You also did, for real — the ledger moved: #{acts.join('; ')}."
+        @reflection_template.sub("<<SAID>>") { prose }.sub("<<DID>>") { done }
       end
 
       # Malformed JSON must reach the bounce as a nil payload ("unparseable"),

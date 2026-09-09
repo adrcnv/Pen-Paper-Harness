@@ -86,6 +86,11 @@ module Harness
           internal_state:       flavor[:internal_state],
           agendas:              flavor[:agendas],
           extras:               flavor[:extras],
+          # The visible activity starts as the seeded state: a decliner's
+          # "carry on → doing null" duty needs a reference, and with `doing`
+          # empty the first decline wrote the establishment out again
+          # ("continues mending her net") and perception repainted it.
+          doing:                (flavor[:internal_state] || {}).dup,
           entered_at_game_time: @context.game_time || 0,
           # Initiative arrival-settle (nil = skip one turn) applies to ARRIVALS
           # only. An in-place rebuild — pass_time crossing the threshold at the

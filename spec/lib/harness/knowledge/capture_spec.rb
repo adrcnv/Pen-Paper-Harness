@@ -259,10 +259,24 @@ RSpec.describe Harness::Knowledge::Capture do
         expect(newer.reload.status).to eq("open")
       end
 
-      it "the DEBTOR claiming it's done releases nothing (only the one owed may settle)" do
+      it "the PLAYER's release of the speaker's own debt settles it (who_owed = the speaker; the player has no pass of their own)" do
         ob = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
                                 terms: "Mend the net for Gu", status: "open", game_time: 90)
         capture(discharge("who_owed" => "Tomas", "kind" => "deed"))
+        expect(ob.reload.status).to eq("settled")
+      end
+
+      it "a self-named release with no debt to the player behind it settles nothing (the debtor's imagined release)" do
+        ob = Obligation.create!(debtor: speaker_row, creditor: player, kind: "coins", amount: 3,
+                                terms: "Three coppers", status: "open", game_time: 90)
+        capture(discharge("who_owed" => "Tomas", "kind" => "deed"))
+        expect(ob.reload.status).to eq("open")
+      end
+
+      it "a third party's name releases nothing either way" do
+        ob = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
+                                terms: "Mend the net for Gu", status: "open", game_time: 90)
+        capture(discharge("who_owed" => "Harek", "kind" => "deed"))
         expect(ob.reload.status).to eq("open")
       end
 
