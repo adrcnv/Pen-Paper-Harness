@@ -254,4 +254,32 @@ RSpec.describe Harness::Scene::Whereabouts do
       expect(described_class.due_here?(tavern, WB_NOON + 5000)).to be(false)
     end
   end
+
+  describe ".settle_kept_meets! (both at the place inside the window)" do
+    let!(:player) { Player.create!(name: "Hero", location_id: tavern.id) }
+    let(:other)   { npc(location_id: tavern.id, home_location_id: mirehold.id) }
+    let!(:meet) do
+      Obligation.create!(kind: "meet", status: "open", debtor: other, creditor: player,
+                         terms: "meet at the tavern", due_time: WB_NOON + 30, location_id: tavern.id)
+    end
+
+    it "settles the meet when the counterparty is in the roster at the meeting place" do
+      described_class.settle_kept_meets!(tavern, WB_NOON, [ other.id ])
+      expect(meet.reload.status).to eq("settled")
+    end
+
+    it "leaves it open when the counterparty is absent, the place is wrong, or the window is closed" do
+      described_class.settle_kept_meets!(tavern, WB_NOON, [])
+      described_class.settle_kept_meets!(smithy, WB_NOON, [ other.id ])
+      described_class.settle_kept_meets!(tavern, WB_NOON + 5000, [ other.id ])
+      expect(meet.reload.status).to eq("open")
+    end
+
+    it "touches only meets — a coins debt between the same two stays open" do
+      coins = Obligation.create!(kind: "coins", status: "open", debtor: other, creditor: player, amount: 5,
+                                 terms: "five owed", due_time: WB_NOON + 30, location_id: tavern.id)
+      described_class.settle_kept_meets!(tavern, WB_NOON, [ other.id ])
+      expect(coins.reload.status).to eq("open")
+    end
+  end
 end

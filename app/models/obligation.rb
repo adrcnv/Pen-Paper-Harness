@@ -93,12 +93,23 @@ class Obligation < ApplicationRecord
     amount_part = kind == "coins" ? " #{amount ? "#{amount} coins" : 'coins (amount unfixed)'}" : ""
     head = mine ? "#{name || 'You'} owe#{name ? 's' : ''} #{other.name}#{amount_part}" : "#{other.name} owes #{name || 'you'}#{amount_part}"
     parts = [ terms.presence, due.presence && "due: #{due}#{due_urgency(now)}" ].compact
-    parts << "BROKEN — never honoured" if status == "broken"
+    parts << breach_note(viewer_id, name) if status == "broken"
     tail = parts.join(" — ")
     tail.empty? ? head : "#{head} — #{tail}"
   end
 
   private
+
+  # The machine delivers the counterparty for the window (Whereabouts' meet
+  # tier), so a breach is the PLAYER's absence whichever seat owed the
+  # meeting — the line says who never came, from either seat. A row with no
+  # player party (none is written today) keeps the neutral wording.
+  def breach_note(viewer_id, name)
+    player = [ debtor, creditor ].find { |c| c.is_a?(::Player) }
+    return "BROKEN — never honoured" unless player
+    who = player.id == viewer_id && name.nil? ? "you" : player.name
+    "BROKEN — #{who} never came"
+  end
 
   def due_urgency(now)
     return "" unless due_time && now

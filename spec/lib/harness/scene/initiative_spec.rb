@@ -150,6 +150,17 @@ RSpec.describe Harness::Scene::Initiative do
     expect(Obligation.last.status).to eq("settled")
   end
 
+  it "reflects the unprompted line with the player marked silent (the deals writer's silent-player razor)" do
+    maren = npc(name: "Maren")
+    context.llm_nuance = stub_llm(selector: { "actor" => "Maren", "cause" => "wants a hand with the roof" },
+                                  line: "Maren eyes you. 'You could help me with the roof, if you like.'")
+    active = active_with(present: [ maren ], agendas: { maren.id => "wants help with the roof" })
+    allow(Harness::Knowledge::Capture).to receive(:ingest).and_return([])
+    run(active, transcript)
+    expect(Harness::Knowledge::Capture).to have_received(:ingest)
+      .with(hash_including(speaker: "Maren", player_spoke: false))
+  end
+
   it "appends nothing when the selector picks nobody" do
     maren = npc(name: "Maren")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player" })

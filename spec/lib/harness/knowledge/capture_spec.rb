@@ -7,8 +7,8 @@ RSpec.describe Harness::Knowledge::Capture do
   # Ingestion-only since the reflection rework: the payload arrives already
   # extracted (the speaker's own reflection output); the llm serves only the
   # revision judge + embeddings.
-  def capture(payload, location: tavern, game_time: 100, context: nil, speaker: "Tomas", llm: StubLLM.new { "{}" })
-    described_class.ingest(payload: payload, speaker: speaker, llm: llm, location: location, game_time: game_time, context: context)
+  def capture(payload, location: tavern, game_time: 100, context: nil, speaker: "Tomas", llm: StubLLM.new { "{}" }, player_spoke: true)
+    described_class.ingest(payload: payload, speaker: speaker, llm: llm, location: location, game_time: game_time, context: context, player_spoke: player_spoke)
   end
 
   def facts(*fs) = { "facts" => fs }
@@ -291,6 +291,32 @@ RSpec.describe Harness::Knowledge::Capture do
         capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed",
                       "terms" => "Haul the stone").merge(discharge("who_owed" => "Gu", "kind" => "deed")))
         expect(Obligation.last).to have_attributes(kind: "deed", status: "settled")
+      end
+    end
+
+    describe "the silent-player razor (an unprompted line cannot commit the player)" do
+      it "refuses a player-as-debtor deal on a turn the player did not speak" do
+        expect {
+          capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Help mend the roof"),
+                  player_spoke: false)
+        }.not_to change(Obligation, :count)
+      end
+
+      it "still binds the speaker as debtor by their own word on such a turn" do
+        expect {
+          capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "deed", "terms" => "Mend the roof for Gu"),
+                  player_spoke: false)
+        }.to change(Obligation, :count).by(1)
+      end
+
+      it "claims the pair, so the refused bargain cannot slip in as a same-pair fact" do
+        capture({ "deals" => [ { "who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Help mend the roof" } ],
+                  "facts" => [ { "content" => "Gu agreed to help Tomas mend the roof.", "scope" => "local",
+                                 "concerns" => [ "Gu", "Tomas" ] } ] },
+                player_spoke: false)
+        expect(Obligation.count).to eq(0)
+        expect(Event.count).to eq(0)
+        expect(Knowledge.count).to eq(0)
       end
     end
 

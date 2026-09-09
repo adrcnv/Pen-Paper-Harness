@@ -236,12 +236,60 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     adapter  = Harness::LLM::FakeAdapter.new(reasoning: [], narration: "(combat owns narration)")
     loop_obj = Harness::Turn::Loop.new(adapter: adapter, context: context)
 
+    # The player's line started the fight, so the driver gets it as their
+    # first blow (the entry turn used to swallow it).
+    expect(Harness::Combat::Loop).to receive(:new)
+      .with(hash_including(opening_input: "attack Vek")).and_call_original
+
     transcript = loop_obj.run_turn(input: "attack Vek")
 
     start_combat = transcript.tool_calls.find { |t| t["name"] == "start_combat" }
     expect(start_combat).not_to be_nil, "combat runner did not fire start_combat"
     expect(start_combat["result"]["error"]).to be_nil, "start_combat errored: #{start_combat['result']['error']}"
     expect(transcript.combat).to be_a(Harness::Combat::Loop::Result)   # the driver actually ran
+    expect(transcript.combat.end_reason).to eq(:victory)
+  end
+
+  # The calendar's close: Whereabouts pulls the counterparty to the meeting
+  # place for the window; the player turning up inside it settles the row —
+  # mechanically, before the breach sweep could ever flip it to broken.
+  it "settles a kept meeting when the player is at the place with the counterparty inside the window" do
+    keeper = Npc.create!(name: "Wenriel", subrole: "smith", location: tavern, home_location_id: tavern.id)
+    meet = Obligation.create!(kind: "meet", status: "open", debtor: keeper, creditor: player,
+                              terms: "meet at the tavern", due_time: 130, location_id: tavern.id)
+    stub_plan("inspection")
+    loop_obj, = build_loop(registry: { "inspection" => Harness::Runners::Inspection.new })
+
+    loop_obj.run_turn(input: "look around")
+
+    expect(meet.reload.status).to eq("settled")
+  end
+
+  # An NPC drew steel (the beat's attack step) — the player's line was talk,
+  # so the driver gets no opening input and yields at their fresh slot.
+  it "hands the driver no opening input when combat began outside the combat runner" do
+    vek = Npc.create!(name: "Vek", subrole: "marauder", location: tavern, current_hp: 18, max_hp: 18)
+    allow(Harness::Combat::Termination).to receive(:evaluate).and_return(:victory)
+
+    npc_draws_steel = Class.new(Harness::Runners::Base) do
+      def run(context:, **)
+        active = context.active_scene
+        active.start_combat!
+        active.combat.add_combatant(::Player.first.id, side: "player_party")
+        active.combat.add_combatant(::Npc.first.id, side: "hostiles")
+        active.combat.initiative = [ ::Player.first.id, ::Npc.first.id ]
+        Harness::Runners::Outcome.new(status: :combat)
+      end
+    end.new
+    stub_plan("conversation")
+    loop_obj, = build_loop(registry: { "conversation" => npc_draws_steel })
+
+    expect(Harness::Combat::Loop).to receive(:new)
+      .with(hash_including(opening_input: nil)).and_call_original
+
+    transcript = loop_obj.run_turn(input: "\"Pay what you owe, Vek.\"")
+
+    expect(transcript.runners_ran).to eq([ "conversation" ])
     expect(transcript.combat.end_reason).to eq(:victory)
   end
 

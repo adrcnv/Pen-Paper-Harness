@@ -32,10 +32,19 @@ module Harness
 
       MAX_ROUNDS = 30  # hard safety cap; combats should resolve well before this
 
-      def initialize(context:, adapter: nil, logger: ::Rails.logger)
-        @context = context
-        @adapter = adapter
-        @logger  = logger
+      # opening_input: the player's own line on the turn THEY started the
+      # fight. Without it the entry turn swallowed the initiating attack:
+      # the entry runner set up the sides, the driver walked initiative and
+      # yielded at the player's fresh slot, and the player had to type the
+      # swing again next turn. Translated once, at the first fresh player
+      # slot, through the same PlayerTurn organ a mid-fight turn uses —
+      # the blow lands in initiative order like every other. NPC-initiated
+      # fights (the beat) pass nothing: the player's line was talk.
+      def initialize(context:, adapter: nil, logger: ::Rails.logger, opening_input: nil)
+        @context       = context
+        @adapter       = adapter
+        @logger        = logger
+        @opening_input = opening_input
       end
 
       def run
@@ -205,6 +214,7 @@ module Harness
       # — in production that means we wait for fresh input, in tests we
       # auto-close so the loop terminates.
       def process_player_slot(state, player)
+        drive_opening_slot(player) if @opening_input && @adapter
         any_token_spent = state.acted?(player.id) || state.moved?(player.id)
 
         if any_token_spent
@@ -223,6 +233,25 @@ module Harness
         end
 
         :yielded
+      end
+
+      # The opening line is spent whatever it translates to: an action marks
+      # the player's tokens and the slot closes above; a non-action leaves
+      # the slot fresh and the driver yields as it always did.
+      def drive_opening_slot(player)
+        input, @opening_input = @opening_input, nil
+        @logger&.info { "[Combat::Loop] opening slot — translating the initiating input" }
+        ::Harness::CostTracker.in_subsystem(:combat_player_turn) do
+          out = ::Harness::Combat::PlayerTurn.run(
+            player:  player,
+            input:   input,
+            scene:   @context.active_scene,
+            adapter: @adapter,
+            context: @context,
+            logger:  @logger
+          )
+          @context.turn_transcript&.record_tool_call(out[0], out[1]) if out
+        end
       end
     end
   end

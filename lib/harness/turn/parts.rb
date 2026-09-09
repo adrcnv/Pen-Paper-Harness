@@ -30,6 +30,7 @@ module Harness
       def compose(transcript:, context:, scene:)
         parts = []
         seen_scene_card = false
+        arrival = nil   # the chain's last arrival card; a look at that place folds into it
         Array(transcript.tool_calls).each do |tc|
           # An inspection turn's whole point is the look itself: render its
           # query_scene result as a mechanical scene card (first one only —
@@ -38,11 +39,24 @@ module Harness
              Array(transcript.runners_ran).include?("inspection")
             seen_scene_card = true
             card = scene_card(tc["result"], context)
-            parts << card if card
+            next unless card
+            # Arrive-and-look in one chain used to render two headers for one
+            # place (the arrival card, then the look's card). One place, one
+            # card: the look's body under the arrival's clocked header.
+            place = tc.dig("result", "location", "name") || context.player_location&.name
+            if arrival && arrival[:place] == place
+              header = arrival[:part][:text].lines.first.chomp
+              body   = card[:text].lines.drop(1).join
+              arrival[:part][:text] = body.empty? ? header : "#{header}\n#{body}"
+            else
+              parts << card
+            end
             next
           end
           part = render_call(tc, context, scene)
-          parts << part if part.is_a?(Hash)
+          next unless part.is_a?(Hash)
+          parts << part
+          arrival = { part: part, place: tc.dig("result", "moved_to", "name") } if tc["name"] == "transition"
         end
         if transcript.unresolved
           parts << { kind: :stock, text: "Nothing comes of it — #{transcript.unresolved.to_s.strip}." }

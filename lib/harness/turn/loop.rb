@@ -139,9 +139,12 @@ module Harness
           # the player's next combat slot. On real termination
           # (:victory / :player_died / :player_fled / :all_fled / :round_cap_reached)
           # combat ends and scene_dirty is raised by the loop.
+          # When the combat ENTRY runner ran, this input IS the player's
+          # first blow — the driver translates it at their first slot.
           combat_result = nil
           if @scene_manager.active&.in_combat?
-            combat_result = run_combat(transcript)
+            opening = input if Array(transcript.runners_ran).include?("combat")
+            combat_result = run_combat(transcript, opening_input: opening)
           end
 
           # Missed meetings break mechanically once the clock is past due —
@@ -172,6 +175,16 @@ module Harness
             transcript.narration = nil
             transcript.notice  ||= halted_notice(nil)
             return transcript   # `ensure` still persists the TurnLog + snapshots
+          end
+
+          # Kept meetings settle mechanically, the mirror of the breach sweep:
+          # both parties at the place inside the window. After the rebuild so
+          # an arrival turn counts; after the halted gate so a no-op turn
+          # leaves no trace. Non-fatal inside.
+          if (active = @scene_manager.active)
+            ::Harness::Scene::Whereabouts.settle_kept_meets!(
+              active.location, @context.game_time, Array(active.present_characters).map(&:id), logger: logger
+            )
           end
 
           # Render the turn MECHANICALLY: typed parts from the committed tool
@@ -607,9 +620,9 @@ module Harness
         end
       end
 
-      def run_combat(transcript)
+      def run_combat(transcript, opening_input: nil)
         ::Harness::CostTracker.in_subsystem(:combat) do
-          driver = ::Harness::Combat::Loop.new(context: @context, adapter: @adapter, logger: logger)
+          driver = ::Harness::Combat::Loop.new(context: @context, adapter: @adapter, logger: logger, opening_input: opening_input)
           result = driver.run
           transcript.combat = result
           logger.info { "[Turn::Loop] combat ended reason=#{result.end_reason} rounds=#{result.rounds}" }

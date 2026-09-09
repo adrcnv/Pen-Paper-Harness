@@ -41,13 +41,18 @@ module Harness
 
       def self.ingest(**kwargs) = new(**kwargs).ingest
 
-      def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, logger: Rails.logger)
+      # player_spoke: false when the reflected line was UNPROMPTED (the
+      # initiative pass) — the player addressed no one this turn, so no
+      # bargain can bind them as debtor: a deal is spoken and accepted by
+      # both sides, and one side was silent.
+      def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, player_spoke: true, logger: Rails.logger)
         @payload   = payload    # the speaker's parsed reflection output {facts, people, places}
         @speaker   = speaker.to_s
         @llm       = llm        # revision judge + embeddings only (no extraction call)
         @location  = location
         @game_time = game_time
         @context   = context   # Turn::Context — needed to REALIZE named people (nil → skip realization)
+        @player_spoke = player_spoke
         @logger    = logger
       end
 
@@ -214,6 +219,14 @@ module Harness
             next
           end
           pair = [ debtor.id, creditor.id ].sort
+          # The silent-player razor: an unprompted line cannot commit the
+          # player to anything — they said nothing to accept. The pair is
+          # still claimed so the same bargain can't slip in as a fact.
+          if debtor.is_a?(::Player) && !@player_spoke
+            @logger.info { "[Knowledge::Capture] deal dropped (player bound as debtor on a turn they did not speak): #{d['terms'].to_s[0, 80]}" }
+            pairs << pair
+            next
+          end
           if ::Obligation.open_now.exists?(debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s)
             @logger.info { "[Knowledge::Capture] deal skipped (open #{d['kind']} obligation #{debtor.name}→#{creditor.name} already on the books)" }
             pairs << pair

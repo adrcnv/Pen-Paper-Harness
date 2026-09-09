@@ -113,4 +113,56 @@ RSpec.describe Harness::Combat::Loop do
       expect(ctx.active_scene.in_combat?).to be(true)
     end
   end
+
+  # The entry turn: the player's own line started the fight, so it is their
+  # first blow — translated at their first slot instead of swallowed.
+  describe "opening input (the turn the player started the fight)" do
+    let(:adapter) { double("adapter") }
+
+    it "translates the initiating input at the player's first slot, in initiative order, once" do
+      ctx = make_combat_context
+      state = ctx.active_scene.combat
+      state.initiative = [ vek.id, player.id ]          # the marauder out-rolled the player
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "swing at Vek", location_id: loc.id)
+
+      order = []
+      allow(Harness::Combat::NpcTurn).to receive(:run) do
+        order << :vek
+        state.mark_acted!(vek.id)
+        state.mark_moved!(vek.id)
+      end
+      call = Harness::LLM::ToolCall.new(name: "resolve", args: { "actor_id" => player.id, "ability_name" => "unarmed_strike" })
+      expect(Harness::Combat::PlayerTurn).to receive(:run).once
+        .with(hash_including(player: player, input: "swing at Vek", adapter: adapter)) do
+        order << :player
+        state.mark_acted!(player.id)
+        [ call, { "outcome" => "success" } ]
+      end
+
+      result = described_class.new(context: ctx, adapter: adapter, opening_input: "swing at Vek").run
+
+      expect(order.first(2)).to eq([ :vek, :player ])   # the blow lands in the player's slot, not before it
+      expect(result.end_reason).to eq(:yielded)
+      expect(result.rounds).to eq(1)                       # round 1 completed; round 2's player slot yields fresh
+      expect(ctx.turn_transcript.tool_calls.map { |t| t["name"] }).to eq([ "resolve" ])
+    end
+
+    it "yields at the fresh slot when the input reads as a non-action" do
+      ctx = make_combat_context
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "what is happening?", location_id: loc.id)
+      expect(Harness::Combat::PlayerTurn).to receive(:run).once.and_return(nil)
+
+      result = described_class.new(context: ctx, adapter: adapter, opening_input: "what is happening?").run
+
+      expect(result.end_reason).to eq(:yielded)
+      expect(result.rounds).to eq(0)
+      expect(ctx.turn_transcript.tool_calls).to be_empty
+    end
+
+    it "does not translate anything on the no-adapter test path" do
+      ctx = make_combat_context
+      expect(Harness::Combat::PlayerTurn).not_to receive(:run)
+      described_class.new(context: ctx, adapter: nil, opening_input: "swing at Vek").run
+    end
+  end
 end

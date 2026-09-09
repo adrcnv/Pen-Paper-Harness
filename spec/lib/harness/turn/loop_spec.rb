@@ -458,6 +458,27 @@ RSpec.describe Harness::Turn::Loop do
       Harness::Turn::Parts.compose(transcript: t, context: context, scene: nil)
     end
 
+    it "folds an arrive-and-look chain into one card: the arrival's clocked header over the look's body" do
+      transition = { "name" => "transition", "args" => {}, "result" => { "moved_to" => { "id" => tavern.id, "name" => "Tavern" } } }
+      look = { "name" => "query_scene", "args" => {}, "result" => {
+        "location" => { "name" => "Tavern", "description" => "Low beams, a long bar." },
+        "present_characters" => [ { "name" => "Bess", "subrole" => "barkeep" } ],
+        "present_items" => [ { "name" => "tankard" } ]
+      } }
+      parts = compose([ transition, look ], runners: %w[movement inspection])
+      expect(parts.map { |p| p[:kind] }).to eq([ :card ])
+      lines = parts.first[:text].lines.map(&:chomp)
+      expect(lines.first).to match(/\A— Tavern — day \d+, \d\d:\d\d \(\w+\)\z/)
+      expect(lines.drop(1)).to eq([ "Low beams, a long bar.", "Present: Bess (barkeep).", "Here: tankard." ])
+    end
+
+    it "keeps both cards when the look is of a different place than the arrival" do
+      transition = { "name" => "transition", "args" => {}, "result" => { "moved_to" => { "id" => tavern.id, "name" => "Tavern" } } }
+      look = { "name" => "query_scene", "args" => {}, "result" => { "location" => { "name" => "Market" } } }
+      parts = compose([ transition, look ], runners: %w[movement inspection])
+      expect(parts.map { |p| p[:kind] }).to eq([ :card, :card ])
+    end
+
     it "renders a staged line as a verbatim :dialogue part; reads render nothing" do
       parts = compose([ { "name" => "query_events", "args" => {}, "result" => {} }, staged ])
       expect(parts).to eq([ { kind: :dialogue, text: "Bess doesn't stop moving. 'I just pour the ale, sir.'" } ])

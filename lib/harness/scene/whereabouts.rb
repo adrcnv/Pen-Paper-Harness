@@ -160,6 +160,27 @@ module Harness
         false
       end
 
+      # A meeting is KEPT the way it is missed — mechanically: both parties
+      # at the meeting place inside the same window that pulls the
+      # counterparty there. Without this writer a kept meet sat open until
+      # the grace ran out and sweep_breaches! flipped it to BROKEN — every
+      # honoured appointment became a grudge four hours later. `present_ids`
+      # is the assembled roster at `location`; the player is there by
+      # construction (it is their scene).
+      def settle_kept_meets!(location, game_time, present_ids, logger: Rails.logger)
+        player = ::Player.first
+        return unless location && game_time && player
+        here = Array(present_ids).map(&:to_i)
+        due_meets_at(location, game_time, player).find_each do |ob|
+          other = ob.debtor_id == player.id ? ob.creditor_id : ob.debtor_id
+          next unless here.include?(other)
+          ob.update!(status: "settled")
+          logger.info { "[Scene::Whereabouts] MEET KEPT ##{ob.id}: #{ob.terms} (both at #{location.name}, due_time=#{ob.due_time}, now=#{game_time})" }
+        end
+      rescue ::StandardError => e
+        logger.warn { "[Scene::Whereabouts] kept-meet sweep failed (non-fatal): #{e.class}: #{e.message}" }
+      end
+
       # Scene-exit lifecycle for transient props (nil anchor): engaged ones
       # (in any event) earn an anchor and go there; pure flavor evaporates.
       # Load-bearing, because nothing else ever removes a homeless row.

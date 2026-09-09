@@ -411,7 +411,7 @@ module Harness
         return nil unless apply_emit(resolver, context, scene, emit, v, player, {}, tcs)
 
         active&.mark_spoken!(npc.id)
-        reflect_knowledge(context, v, emit, voicing_user)
+        reflect_knowledge(context, v, emit, voicing_user, unprompted: true)
         reevaluate_state(context, v, emit, voicing_user, active)
         transcript&.record_tool_calls(tcs)
         prose
@@ -1119,7 +1119,10 @@ module Harness
         "additionalProperties" => false
       }.freeze
 
-      def reflect_knowledge(context, v, emit, voicing_user)
+      # unprompted: the line came from the initiative pass — the player spoke
+      # to no one this turn, which the deals writer holds against any bargain
+      # naming them as debtor.
+      def reflect_knowledge(context, v, emit, voicing_user, unprompted: false)
         prose = emit.dig("dialogue", "prose").to_s.strip
         return if prose.empty? || voicing_user.nil?
 
@@ -1151,6 +1154,7 @@ module Harness
           location:  context.player_location,
           game_time: context.game_time,
           context:   context,   # enables person/place realization (the single entity pipe)
+          player_spoke: !unprompted,
           logger:    @logger
         )
       rescue StandardError => e

@@ -103,7 +103,21 @@ RSpec.describe Obligation do
 
       broken = described_class.create!(debtor: player, creditor: wenriel, kind: "meet",
                                        terms: "Meet at the mill", due: "dawn", due_time: 360, status: "broken")
-      expect(broken.line_for(wenriel.id, now: 2000)).to eq("Gu owes you — Meet at the mill — due: dawn — BROKEN — never honoured")
+      expect(broken.line_for(wenriel.id, now: 2000)).to eq("Gu owes you — Meet at the mill — due: dawn — BROKEN — Gu never came")
+    end
+
+    # Whereabouts always brings the NPC to the meeting place for the window,
+    # so a breach is the player's absence — whichever seat owed the meeting.
+    it "attributes a breach to the player from every seat, even when the NPC was the debtor" do
+      npc_owed = described_class.create!(debtor: wenriel, creditor: player, kind: "meet",
+                                         terms: "Meet at the mill", status: "broken")
+      expect(npc_owed.line_for(player.id)).to eq("Wenriel owes you — Meet at the mill — BROKEN — you never came")
+      expect(npc_owed.line_for(wenriel.id, name: "Wenriel")).to eq("Wenriel owes Gu — Meet at the mill — BROKEN — Gu never came")
+
+      player_owed = described_class.create!(debtor: player, creditor: wenriel, kind: "meet",
+                                            terms: "Meet at the docks", status: "broken")
+      expect(player_owed.line_for(player.id)).to eq("You owe Wenriel — Meet at the docks — BROKEN — you never came")
+      expect(player_owed.line_for(wenriel.id)).to eq("Gu owes you — Meet at the docks — BROKEN — Gu never came")
     end
 
     it "renders without urgency when no clock is given" do
