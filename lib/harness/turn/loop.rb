@@ -678,7 +678,10 @@ module Harness
       # and stamps inside, so the file is the whole truth.
       def snapshot_db(turn_log)
         return unless @snapshot_dir
+        # The config path is relative to the app root; a server launched from
+        # elsewhere (the nested tester) must not lose every snapshot to cwd.
         db_path = ActiveRecord::Base.connection_db_config.database
+        db_path = File.expand_path(db_path.to_s, ::Rails.root) if db_path
         return unless db_path && File.exist?(db_path)
 
         FileUtils.mkdir_p(@snapshot_dir)

@@ -45,8 +45,12 @@ module Harness
       # initiative pass) — the player addressed no one this turn, so no
       # bargain can bind them as debtor: a deal is spoken and accepted by
       # both sides, and one side was silent.
-      def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, player_spoke: true, logger: Rails.logger)
+      # records: what the speaker was HANDED before speaking — {"events" =>
+      # [[id, text]...], "facts" => [[id, text]...]}; the judge's
+      # event_additions / fact_additions name these by 1-based position.
+      def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, player_spoke: true, records: nil, logger: Rails.logger)
         @payload   = payload    # the speaker's parsed reflection output {facts, people, places}
+        @records   = records || {}
         @speaker   = speaker.to_s
         @llm       = llm        # revision judge + embeddings only (no extraction call)
         @location  = location
@@ -84,6 +88,7 @@ module Harness
         # the same breath (the paid-on-the-spot wage) settles at birth.
         settle_discharges(extract_discharges(@payload))
         written = facts.filter_map { |f| route(f) }
+        written += write_additions(@payload)
         persist_embeddings(written)
         # Places named in dialogue → the PlaceRealizer (the buildings twin: mint a
         # proper-named sublocation of the current town). Independent of fact
@@ -123,6 +128,17 @@ module Harness
       # Events are participation-gated only (they happen to people, not
       # places); knowledge carries the place/facet levers.
       def route(fact)
+        # Same-store law, backstopped: a fact that is a near-duplicate of a
+        # record the speaker was handed is a retelling the judge failed to
+        # file as an addition — it goes to its own store, never the other.
+        content = fact["content"].to_s.strip
+        if (twin = double_filed(content))
+          @logger.info { "[Knowledge::Capture] SKIP fact — same claim filed as an addition this pass (#{twin.round(3)}) :: #{content}" }
+          return nil
+        end
+        if (source = retelling_target(content))
+          return source.is_a?(::Event) ? write_event_addition(source, content) : write_fact_addition(source, content)
+        end
         parties = Array(fact["concerns"]).select { |n| n.is_a?(String) && !n.strip.empty? }
         happened_at = backdated_time(fact["when"])
         if happened_at
@@ -149,13 +165,18 @@ module Harness
 
       def backdated_time(raw)
         minutes = when_offset_minutes(raw)
-        return nil unless minutes&.positive?
+        return nil if minutes.nil? || minutes.negative?
         [ @game_time.to_i - minutes, 0 ].max
       end
 
+      # Same-day wordings are dated too: the happening is today, at the
+      # current clock — an event, not a standing row with "this morning"
+      # frozen into it.
+      SAME_DAY_RE = /\A(?:today|earlier today|earlier|just now|this morning|this afternoon|this evening|at dawn today|this dawn)\z/
       def when_offset_minutes(raw)
         s = raw.to_s.strip.downcase
         return nil if s.empty?
+        return 0 if s.match?(SAME_DAY_RE)
         return UNIT_MINUTES["day"] if s == "yesterday"
         if (m = s.match(/\Alast\s+(#{UNIT_MINUTES.keys.join('|')})\z/))
           return UNIT_MINUTES[m[1]]
@@ -170,9 +191,17 @@ module Harness
       # cannot volunteer yourself; the nameless variant is prevented upstream
       # by the first-person reflection framing).
       def attribute_people(people)
+        player_name = ::Player.first&.name
         people.filter_map do |p|
           if name_match?(p["name"], @speaker)
             @logger.info { "[Knowledge::Capture] dropped self-mention #{p['name'].inspect} (speaker #{@speaker.inspect})" }
+            next
+          end
+          # The player is in the room, never a referral: a people entry
+          # naming them would mint a namesake NPC (the Osgyth twin — the
+          # realizer's lookup sees NPC rows only).
+          if player_name && name_match?(p["name"], player_name)
+            @logger.info { "[Knowledge::Capture] dropped player-mention #{p['name'].inspect} (the player is not a referral)" }
             next
           end
           p.merge("by" => @speaker)
@@ -446,7 +475,9 @@ module Harness
         # claim voiced aloud to the player was never trade-gated anyway.
         # Re-facet from a neutral vantage if real trade-lore capture shows up.
         subrole     = nil
-        location_id = local_scope?(fact["scope"]) ? root_settlement_id : nil
+        # Conversation-born rows anchor at the settlement whatever the judge
+        # wrote — a spoken claim never becomes world-general doctrine.
+        location_id = root_settlement_id
         min_int     = fact["min_int"].is_a?(Integer) ? fact["min_int"] : nil
 
         return nil if duplicate?(content, subrole, location_id)
@@ -495,7 +526,7 @@ module Harness
         candidates = revision_candidates
         return [ nil, nil ] if candidates.empty?
 
-        vec = Array(Embedding.embed(@llm, [ content ], kind: :passage)).first
+        vec = embed_once(content)
         return [ nil, nil ] if vec.nil? || vec.empty?
 
         scored = candidates.filter_map do |row|
@@ -527,6 +558,203 @@ module Harness
 
       def stored_embedding(row)
         Embedding.unpack(row.embedding, embed_model_stamp)
+      end
+
+      # One vector per sentence per pass — the retelling scan and the
+      # revision scan share it.
+      def embed_once(content)
+        (@vecs ||= {})[content] ||= Array(Embedding.embed(@llm, [ content ], kind: :passage)).first
+      end
+
+      # PROVENANCE BACKSTOP — the fed rows are already embedded (recall ranked
+      # them); the incoming sentence is embedded once. Best fed row over the
+      # floor is the record this sentence retells. nil = a fresh claim.
+      # Floors differ by embedder: the local pooled decoder embeddings sit in a
+      # compressed band (unrelated pairs scored 0.76), the hosted embedding
+      # model spreads (unrelated ≤ 0.35, same-story paraphrases 0.54–0.86 over
+      # three Sonnet runs — a 0.539 miss at 0.55 set the floor). Keyed on the
+      # model stamp; unknown models keep the conservative floor.
+      RETELLING_THRESHOLD  = 0.9
+      RETELLING_THRESHOLDS = { "nvidia/nemotron-3-embed-1b" => 0.45 }.freeze
+      def retelling_threshold = RETELLING_THRESHOLDS.fetch(embed_model_stamp, RETELLING_THRESHOLD)
+
+      def retelling_target(content)
+        return nil unless @llm.respond_to?(:embed) && content.present?
+        rows = fed_rows
+        return nil if rows.empty?
+        vec = embed_once(content)
+        return nil if vec.nil? || vec.empty?
+        scored = rows.filter_map { |row| (rv = stored_embedding(row)) && [ row, CosineRanker.similarity(vec, rv) ] }
+                     .sort_by { |_, sc| -sc }
+        best, score = scored.first
+        return nil unless best
+        @logger.info { "[Knowledge::Capture] retelling scan: top #{best.class.name}##{best.id}=#{score.round(3)} (floor #{retelling_threshold}) :: #{content[0, 80]}" }
+        best if score >= retelling_threshold
+      end
+
+      # DOUBLE-FILING RAZOR — the judge's dominant lapse in play: the same
+      # sentence entered as an addition AND as a fresh fact (the fact then
+      # lands as knowledge with the date frozen in its wording — the fig
+      # class through the other door). Comparing the fact to the OLD record
+      # is the wrong comparison (a paraphrase of a week-old summary scored
+      # 0.32–0.59); comparing it to the additions written in the SAME pass
+      # is tight — two fresh sentences from the same mouth. Above the floor
+      # the addition carries the claim and the fact is skipped. Returns the
+      # score, or nil.
+      DOUBLE_FILE_THRESHOLD = 0.7
+      def double_filed(content)
+        return nil unless @llm.respond_to?(:embed) && content.present?
+        vecs = addition_vectors
+        return nil if vecs.empty?
+        vec = embed_once(content)
+        return nil if vec.nil? || vec.empty?
+        best = vecs.map { |av| CosineRanker.similarity(vec, av) }.max
+        best if best && best >= DOUBLE_FILE_THRESHOLD
+      end
+
+      def addition_vectors
+        @addition_vectors ||= begin
+          texts = (Array(@payload["event_additions"]) + Array(@payload["fact_additions"]))
+                    .select { |a| addition?(a) }.map { |a| a["content"].strip }.uniq
+          texts.empty? ? [] : Array(Embedding.embed(@llm, texts, kind: :passage)).compact.reject(&:empty?)
+        end
+      end
+
+      def fed_rows
+        @fed_rows ||= ::Event.where(id: Array(@records["events"]).map(&:first).compact).to_a +
+                      ::Knowledge.where(id: Array(@records["facts"]).map(&:first).compact).to_a
+      end
+
+      # ADDITIONS — the world judge's same-store writes: a detail added to a
+      # record the speaker was handed. Ids are the payload's own 1-based
+      # positions, mapped back to rows here; an id naming nothing is dropped
+      # with a log. Each write is isolated — one bad addition must not cost
+      # the pass its facts.
+      def write_additions(parsed)
+        rows = []
+        seen = []   # one sentence lands once per pass — the same detail filed
+                    # against two records of one chain is redundancy, not elaboration
+        Array(parsed["event_additions"]).each do |a|
+          next unless addition?(a)
+          next if seen.include?(a["content"].strip.downcase)
+          seen << a["content"].strip.downcase
+          if (source = given_record("events", a["event_id"], ::Event))
+            rows << write_event_addition(source, a["content"].strip)
+          else
+            @logger.info { "[Knowledge::Capture] event addition dropped (event_id #{a['event_id'].inspect} names no record given) :: #{a['content'].to_s[0, 80]}" }
+          end
+        rescue ::StandardError => e
+          @logger.warn { "[Knowledge::Capture] event addition failed (non-fatal): #{e.class}: #{e.message}" }
+        end
+        Array(parsed["fact_additions"]).each do |a|
+          next unless addition?(a)
+          next if seen.include?(a["content"].strip.downcase)
+          seen << a["content"].strip.downcase
+          if (old = given_record("facts", a["fact_id"], ::Knowledge))
+            rows << write_fact_addition(old, a["content"].strip)
+          else
+            @logger.info { "[Knowledge::Capture] fact addition dropped (fact_id #{a['fact_id'].inspect} names no record given) :: #{a['content'].to_s[0, 80]}" }
+          end
+        rescue ::StandardError => e
+          @logger.warn { "[Knowledge::Capture] fact addition failed (non-fatal): #{e.class}: #{e.message}" }
+        end
+        # Telling is transmission: a handed event passed on, in detail or in
+        # passing, is now known to everyone who was in the room.
+        Array(parsed["retold"]).map(&:to_i).uniq.each do |k|
+          if (source = given_record("events", k, ::Event))
+            hear!([ source ])
+          else
+            @logger.info { "[Knowledge::Capture] retold id #{k.inspect} names no event given — ignored" }
+          end
+        rescue ::StandardError => e
+          @logger.warn { "[Knowledge::Capture] retold write failed (non-fatal): #{e.class}: #{e.message}" }
+        end
+        rows.compact
+      end
+
+      # TRANSMISSION — the edge for "has heard of", distinct from having been
+      # there: everyone in the room when a record is retold becomes a
+      # participant of it with role "hearer". Participation is the event
+      # store's own visibility currency, so the hearer recalls it from now on
+      # (rendered as hearsay). The player hears too — the ledger of what the
+      # player was told. Anyone already on the record, in any role, is left
+      # alone; the teller never hears their own telling.
+      def hear!(events)
+        hearers = hearers_present
+        return if hearers.empty?
+        events.compact.uniq.each do |ev|
+          on_record = ev.event_participants.pluck(:character_id).compact
+          added = hearers.reject { |c| on_record.include?(c.id) }
+          added.each { |c| ::EventParticipant.create!(event: ev, character: c, role: "hearer") }
+          @logger.info { "[Knowledge::Capture] event ##{ev.id} heard by #{added.map(&:name).inspect}" } if added.any?
+        end
+      end
+
+      def hearers_present
+        @hearers_present ||= begin
+          room = Array(@context&.active_scene&.present_characters).to_a
+          ([ ::Player.first ] + room).compact.uniq(&:id).reject { |c| name_match?(c.name, @speaker) }
+        end
+      end
+
+      def addition?(a) = a.is_a?(::Hash) && a["content"].is_a?(::String) && !a["content"].strip.empty?
+
+      def given_record(kind, position, klass)
+        i = position.to_i
+        return nil unless i >= 1
+        id = Array(@records[kind])[i - 1]&.first
+        id && klass.find_by(id: id)
+      end
+
+      # event → event: a SUPPLEMENT event referencing its source, backdated to
+      # it, scope and place inherited, the source's cast plus the teller. Events
+      # are immutable; the chain is the elaboration. A verbatim retelling
+      # supplements nothing.
+      def write_event_addition(source, content)
+        if content.downcase == source.recall_text.to_s.strip.downcase
+          @logger.info { "[Knowledge::Capture] SKIP event addition — retells event ##{source.id} verbatim" }
+          return nil
+        end
+        teller = find_character(@speaker)
+        # The source's cast carries over with its roles kept — a hearer of the
+        # source is a hearer of the supplement, never promoted to a subject
+        # (that read as presence at recall). The teller is added as such.
+        cast = source.event_participants.to_a.map { |p| [ p.character, (p.role == "hearer" ? "hearer" : "subject") ] }
+        cast.reject! { |c, _| c.nil? }
+        cast << [ teller, "teller" ] if teller && cast.none? { |c, _| c.id == teller.id }
+        event = ::Harness::Event::ForwardAppender.append(
+          game_time:    source.game_time,
+          scope:        source.scope,
+          location:     source.location,
+          details:      { "narrative" => { "details" => content } },
+          participants: cast.map { |c, role| { character: c, role: role } },
+          references_event_id: source.id
+        )
+        @logger.info { "[Knowledge::Capture] event ##{event.id} SUPPLEMENTS ##{source.id} (t=#{source.game_time}, #{source.scope}) :: #{content}" }
+        hear!([ source, event ])
+        event
+      end
+
+      # knowledge → knowledge: the revision path with the target pinned (no
+      # cosine scan — the judge named the row). Extends → supersede with the
+      # merged wording; contradicts → the standing fact keeps; no relation →
+      # the sentence stands on its own in the source's scope, never wider.
+      def write_fact_addition(old, content)
+        verdict = judge_revision(old, content)
+        case verdict["relation"]
+        when "extends"
+          merged = verdict["merged"].to_s.strip
+          if merged.empty? || merged.downcase == old.content.to_s.strip.downcase
+            @logger.info { "[Knowledge::Capture] addition to knowledge ##{old.id} added nothing — skipped :: #{content}" }
+            return nil
+          end
+          supersede(old, merged)
+        when "contradicts"
+          @logger.info { "[Knowledge::Capture] addition CONTRADICTS knowledge ##{old.id} — standing fact kept :: #{content}" }
+          nil
+        else
+          write_knowledge("content" => content, "scope" => (old.location_id ? "local" : "world"), "concerns" => [])
+        end
       end
 
       def embed_model_stamp

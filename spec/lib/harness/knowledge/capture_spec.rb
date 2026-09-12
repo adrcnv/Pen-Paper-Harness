@@ -7,8 +7,8 @@ RSpec.describe Harness::Knowledge::Capture do
   # Ingestion-only since the reflection rework: the payload arrives already
   # extracted (the speaker's own reflection output); the llm serves only the
   # revision judge + embeddings.
-  def capture(payload, location: tavern, game_time: 100, context: nil, speaker: "Tomas", llm: StubLLM.new { "{}" }, player_spoke: true)
-    described_class.ingest(payload: payload, speaker: speaker, llm: llm, location: location, game_time: game_time, context: context, player_spoke: player_spoke)
+  def capture(payload, location: tavern, game_time: 100, context: nil, speaker: "Tomas", llm: StubLLM.new { "{}" }, player_spoke: true, records: nil)
+    described_class.ingest(payload: payload, speaker: speaker, llm: llm, location: location, game_time: game_time, context: context, player_spoke: player_spoke, records: records)
   end
 
   def facts(*fs) = { "facts" => fs }
@@ -32,9 +32,9 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Knowledge.last.location_id).to eq(city.id) # root, not the tavern sublocation
     end
 
-    it "leaves a WORLD fact unscoped (null location)" do
+    it "anchors a fact at the root settlement even when the judge wrote 'world' — a spoken claim is never world-general" do
       capture(facts("content" => "x", "scope" => "world"))
-      expect(Knowledge.last.location_id).to be_nil
+      expect(Knowledge.last.location_id).to eq(city.id)
     end
 
     it "nulls the trade facet even when the model supplies one (speaker-POV stamps its own trade)" do
@@ -171,6 +171,145 @@ RSpec.describe Harness::Knowledge::Capture do
         capture(facts("content" => "The bridge collapsed.", "when" => "4 days ago"))
       }.not_to change(Event, :count)
       expect(Knowledge.count).to eq(0)
+    end
+  end
+
+  # Same-store law: a retelling stays in the store of the record it retells.
+  describe "additions (event→event, knowledge→knowledge)" do
+    let!(:speaker_row) { Npc.create!(name: "Tomas", subrole: "barkeep", location: tavern) }
+    let!(:player)      { Player.first || Player.create!(name: "Gu", location: tavern) }
+    let!(:source) do
+      Harness::Event::ForwardAppender.append(
+        game_time: 40, scope: "local", location: tavern,
+        details: { "summary" => "A passing caravan left a sack of spiced figs at the market." }, participants: []
+      )
+    end
+    let(:records) { { "events" => [ [ source.id, "(yesterday) A passing caravan left a sack of spiced figs at the market." ] ], "facts" => [] } }
+
+    it "writes an event addition as a supplement: referencing its source, backdated to it, scope inherited, teller in the cast" do
+      out = capture({ "event_additions" => [ { "event_id" => 1, "content" => "The figs were spiced with cinnamon and honey." } ] }, records: records)
+      sup = Event.order(:id).last
+      expect(out).to eq([ sup ])
+      expect(sup.references_event_id).to eq(source.id)
+      expect(sup.game_time).to eq(40)
+      expect(sup.scope).to eq("local")
+      expect(sup.location_id).to eq(tavern.id)
+      expect(sup.recall_text).to include("cinnamon and honey")
+      expect(sup.participants).to include(speaker_row)
+      expect(Knowledge.count).to eq(0)
+    end
+
+    it "lands one sentence once per pass, even when filed against two records of the chain" do
+      sup = capture({ "event_additions" => [ { "event_id" => 1, "content" => "The figs came in on a northbound caravan." } ] }, records: records).first
+      chain = { "events" => records["events"] + [ [ sup.id, sup.recall_text ] ], "facts" => [] }
+      expect {
+        capture({ "event_additions" => [ { "event_id" => 1, "content" => "The caravan was bound for the northern passes." },
+                                         { "event_id" => 2, "content" => "The caravan was bound for the northern passes." } ] }, records: chain)
+      }.to change(Event, :count).by(1)
+    end
+
+    def room_with(*npcs)
+      snap   = Struct.new(:location, :present_characters, :present_corpses, :present_items).new(tavern, npcs, [], [])
+      active = Harness::Scene::Active.new(location: tavern, snapshot: snap, narrations: [], internal_state: {}, agendas: {}, extras: [], entered_at_game_time: 0)
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100)
+      ctx.active_scene = active
+      ctx
+    end
+
+    it "an addition makes everyone in the room a hearer of the source and the supplement — player included, teller excluded" do
+      bystander = Npc.create!(name: "Wenda", subrole: "drover", location: tavern)
+      capture({ "event_additions" => [ { "event_id" => 1, "content" => "The figs were spiced with cinnamon and honey." } ] },
+              records: records, context: room_with(speaker_row, bystander))
+      sup = Event.order(:id).last
+      [ source, sup ].each do |ev|
+        hearers = ev.event_participants.where(role: "hearer").map(&:character)
+        expect(hearers).to contain_exactly(player, bystander)
+      end
+      expect(sup.event_participants.find_by(character_id: speaker_row.id).role).to eq("teller")
+    end
+
+    it "a supplement keeps the source's hearers as hearers — never promoted to subjects" do
+      bystander = Npc.create!(name: "Wenda", subrole: "drover", location: tavern)
+      EventParticipant.create!(event: source, character: bystander, role: "hearer")
+      capture({ "event_additions" => [ { "event_id" => 1, "content" => "The figs were spiced with cinnamon." } ] }, records: records)
+      sup = Event.order(:id).last
+      expect(sup.event_participants.find_by(character_id: bystander.id).role).to eq("hearer")
+    end
+
+    it "a retold id makes hearers of the handed event with no supplement written, and never re-tags someone already on the record" do
+      bystander = Npc.create!(name: "Wenda", subrole: "drover", location: tavern)
+      EventParticipant.create!(event: source, character: bystander, role: "witness")
+      expect {
+        capture({ "retold" => [ 1, 1, 9 ] }, records: records, context: room_with(speaker_row, bystander))
+      }.not_to change(Event, :count)
+      expect(source.event_participants.where(role: "hearer").map(&:character)).to eq([ player ])
+      expect(source.event_participants.where(character_id: bystander.id).pluck(:role)).to eq([ "witness" ])
+    end
+
+    it "skips a verbatim retelling and drops an id that names no record given" do
+      expect {
+        capture({ "event_additions" => [ { "event_id" => 1, "content" => "A passing caravan left a sack of spiced figs at the market." },
+                                         { "event_id" => 7, "content" => "The caravan came from Saltmere." } ] }, records: records)
+      }.not_to change(Event, :count)
+    end
+
+    it "skips a fact that is the same claim as an addition filed in the same pass (the addition carries it)" do
+      llm = StubLLM.new { "{}" }
+      # Two fresh sentences about the channels embed alike; the ration sentence is orthogonal.
+      llm.define_singleton_method(:embed) { |texts, **| Array(texts).map { |t| t.include?("channels") ? [ 1.0, 0.0 ] : [ 0.0, 1.0 ] } }
+      expect {
+        capture({ "event_additions" => [ { "event_id" => 1, "content" => "The new brine channels held when the gusts came, preventing loss." } ],
+                  "facts" => [ { "content" => "The elevated brine channels held during the gusts five days past, preventing brine loss.", "concerns" => [], "scope" => "local" },
+                               { "content" => "The ration is one loaf of dark rye per hand.", "concerns" => [], "scope" => "local" } ] },
+                llm: llm, records: records)
+      }.to change(Event, :count).by(1)                     # the addition only
+      expect(Knowledge.pluck(:content)).to eq([ "The ration is one loaf of dark rye per hand." ])
+    end
+
+    it "writes a fact addition through the pinned revision: the standing row is superseded by the merged wording" do
+      old = Knowledge.create!(content: "The salt tithe was repealed.", location_id: city.id, current: true, game_time: 0)
+      judge = StubLLM.new { |prompt|
+        prompt.include?("standing_fact") ? { "relation" => "extends", "merged" => "The salt tithe was repealed last winter, by the reeve's order." }.to_json : "{}"
+      }
+      capture({ "fact_additions" => [ { "fact_id" => 1, "content" => "It was the reeve who ordered the repeal." } ] },
+              llm: judge, records: { "events" => [], "facts" => [ [ old.id, old.content ] ] })
+      expect(old.reload.current).to be(false)
+      row = Knowledge.current.last
+      expect(row.content).to include("reeve's order")
+      expect(row.supersedes_id).to eq(old.id)
+      expect(row.location_id).to eq(city.id)
+      expect(Event.count).to eq(1)   # only the source — knowledge never became an event
+    end
+  end
+
+  describe "the player is never a referral" do
+    let!(:player) { Player.first || Player.create!(name: "Gu", location: tavern) }
+
+    it "drops a people entry naming the player before it reaches the realizer" do
+      expect(Harness::NarrativeShift::Realizer).not_to receive(:run)
+      capture({ "people" => [ { "name" => "Gu", "subrole" => "traveller", "gist" => "saw the prints this morning" } ] }, context: ctx)
+    end
+  end
+
+  describe "same-day `when` (a dated happening at the current clock, not a frozen row)" do
+    let!(:speaker_row) { Npc.create!(name: "Tomas", subrole: "barkeep", location: tavern) }
+
+    it "routes 'this morning' to the events store at the current game time" do
+      expect {
+        capture(facts("content" => "A caravan left figs at the market.", "scope" => "local", "concerns" => [], "when" => "this morning"))
+      }.to change(Event, :count).by(1)
+      expect(Event.last.game_time).to eq(100)
+      expect(Knowledge.count).to eq(0)
+    end
+  end
+
+  describe "retelling floor keyed on the embedder" do
+    it "uses the hosted embedding model's floor when the client names it" do
+      llm = StubLLM.new { "{}" }
+      llm.define_singleton_method(:embed_model) { "nvidia/nemotron-3-embed-1b" }
+      cap = described_class.new(payload: {}, speaker: "Tomas", llm: llm, location: tavern)
+      expect(cap.send(:retelling_threshold)).to eq(0.45)
+      expect(described_class.new(payload: {}, speaker: "Tomas", llm: StubLLM.new { "{}" }, location: tavern).send(:retelling_threshold)).to eq(0.9)
     end
   end
 
@@ -496,10 +635,10 @@ RSpec.describe Harness::Knowledge::Capture do
       }.not_to change(Knowledge, :count)
     end
 
-    it "DOES write when the same content lands under different facets" do
+    it "DOES write when the same content lands in a different settlement (a different place facet)" do
       capture(facts("content" => "The gate is watched.", "scope" => "local"))
       expect {
-        capture(facts("content" => "The gate is watched.", "scope" => "world"))
+        capture(facts("content" => "The gate is watched.", "scope" => "local"), location: Location.create!(name: "Far Town"))
       }.to change(Knowledge, :count).by(1)
     end
   end

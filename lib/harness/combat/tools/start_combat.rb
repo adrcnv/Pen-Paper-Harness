@@ -226,7 +226,7 @@ module Harness
             char.update!(location_id: flee_dest&.id)
             ::Harness::Scene::Whereabouts.pin!(char, flee_dest, game_time) if flee_dest
             state.record_evicted_character(char.id)
-            scene.snapshot.present_characters.delete(char) if scene.snapshot
+            scene.remove_present!(char.id)
           end
         end
       end

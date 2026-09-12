@@ -167,6 +167,21 @@ module Harness
       def present_extras
         extras || []
       end
+
+      # SCENE ARRAYS ARE REPLACED, NEVER MUTATED IN PLACE. A view handed out
+      # earlier in the turn — the query_scene hash a runner polls from, the
+      # indices it captured — must stay internally consistent while the Active
+      # moves on with a fresh array. An in-place delete shifted the extras
+      # under the conversation runner mid-turn: the second promoted speaker
+      # got the wrong figure's description and row (the Reeds, run 2).
+      def remove_extra!(desc)
+        self.extras = present_extras - [ desc ]
+      end
+
+      def remove_present!(character_id)
+        return unless snapshot
+        snapshot.present_characters = present_characters.reject { |c| c.id == character_id }
+      end
     end
   end
 end

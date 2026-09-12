@@ -67,7 +67,10 @@ module Harness
       # are removed (the VACUUM'd snapshot is self-contained). ActiveRecord
       # re-establishes lazily on the next query.
       def swap_db_file!(snapshot_path)
+        # Relative to the app root, like Turn::Loop#snapshot_db — a server
+        # launched from elsewhere (the nested tester) must still find it.
         db_path = ActiveRecord::Base.connection_db_config.database
+        db_path = File.expand_path(db_path.to_s, ::Rails.root) if db_path
         raise Error, "cannot locate live DB file" unless db_path && File.exist?(db_path)
 
         ActiveRecord::Base.connection_pool.disconnect!

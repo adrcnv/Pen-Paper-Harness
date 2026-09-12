@@ -19,6 +19,13 @@ RSpec.describe Harness::NarrativeShift::Realizer do
 
   def run(claim) = described_class.run(claim: claim, speaker: speaker, context: ctx)
 
+  it "refuses a claim that names the player — never a namesake NPC" do
+    speaker   # materialize the lazy fixture outside the count
+    expect {
+      expect(run({ "name" => "Hero", "subrole" => "traveller", "gist" => "saw the prints" })).to be_nil
+    }.not_to change(Npc, :count)
+  end
+
   it "returns nil only when there is nothing to realize (no name and no gist)" do
     expect(run({})).to be_nil
     expect(run({ "name" => "   " })).to be_nil

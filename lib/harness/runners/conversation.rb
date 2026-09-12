@@ -26,6 +26,7 @@ module Harness
     class Conversation < Base
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/conversation.txt")
       REFLECTION_PROMPT_PATH = Rails.root.join("lib/harness/prompts/knowledge_reflection.txt")
+      LEDGER_PROMPT_PATH     = Rails.root.join("lib/harness/prompts/knowledge_ledger.txt")
       REEVALUATION_PROMPT_PATH = Rails.root.join("lib/harness/prompts/mood_reevaluation.txt")
       EVENT_SUMMARY_CAP = 10
       # A speaker's own newest memories kept UNGATED for character continuity —
@@ -83,7 +84,7 @@ module Harness
           break if spoken >= MAX_SPEAKERS
           recall_gate = !any_addressed || v[:addressed] ||
                         (contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id])
-          emit, voicing_user = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest,
+          emit, voicing_user, fed = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest,
                                          frame: verdict_frame(contest, v), recall_gate: recall_gate)
           next unless emit
           parsed_any = true
@@ -106,10 +107,10 @@ module Harness
             # minted — otherwise the debut line (usually the very claim the
             # player engaged them for) is an intake hole.
             if v[:kind] == :npc
-              reflect_knowledge(context, v, emit, voicing_user)
+              reflect_knowledge(context, v, emit, fed)
               reevaluate_state(context, v, emit, voicing_user, active)
             elsif (minted = ::Character.find_by(id: promo[v[:index]]))
-              reflect_knowledge(context, { char: { "name" => minted.name } }, emit, voicing_user)
+              reflect_knowledge(context, { char: { "name" => minted.name } }, emit, fed)
             end
           end
           break if combat_started?(tcs)
@@ -271,7 +272,7 @@ module Harness
       # A gate candidate carrying a synthetic id (so knowledge-row ids and
       # event-row ids can't collide inside one gate call) + its source, so the
       # approved set splits back into facts vs memories.
-      RecallItem = Struct.new(:id, :content, :src)
+      RecallItem = Struct.new(:id, :content, :src, :row)
 
       # Semantic event recall (audit F4): how many newest knowable events join
       # the combined ranking pool. Bounds the lazy embedding backfill; vectors
@@ -289,20 +290,24 @@ module Harness
       def recall(context, char, topic)
         ranker = ::Harness::Knowledge::CosineRanker.new(embedder: llm(context), logger: @logger)
         pool = ::Harness::Knowledge::Query.candidates_for(char) + event_pool(char)
-        return { "knowledge" => [], "events" => [] } if pool.empty?
+        return { "knowledge" => [], "events" => [], "fed" => { "facts" => [], "events" => [] } } if pool.empty?
 
         ranked = ranker.call(pool, topic: topic).first(RECALL_CAP)
         cands = ranked.map.with_index(1) do |row, i|
           if row.is_a?(::Knowledge)
-            RecallItem.new(i, row.content, :knowledge)
+            RecallItem.new(i, row.content, :knowledge, row)
           else
-            RecallItem.new(i, dated_memory_text(row, context.game_time, exclude_id: char.id), :event)
+            RecallItem.new(i, dated_memory_text(row, context.game_time, exclude_id: char.id), :event, row)
           end
         end
 
         approved = ::Harness::Knowledge::Gate.run(llm: llm(context), topic: topic, facts: cands, logger: @logger)
         out = { "knowledge" => approved.select { |c| c.src == :knowledge }.map(&:content),
-                "events"    => approved.select { |c| c.src == :event }.map(&:content) }
+                "events"    => approved.select { |c| c.src == :event }.map(&:content),
+                # [row id, text] pairs of what was handed over — the reflection's
+                # world judge names records by them (additions).
+                "fed"       => { "facts"  => approved.select { |c| c.src == :knowledge }.map { |c| [ c.row.id, c.content ] },
+                                 "events" => approved.select { |c| c.src == :event }.map { |c| [ c.row.id, c.content ] } } }
         @logger.info { "[Runner conversation] recall #{char.name}: #{cands.count { |c| c.src == :knowledge }} fact + #{cands.count { |c| c.src == :event }} memory ranked-in → #{out['knowledge'].size} fact / #{out['events'].size} memory gated-in" }
         out
       end
@@ -328,11 +333,19 @@ module Harness
       # relative time is computed fresh here and can't go stale. Same-day
       # events get no prefix.
       def dated_memory_text(event, now, exclude_id: nil)
-        phrase = ago_phrase(now.to_i - event.game_time.to_i)
-        base   = phrase ? "(#{phrase}) #{event.recall_text}" : event.recall_text
-        cast   = cast_suffix(event.event_participants.map(&:character_id), exclude_id)
+        parts  = event.event_participants.to_a
+        marks  = [ ago_phrase(now.to_i - event.game_time.to_i),
+                   (HEARSAY_MARK if parts.any? { |p| p.character_id == exclude_id && p.role == "hearer" }) ].compact
+        base   = marks.any? ? "(#{marks.join(', ')}) #{event.recall_text}" : event.recall_text
+        # Hearers were told, not there — they never enter the "(with …)" cast.
+        cast   = cast_suffix(parts.reject { |p| p.role == "hearer" }.map(&:character_id), exclude_id)
         cast ? "#{base} #{cast}" : base
       end
+
+      # A holder who only HEARD of a happening (participant role "hearer" —
+      # the transmission edge Capture writes at a telling) recalls it as
+      # hearsay, marked so the voicing knows it is second-hand.
+      HEARSAY_MARK = "heard tell"
 
       def ago_phrase(delta_minutes)
         days = delta_minutes / ::Harness::Clock::MINUTES_PER_DAY
@@ -397,7 +410,7 @@ module Harness
         step   = ::Harness::Dispatcher::Step.new(runner: "conversation", intent: cause, args: {})
         frame  = UNPROMPTED_FRAME.sub("<<CAUSE>>") { cause }
 
-        emit, voicing_user = voice_one(context, input, step, player, v, roster,
+        emit, voicing_user, fed = voice_one(context, input, step, player, v, roster,
                                        thread_with_current(conversation_thread(context), input, transcript&.tool_calls),
                                        nearby_places(context), wares_here(context),
                                        resolver, tcs, active, nil, frame: frame)
@@ -411,7 +424,7 @@ module Harness
         return nil unless apply_emit(resolver, context, scene, emit, v, player, {}, tcs)
 
         active&.mark_spoken!(npc.id)
-        reflect_knowledge(context, v, emit, voicing_user, unprompted: true)
+        reflect_knowledge(context, v, emit, fed, unprompted: true)
         reevaluate_state(context, v, emit, voicing_user, active)
         transcript&.record_tool_calls(tcs)
         prose
@@ -420,12 +433,13 @@ module Harness
       private
 
       def voice_one(context, input, step, player, v, roster, thread, nearby, wares, resolver, tcs, active, contest = nil, frame: nil, recall_gate: true)
-        you =
+        you, fed_events =
           if v[:kind] == :extra
-            { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }
+            [ { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }, [] ]
           else
             npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP, now: context.game_time)
           end
+        fed = { "events" => fed_events, "facts" => [] }
         # The contest verdict rides in the TARGET's you-block — the dice have
         # ruled; the voicing renders the consequence, it does not re-judge.
         if contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
@@ -445,6 +459,9 @@ module Harness
           floor = Array(you["events"]).first(RECALL_EVENT_FLOOR)
           you = you.merge("events" => (floor + r["events"]).uniq)
           you = you.merge("knowledge" => r["knowledge"]) if r["knowledge"].any?
+          given = r["fed"] || {}
+          fed = { "events" => (fed_events.first(RECALL_EVENT_FLOOR) + Array(given["events"])).uniq(&:first),
+                  "facts"  => Array(given["facts"]) }
         end
         others = v[:kind] == :npc ? roster.reject { |r| r["name"] == v[:char]["name"] } : roster
         # Key ORDER matters for KV-cache reuse across the turn's per-NPC calls:
@@ -490,9 +507,12 @@ module Harness
           end
           e1
         end
-        # The exact user string is returned alongside the emit so reflection
-        # can extend it byte-identically (KV-cache prefix reuse).
-        emit ? [ emit, sent_user ] : nil
+        # The exact user string rides along for the taking-stock pass (same
+        # prefix); `fed` is what THIS speaker was handed — records with ids,
+        # the thread, the room — for the reflection judges' clean contexts.
+        fed = fed.merge("thread" => thread, "others" => others.map { |o| o["name"] },
+                        "places" => Array(nearby).map { |n| n["name"] })
+        emit ? [ emit, sent_user, fed ] : nil
       rescue StandardError => e
         @logger.warn { "[Runner conversation] voice failed: #{e.class}: #{e.message}" }
         nil
@@ -621,16 +641,19 @@ module Harness
       # strictly this character's knowledge; no other character's memories enter.
       def npc_knowledge(resolver, char, tcs, active, event_cap: EVENT_SUMMARY_CAP, now: nil)
         res, _ = execute_tool(resolver, "query_events", { "for_holder_id" => char["id"], "limit" => event_cap }, into: tcs)
-        events = Array(res.is_a?(Hash) ? res["events"] : res)
-          .map { |e| event_text(e, exclude_id: char["id"]) }
-          .reject(&:empty?)
+        # [event id, text] pairs: the text is what the voicing sees; the id is
+        # what the reflection's world judge can name (an addition to it).
+        fed_events = Array(res.is_a?(Hash) ? res["events"] : res)
+          .map { |e| [ (e.is_a?(::Hash) ? e["id"] : nil), event_text(e, exclude_id: char["id"]) ] }
+          .reject { |_, t| t.empty? }
+        events = fed_events.map(&:last)
         row   = ::Npc.find_by(id: char["id"])
         props = row&.properties
         # Mood and agenda ride EVERY turn — the post-emit reevaluation
         # keeps them current, so they can't yank a spoken NPC back to a stale
         # seed. Mood leads with the disposition-ladder word: the standing
         # temperature toward the player.
-        {
+        you = {
           "id"          => char["id"],
           "name"        => char["name"],
           "subrole"     => char["subrole"],
@@ -649,6 +672,7 @@ module Harness
           "coins"       => row&.coins.to_i,
           "events"      => events
         }.compact
+        [ you, fed_events ]
       end
 
       # Outstanding obligations from this character's seat — the durable half
@@ -701,7 +725,11 @@ module Harness
         # caller's reject(&:empty?) drops them — a bare " (with Kaol)" cast
         # suffix on a blank line resurrects what the filter exists to kill.
         return text if text.empty?
-        cast = cast_suffix(Array(e["participants"]).map { |p| p.is_a?(::Hash) ? p["character_id"] : nil }, exclude_id)
+        parts = Array(e["participants"])
+        if !text.empty? && parts.any? { |p| p.is_a?(::Hash) && p["character_id"] == exclude_id && p["role"] == "hearer" }
+          text = "(#{HEARSAY_MARK}) #{text}"
+        end
+        cast = cast_suffix(parts.reject { |p| p.is_a?(::Hash) && p["role"] == "hearer" }.map { |p| p.is_a?(::Hash) ? p["character_id"] : nil }, exclude_id)
         cast ? "#{text} #{cast}" : text
       end
 
@@ -994,7 +1022,7 @@ module Harness
           details:   { "narrative" => { "trigger" => "#{npc.name} leaves", "details" => "#{npc.name} leaves for #{dest.name}." } },
           participants: [ { character: npc, role: "actor" }, { character: player, role: "participant" } ]
         )
-        context.active_scene&.present_characters&.reject! { |c| c.id == npc.id }
+        context.active_scene&.remove_present!(npc.id)
         tcs << tool_call("npc_leave", { "character_id" => npc.id, "name" => npc.name, "to" => dest.name }, { "left" => true, "event_id" => event&.id })
         @logger.info { "[Runner conversation] #{npc.name} leaves for #{dest.name}" }
       end
@@ -1058,12 +1086,21 @@ module Harness
         "additionalProperties" => false
       }.freeze
 
-      # Grammar contract for the reflection emit (llama.cpp json_schema →
-      # GBNF). The sampler cannot answer in the dialogue schema, emit prose,
-      # or truncate mid-object — the bounce becomes a dead backstop instead
-      # of a 3-second tax. Shape mirrors knowledge_reflection.txt exactly.
+      # Grammar contracts for the two reflection judges (llama.cpp
+      # json_schema → GBNF; hosted json_schema). The sampler cannot answer in
+      # the dialogue schema, emit prose, or truncate mid-object — the bounce
+      # becomes a dead backstop instead of a 3-second tax. Shapes mirror
+      # knowledge_reflection.txt (claims) and knowledge_ledger.txt (bargains).
       NULLABLE_STR = { "type" => %w[string null] }.freeze
-      REFLECTION_SCHEMA = {
+      ADDITION_SCHEMA = lambda { |id_key|
+        { "type" => "array", "items" => {
+          "type" => "object",
+          "properties" => { id_key => { "type" => "integer" }, "content" => { "type" => "string" } },
+          "required" => [ id_key, "content" ],
+          "additionalProperties" => false
+        } }
+      }
+      WORLD_SCHEMA = {
         "type" => "object",
         "properties" => {
           "facts" => { "type" => "array", "items" => {
@@ -1071,13 +1108,19 @@ module Harness
             "properties" => {
               "content"  => { "type" => "string" },
               "concerns" => { "type" => "array", "items" => { "type" => "string" } },
-              "scope"    => { "type" => "string", "enum" => %w[local world] },
+              # A spoken claim is at most what this town believes — never
+              # universal doctrine (a fishing-spot sighting went out as
+              # "world" on a clean context). The choice is removed, not asked.
+              "scope"    => { "type" => "string", "enum" => %w[local] },
               "min_int"  => { "type" => %w[integer null] },
               "when"     => NULLABLE_STR
             },
             "required" => %w[content concerns scope min_int when],
             "additionalProperties" => false
           } },
+          "event_additions" => ADDITION_SCHEMA.call("event_id"),
+          "fact_additions"  => ADDITION_SCHEMA.call("fact_id"),
+          "retold"          => { "type" => "array", "items" => { "type" => "integer" } },
           "people" => { "type" => "array", "items" => {
             "type" => "object",
             "properties" => {
@@ -1092,7 +1135,14 @@ module Harness
             "properties" => { "name" => { "type" => "string" }, "about" => { "type" => "string" } },
             "required" => %w[name about],
             "additionalProperties" => false
-          } },
+          } }
+        },
+        "required" => %w[facts event_additions fact_additions retold people places],
+        "additionalProperties" => false
+      }.freeze
+      LEDGER_SCHEMA = {
+        "type" => "object",
+        "properties" => {
           "deals" => { "type" => "array", "items" => {
             "type" => "object",
             "properties" => {
@@ -1115,38 +1165,33 @@ module Harness
             "additionalProperties" => false
           } }
         },
-        "required" => %w[facts people places deals discharged],
+        "required" => %w[deals discharged],
         "additionalProperties" => false
       }.freeze
+      WORLD_JUDGE  = { path: REFLECTION_PROMPT_PATH, schema: WORLD_SCHEMA,  keys: %w[facts event_additions fact_additions retold people places] }.freeze
+      LEDGER_JUDGE = { path: LEDGER_PROMPT_PATH,     schema: LEDGER_SCHEMA, keys: %w[deals discharged] }.freeze
 
-      # unprompted: the line came from the initiative pass — the player spoke
-      # to no one this turn, which the deals writer holds against any bargain
-      # naming them as debtor.
-      def reflect_knowledge(context, v, emit, voicing_user, unprompted: false)
+      # REFLECTION — two judges, each on a CLEAN context. The old single pass
+      # rode the voicing prefix and judged five things at once; that was the
+      # fig-caravan lapse (a recalled event restated as a standing fact with
+      # "this morning" baked in), and hosted inference reports no prefix
+      # cache, so the ride bought nothing. WORLD: the speaker's own line
+      # against the records they were handed → facts / additions / people /
+      # places. LEDGER: the exchange as a bargain → deals / discharged.
+      # Capture stays the single writer; `fed` maps the judges' record ids
+      # back to rows. unprompted: the line came from the initiative pass —
+      # the player spoke to no one this turn, which the deals writer holds
+      # against any bargain naming them as debtor.
+      def reflect_knowledge(context, v, emit, fed, unprompted: false)
         prose = emit.dig("dialogue", "prose").to_s.strip
-        return if prose.empty? || voicing_user.nil?
-
+        return if prose.empty?
+        fed   ||= {}
         speaker = v[:char]["name"]
-        user    = "#{voicing_user}\n\n#{reflection_tail(prose, did: emit["did"])}"
-        raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
-          llm(context).complete(system: preamble, user: user, schema: REFLECTION_SCHEMA)
-        end
-        payload = parse_reflection(raw)
-        # One correction bounce, mirroring voice_one's: the tail's schema
-        # override is flaky on the compressed quant — when the model answers
-        # in the dialogue shape (or garbage), re-ask once with the defect
-        # named instead of dropping the claims outright.
-        if (defect = reflection_defect(payload))
-          @logger.warn { "[Runner conversation] reflection for #{speaker} #{defect} — retrying once" }
-          raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
-            llm(context).complete(system: preamble, user: "#{user}\n\n#{reflection_retry_tail(defect, raw)}", schema: REFLECTION_SCHEMA)
-          end
-          payload = parse_reflection(raw)
-          if (still = reflection_defect(payload))
-            @logger.warn { "[Runner conversation] reflection for #{speaker} #{still} on retry — claims dropped" }
-            return
-          end
-        end
+        did     = Array(emit["did"]).map(&:to_s).reject(&:empty?)
+        world   = judge(context, speaker, WORLD_JUDGE,  world_payload(v, prose, did, fed))
+        ledger  = judge(context, speaker, LEDGER_JUDGE, ledger_payload(v, prose, did, fed, context))
+        return if world.nil? && ledger.nil?
+        payload = (world || {}).slice(*WORLD_JUDGE[:keys]).merge((ledger || {}).slice(*LEDGER_JUDGE[:keys]))
         ::Harness::Knowledge::Capture.ingest(
           payload:   payload,
           speaker:   speaker,
@@ -1155,10 +1200,84 @@ module Harness
           game_time: context.game_time,
           context:   context,   # enables person/place realization (the single entity pipe)
           player_spoke: !unprompted,
+          records:   fed.slice("events", "facts"),
           logger:    @logger
         )
       rescue StandardError => e
         @logger.warn { "[Runner conversation] reflection capture failed for #{v[:char]['name']}: #{e.class}: #{e.message}" }
+      end
+
+      # One judge call with its one correction bounce: when the model answers
+      # in the dialogue shape (or garbage), re-ask once with the defect named
+      # instead of dropping the claims outright. nil = both attempts failed.
+      def judge(context, speaker, spec, payload)
+        system = judge_prompt(spec)
+        user   = "INPUT:\n#{JSON.pretty_generate(payload)}"
+        raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
+          llm(context).complete(system: system, user: user, schema: spec[:schema])
+        end
+        parsed = parse_reflection(raw)
+        if (defect = judge_defect(parsed, spec[:keys]))
+          @logger.warn { "[Runner conversation] #{spec[:keys].first} judge for #{speaker} #{defect} — retrying once" }
+          raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
+            llm(context).complete(system: system, user: "#{user}\n\n#{judge_retry_tail(defect, raw, spec[:keys].first)}", schema: spec[:schema])
+          end
+          parsed = parse_reflection(raw)
+          if (still = judge_defect(parsed, spec[:keys]))
+            @logger.warn { "[Runner conversation] #{spec[:keys].first} judge for #{speaker} #{still} on retry — claims dropped" }
+            return nil
+          end
+        end
+        parsed
+      end
+
+      # What the WORLD judge sees: the line, the acts, and the records the
+      # speaker was handed, numbered 1..n per kind (records_given) so an
+      # addition can name its record; Capture maps the numbers back to rows.
+      def world_payload(v, prose, did, fed)
+        given = ->(pairs) { Array(pairs).each_with_index.map { |(_, text), i| { "id" => i + 1, "text" => text } } }
+        {
+          "you"            => { "name" => v[:char]["name"], "subrole" => v[:char]["subrole"] }.compact,
+          "said"           => prose,
+          "did"            => did,
+          "records_given"  => { "events" => given.call(fed["events"]), "facts" => given.call(fed["facts"]) },
+          "others_present" => Array(fed["others"]),
+          "known_places"   => Array(fed["places"])
+        }
+      end
+
+      # What the LEDGER judge sees: both sides of the exchange (a bargain is
+      # struck by two), what the speaker did for real, and what already
+      # stands between them — the tense and re-strike razors need all three.
+      def ledger_payload(v, prose, did, fed, context)
+        player = ::Player.first
+        {
+          "you"             => { "name" => v[:char]["name"] },
+          "player"          => { "name" => player&.name }.compact,
+          "exchange_so_far" => Array(fed["thread"]),
+          "you_said"        => prose,
+          "you_did"         => did,
+          "open_debts"      => debts_for(v[:char]["id"], context.game_time)
+        }.compact
+      end
+
+      # <<...>> markers are runtime substitutions owned by THIS runner —
+      # deliberately not {{...}}, which is Prompts::Preamble's vocabulary
+      # namespace (its integration spec rejects unexpanded {{ in prompt files).
+      def judge_prompt(spec)
+        @judge_prompts ||= {}
+        @judge_prompts[spec[:path]] ||= File.read(spec[:path]).sub("<<SUBROLES>>") { ::Harness::Vocations.all.join(", ") }
+      end
+
+      def judge_defect(payload, keys)
+        return "unparseable" unless payload.is_a?(::Hash)
+        return "answered in DIALOGUE schema" if payload.key?("speak") && keys.none? { |k| payload.key?(k) }
+        nil
+      end
+
+      def judge_retry_tail(defect, raw, first_key)
+        "--- RETRY ---\nYour previous output was rejected: #{defect}.\nPrevious output:\n#{raw}\n\n" \
+        "The dialogue turn is OVER. Output ONLY the JSON described above — no \"thought\", no \"speak\" — beginning with {\"#{first_key}\":"
       end
 
       # POST-EMIT STATE REEVALUATION — the "taking stock" pass. Third call on
@@ -1215,17 +1334,6 @@ module Harness
         @reevaluation_template.sub("<<SAID>>") { prose }
       end
 
-      # <<...>> markers are runtime substitutions owned by THIS runner —
-      # deliberately not {{...}}, which is Prompts::Preamble's vocabulary
-      # namespace (its integration spec rejects unexpanded {{ in prompt files).
-      def reflection_tail(prose, did: nil)
-        @reflection_template ||= File.read(REFLECTION_PROMPT_PATH)
-                                     .sub("<<SUBROLES>>") { ::Harness::Vocations.all.join(", ") }
-        acts = Array(did).map(&:to_s).reject(&:empty?)
-        done = acts.empty? ? "" : "You also did, for real — the ledger moved: #{acts.join('; ')}."
-        @reflection_template.sub("<<SAID>>") { prose }.sub("<<DID>>") { done }
-      end
-
       # Malformed JSON must reach the bounce as a nil payload ("unparseable"),
       # not raise past it into reflect_knowledge's blanket rescue — that path
       # dropped a spoken deal with zero retries (the Bodil charm-meet).
@@ -1233,19 +1341,6 @@ module Harness
         ::Harness::LLM::JsonResponse.parse(raw)
       rescue ::JSON::ParserError
         nil
-      end
-
-      def reflection_defect(payload)
-        return "unparseable" unless payload.is_a?(::Hash)
-        if payload.key?("speak") && !(payload.key?("facts") || payload.key?("people") || payload.key?("places"))
-          return "answered in DIALOGUE schema"
-        end
-        nil
-      end
-
-      def reflection_retry_tail(defect, raw)
-        "--- RETRY ---\nYour previous output was rejected: #{defect}.\nPrevious output:\n#{raw}\n\n" \
-        "The dialogue turn is OVER. Output ONLY the world-memory JSON — no \"thought\", no \"speak\" — beginning with {\"facts\":"
       end
 
       def preamble

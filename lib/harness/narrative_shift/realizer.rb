@@ -51,6 +51,14 @@ module Harness
         # picker assigns a real one. A role-reference is a valid person to spawn;
         # they just haven't been named in dialogue yet. Next turn the NPC recalls
         # the assigned name off the event log — no second spawn, no duplicate.
+        # The player is a person in the room, never someone to realize: a
+        # claim carrying their name would mint a namesake NPC (find_existing
+        # sees NPC rows only).
+        if (player = ::Player.first) && !spoken.empty? && name_match?(player.name, spoken)
+          logger.info { "[NarrativeShift] claim #{spoken.inspect} names the player — not a referral" }
+          return nil
+        end
+
         role_ref = nil
         if proper_name?(spoken)
           name = spoken

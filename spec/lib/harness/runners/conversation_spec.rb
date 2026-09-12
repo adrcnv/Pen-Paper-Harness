@@ -1033,7 +1033,7 @@ RSpec.describe Harness::Runners::Conversation do
         described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
       }.to change(Knowledge, :count).by(1)
       expect(Knowledge.last.content).to match(/crab pots/)
-      expect(reflection_calls).to eq(1)
+      expect(reflection_calls).to eq(2)   # two judges (claims, bargains), one bounce each
     end
 
     it "bounces a MALFORMED-JSON reflection once instead of raising past the retry (the Bodil charm-meet drop)" do
@@ -1075,11 +1075,13 @@ RSpec.describe Harness::Runners::Conversation do
       expect(Harness::Knowledge::Capture).not_to have_received(:ingest)
     end
 
-    it "extends the speaker's OWN voicing context: the reflection prompt carries the payload plus the spoken line" do
+    it "judges the line on a CLEAN context: the claims prompt carries the line and what the speaker was handed, not the voicing thread" do
       reflection_prompt = nil
       ctx = context_with do |full|
-        if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
+        if full.include?("WORLD MEMORY — CLAIMS")
           reflection_prompt = full
+          { "facts" => [] }.to_json
+        elsif (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
           { "facts" => [] }.to_json
         elsif full.include?("filter stored facts")
           { "relevant" => [ 1 ] }.to_json   # grounded turn — reflection must still fire
@@ -1091,15 +1093,15 @@ RSpec.describe Harness::Runners::Conversation do
       scene = Harness::Tools::QueryScene.build(ctx)
 
       described_class.new.run(context: ctx, scene: scene, input: "is there still a tithe?", step: step)
-      expect(reflection_prompt).to include("\"player_input\"")                     # the voicing payload prefix
+      expect(reflection_prompt).not_to include("\"player_input\"")                 # the voicing thread is axed — a clean context
       expect(reflection_prompt).to include("Aye, repealed, and good riddance.")    # the line under judgment
-      expect(reflection_prompt).to include("The salt tithe was repealed")          # the speaker's recall, in view
+      expect(reflection_prompt).to include("records_given", "The salt tithe was repealed")  # what the speaker was handed, numbered
     end
 
     it "carries the closed subrole vocabulary into the reflection tail (no unexpanded marker)" do
       reflection_prompt = nil
       ctx = context_with do |full|
-        if full.include?("SECOND PASS: WORLD MEMORY")
+        if full.include?("WORLD MEMORY — CLAIMS")
           reflection_prompt = full
           { "facts" => [] }.to_json
         elsif full.include?("TAKING STOCK")
@@ -1128,6 +1130,22 @@ RSpec.describe Harness::Runners::Conversation do
 
       described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
       expect(reflected).to be(false)
+    end
+  end
+
+  describe "hearsay rendering (the hearer edge at recall)" do
+    it "marks an event the holder only heard of, on both the recall path and the raw dump" do
+      npc  = Npc.create!(name: "Kaol", subrole: "drover", location: tavern)
+      ev   = Harness::Event::ForwardAppender.append(game_time: 0, scope: "local", location: tavern,
+                                                    details: { "summary" => "The mill burned." },
+                                                    participants: [ { character: barkeep, role: "subject" } ])
+      EventParticipant.create!(event: ev, character: npc, role: "hearer")
+      runner = described_class.new
+      expect(runner.send(:dated_memory_text, ev, 3 * 1440, exclude_id: npc.id)).to eq("(3 days past, heard tell) The mill burned. (with Tomas)")
+      # A hearer was told, not there: the subject's own recall names no hearer in its cast.
+      expect(runner.send(:dated_memory_text, ev, 3 * 1440, exclude_id: barkeep.id)).to eq("(3 days past) The mill burned.")
+      row = { "details" => ev.details, "participants" => ev.event_participants.map { |p| { "character_id" => p.character_id, "role" => p.role } } }
+      expect(runner.send(:event_text, row, exclude_id: npc.id)).to start_with("(heard tell) The mill burned.")
     end
   end
 
@@ -1206,6 +1224,43 @@ RSpec.describe Harness::Runners::Conversation do
       say = @outcome.tool_calls.find { |t| t["name"] == "propose_event" && t.dig("result", "staged") }
       actor_ids = say.dig("args", "participants").select { |p| p["role"] == "actor" }.map { |p| p["character_id"] }
       expect(actor_ids).to eq([ new_id ]) # the recruit speaks, not the barkeep
+    end
+
+    # Regression (the Reeds, run 2): two extras spoke in one turn; the first
+    # promotion deleted its description IN PLACE from the array the runner's
+    # scene hash aliased, so the second promotion looked up a shifted index
+    # and minted the wrong figure. Scene arrays are now replaced, never
+    # mutated: the captured view keeps its order, the Active moves on.
+    it "promotes two speaking extras in one turn each under its OWN description (no index shift)" do
+      huddled  = "a huddled figure under a frayed blanket near the firepit"
+      traveler = "a thin traveler in a damp cloak, scanning the reeds"
+      woman    = "an old woman wrapped in wool, quietly mending a net"
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
+        llm_nuance: StubLLM.new { |full|
+          if full.include?(huddled)
+            { "speak" => true, "subrole" => "commoner", "dialogue" => { "summary" => "mutters", "prose" => "The huddled one mutters about a boot print." } }.to_json
+          elsif full.include?(traveler)
+            { "speak" => true, "subrole" => "wanderer", "dialogue" => { "summary" => "adds", "prose" => "The traveler says the print led east." } }.to_json
+          else
+            { "speak" => false }.to_json
+          end
+        })
+      ctx.active_scene = Harness::Scene::Active.new(
+        location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern),
+        extras: [ huddled, traveler, woman ]
+      )
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "ask the huddled figure and the traveler about the reeds", step: step("ask two figures"))
+
+      minted = outcome.tool_calls.select { |t| t["name"] == "propose_character" }
+      expect(minted.map { |t| t.dig("args", "from_extra") }).to eq([ huddled, traveler ])
+      minted.each do |t|
+        row = Npc.find(t.dig("result", "character_id"))
+        expect(row.properties["physical"]).to eq(t.dig("args", "from_extra"))
+      end
+      expect(scene["present_extras"]).to eq([ huddled, traveler, woman ])   # the runner's view never shifted
+      expect(ctx.active_scene.present_extras).to eq([ woman ])               # the Active moved on
     end
 
     it "reflects the debut line under the minted identity (no intake hole on promotion)" do
@@ -1305,7 +1360,7 @@ RSpec.describe Harness::Runners::Conversation do
       expect(player.reload.coins).to eq(5)
       expect(ob.reload.status).to eq("settled")
       reflection = seen.find { |s| s.include?("WORLD MEMORY") }
-      expect(reflection).to include("You also did", "paid Hero 5 coins, settling the debt")
+      expect(reflection).to include("\"did\"", "paid Hero 5 coins, settling the debt")
       expect(outcome.status).to eq(:ok)
     end
 

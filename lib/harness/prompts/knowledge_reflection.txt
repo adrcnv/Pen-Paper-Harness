@@ -1,25 +1,25 @@
---- SECOND PASS: WORLD MEMORY ---
-The dialogue turn is over. You are still the same character. You just said:
-
-"<<SAID>>"
-<<DID>>
-
-Now judge YOUR OWN words for the world's records. Output ONLY this JSON:
-{"facts": [ {"content": "...", "concerns": ["Name"], "scope": "local"|"world", "min_int": null, "when": null} ],
+--- SECOND PASS: WORLD MEMORY — CLAIMS ---
+The dialogue turn is over. You are INPUT.you. INPUT.said is the line you just spoke, INPUT.did what you actually did. INPUT.records_given is what you were handed before speaking — your memories (events) and standing facts, each with an id. Judge YOUR OWN words for the world's records. Output ONLY this JSON:
+{"facts": [ {"content": "...", "concerns": ["Name"], "scope": "local", "min_int": null, "when": null} ],
+ "event_additions": [ {"event_id": N, "content": "..."} ],
+ "fact_additions": [ {"fact_id": N, "content": "..."} ],
+ "retold": [ N ],
  "people": [ {"name": "...", "subrole": "...", "gist": "...", "at_location": "..."} ],
- "places": [ {"name": "...", "about": "..."} ],
- "deals": [ {"who_owes": "...", "owed_to": "...", "kind": "coins"|"deed"|"meet", "amount": null, "terms": "...", "due": null, "where": null} ],
- "discharged": [ {"who_owed": "...", "kind": "coins"|"deed"|"meet"} ]}
+ "places": [ {"name": "...", "about": "..."} ]}
 
-facts — a HARD CLAIM you just made about the world: a specific, durable truth (who holds a post, a fee, what became of a place). NOT something already in your `knowledge`, your `events`, or said earlier in exchange_so_far — restating what you already knew is not a new fact. NOT opinions, moods, banter, threats, or common know-how. NOT anything about the player or this conversation itself. Write each as one clean self-contained sentence. "concerns": ONLY when the fact is a private matter between the named people (a debt, a deed, ownership) — list their names; a general truth, or the public doings of a known figure → []. "scope": "local" for this settlement, "world" beyond it. "min_int": an integer only for learned lore. "when": only for a happening you dated — how long ago, as "3 days ago" / "2 winters ago"; null for anything undated or vague. With "when" set, leave the time out of the content sentence.
+facts — a HARD CLAIM you made that stands on its own: a specific, durable truth about the world (who holds a post, a fee, what became of a place). A happening in records_given is already recorded; what may stand on its own is the STATE it left behind ("the mill is a ruin"), never the happening retold. NOT opinions, moods, banter, threats, or common know-how. NOT anything about the player or this conversation itself. Write each as one clean self-contained sentence. "concerns": ONLY when the fact is a private matter between the named people (a debt, a deed, ownership) — list their names; a general truth, or the public doings of a known figure → []. "scope": always "local" — what you say is what this settlement comes to know. "min_int": an integer only for learned lore. "when": only for a happening you dated — how long ago, as "3 days ago" / "2 winters ago"; null for anything undated or vague. With "when" set, leave the time out of the content sentence.
+
+event_additions — a detail your line ADDED to one of the events you were handed (records_given.events): the record's id, and ONLY the new detail — one self-contained sentence that names its subject, stated as the world would state it, of something that happened THEN, at the record's own time and place. What is happening now, in this room — who told whom, who heard what — is not the record. Who someone is belongs in people. Retelling a memory adds nothing — an entry only when your words carried something the record lacks.
+
+fact_additions — the same for a standing fact you were handed (records_given.facts): its id, and the sentence that extends it.
+
+Every sentence you record goes in exactly ONE list: if it belongs to a record you were handed, it is an addition and nothing else.
+
+retold — the ids of the events you were handed (records_given.events) that your line passed on to those present, in detail or in passing. Telling is how a happening travels: everyone in the room now knows it as hearsay.
 
 people — a living individual you pointed the player toward or hung a story on — NOT you, NOT anyone in the room (you and others_present already exist, and the room's unnamed figures are scenery, not referrals). ONE person per entry, never a group: a plural reference ("two drovers", "the guards") is nobody to record. They need an identity — a spoken name or a specific role ("the miller", "my brother in the hills") — plus one concrete thing you attached: where they are, what they did, what they want. A referral with substance is a person; an empty wave at nobody in particular ("go ask around") is not. Missing or sought people count. Describe them as the world would, not as "my brother". "subrole": their trade — the closest single noun from: <<SUBROLES>>. Never: the dead, historical figures, gods or crowds, someone you denied knowing, or someone the player invented and you merely echoed — the player asking about a person a speaker introduced does NOT exclude them.
 
-places — a specific place you named that has its own identity or history. Coin a short Capitalized name if you left it unnamed. "about": one or two clauses of what you said about it. Bare generics ("the mill") only if you gave them a name or a history.
-
-deals — a bargain STRUCK in this exchange, spoken and accepted by BOTH sides: payment promised ("coins", "amount" an integer, or null when unfixed — "a third of the take"), work or a favor owed ("deed"), a meeting committed ("meet"). "coins" ONLY when the debt is money itself; promised work, goods, or favors are "deed" even when payment awaits at the end. A bargain that fixes a time or place to MEET is "meet", even when work waits at the other end. NOT an offer left hanging, NOT a maybe, NOT an arrangement that already existed before this exchange. "who_owes" / "owed_to": the two parties by name — you and the player only. "terms": the deal in one sentence as agreed. "due": when or on what condition it falls due, in the words spoken ("after the barge is loaded"); null if none stated. "where": the place named aloud for the deal ("Ulfberg", "the shrine"); null if none spoken.
-
-discharged — a debt released by the CREDITOR's own spoken words in this exchange: one owed TO YOU that you just let go or acknowledged settled (work done, payment received, meeting kept), or one YOU owe the player that the player's own words just released. The debtor claiming it's done releases nothing. NOT an offer to release, NOT a debt still expected. "who_owed": the debtor by name — yourself when the player released you.
+places — a specific place you named that has its own identity or history. Coin a short Capitalized name if you left it unnamed. "about": one or two clauses of what you said about it. Bare generics ("the mill") only if you gave them a name or a history. INPUT.known_places already exist — naming one of them is not a new place.
 
 Keep the speaker's certainty in everything you record: a hedged, conditional, or accused claim ("maybe", "potentially", "if he accepts", "they say") stays hedged in the fact and in the gist — never harden rumor into fact.
 

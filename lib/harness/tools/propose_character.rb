@@ -54,7 +54,7 @@ module Harness
           unless extras.include?(from_extra)
             return { "error" => "no extra matches #{from_extra.inspect}; current extras: #{extras.inspect}" }
           end
-          extras.delete(from_extra)
+          active.remove_extra!(from_extra)
         end
 
         location = if location_id

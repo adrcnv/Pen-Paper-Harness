@@ -1,0 +1,10 @@
+--- SECOND PASS: WORLD MEMORY — BARGAINS ---
+The dialogue turn is over. You are INPUT.you. INPUT.exchange_so_far is the conversation as it stood, INPUT.you_said the line you just spoke, INPUT.you_did what you actually did, INPUT.open_debts what already stands between you and others. Judge whether YOUR words struck or released a bargain. Output ONLY this JSON:
+{"deals": [ {"who_owes": "...", "owed_to": "...", "kind": "coins"|"deed"|"meet", "amount": null, "terms": "...", "due": null, "where": null} ],
+ "discharged": [ {"who_owed": "...", "kind": "coins"|"deed"|"meet"} ]}
+
+deals — a bargain STRUCK in this exchange, spoken and accepted by BOTH sides: payment promised ("coins", "amount" an integer, or null when unfixed — "a third of the take"), work or a favor owed ("deed"), a meeting committed ("meet"). "coins" ONLY when the debt is money itself; promised work, goods, or favors are "deed" even when payment awaits at the end. A bargain that fixes a time or place to MEET is "meet", even when work waits at the other end. NOT an offer left hanging, NOT a maybe, NOT an arrangement that already existed before this exchange — open_debts are already on the books. "who_owes" / "owed_to": the two parties by name — you and the player only. "terms": the deal in one sentence as agreed. "due": when or on what condition it falls due, in the words spoken ("after the barge is loaded"); null if none stated. "where": the place named aloud for the deal ("Ulfberg", "the shrine"); null if none spoken.
+
+discharged — a debt released by the CREDITOR's own spoken words in this exchange: one owed TO YOU that you just let go or acknowledged settled (work done, payment received, meeting kept), or one YOU owe the player that the player's own words just released. The debtor claiming it's done releases nothing. NOT an offer to release, NOT a debt still expected. "who_owed": the debtor by name — yourself when the player released you.
+
+Most exchanges strike nothing — empty lists are the normal answer.
