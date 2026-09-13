@@ -86,11 +86,12 @@ module Harness
           internal_state:       flavor[:internal_state],
           agendas:              flavor[:agendas],
           extras:               flavor[:extras],
-          # The visible activity starts as the seeded state: a decliner's
-          # "carry on → doing null" duty needs a reference, and with `doing`
-          # empty the first decline wrote the establishment out again
-          # ("continues mending her net") and perception repainted it.
-          doing:                (flavor[:internal_state] || {}).dup,
+          # The visible activity, seeded on its own (the seeder's `doing`
+          # key). It used to be a copy of the mood line, which handed the
+          # voicing one sentence under two keys and the eyes an interior line
+          # as the bearing (2026-09-12). A decliner still needs the reference:
+          # with `doing` empty the first decline re-wrote the establishment.
+          doing:                (flavor[:doing] || {}).dup,
           entered_at_game_time: @context.game_time || 0,
           # Initiative arrival-settle (nil = skip one turn) applies to ARRIVALS
           # only. An in-place rebuild — pass_time crossing the threshold at the
@@ -463,7 +464,8 @@ module Harness
         {
           internal_state: result.internal_state,
           agendas:        result.agendas,
-          extras:         result.extras
+          extras:         result.extras,
+          doing:          result.doing
         }
       rescue StandardError => e
         # An extras-only entry has nothing to lose but garnish — a flaky
@@ -474,7 +476,7 @@ module Harness
       end
 
       def empty_flavor
-        { internal_state: {}, agendas: {}, extras: [] }
+        { internal_state: {}, agendas: {}, extras: [], doing: {} }
       end
 
       def nearest_top_level_neighbor(loc)

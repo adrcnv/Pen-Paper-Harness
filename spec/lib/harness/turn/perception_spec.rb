@@ -47,21 +47,23 @@ RSpec.describe Harness::Turn::Perception do
     expect(llm.user_calls.last).to include("stacking tankards behind the bar")
   end
 
-  it "omits a doing that merely restates the bearing — one fact, rendered once; a real shift still shows" do
+  it "shows a person's doing and disposition, never the interior mood line" do
     bess = Npc.create!(name: "Bess", subrole: "barkeep", location: tavern)
     active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [],
-                                        internal_state: { bess.id => "polishing the bar, half-listening" })
+                                        internal_state: { bess.id => "sour about the missed delivery" },
+                                        doing: { bess.id => "polishing the bar" })
     context = ctx
     context.active_scene = active
 
-    active.update_doing!(bess.id, "polishing the bar, half-listening")
     person = described_class.observable_view(context)["people"].find { |p| p["name"] == "Bess" }
-    expect(person).not_to have_key("doing")
-    expect(person["bearing"]).to eq("polishing the bar, half-listening")
+    expect(person["doing"]).to eq("polishing the bar")
+    expect(person["disposition"]).to eq("neutral")
+    expect(person).not_to have_key("bearing")
+    expect(person.values.join).not_to include("missed delivery")
 
-    active.update_doing!(bess.id, "stacking tankards behind the bar")
+    active.shift_disposition!(bess.id, "colder")
     person = described_class.observable_view(context)["people"].find { |p| p["name"] == "Bess" }
-    expect(person["doing"]).to eq("stacking tankards behind the bar")
+    expect(person["disposition"]).to eq("guarded")
   end
 
   it "withholds figures (extras) on a non-establishing render — no writer, never a delta" do
@@ -78,28 +80,32 @@ RSpec.describe Harness::Turn::Perception do
     expect(llm.user_calls.last).to include("lone gull")
   end
 
-  it "eyes don't hear: dialogue parts are excluded from just_now" do
+  it "eyes don't hear and don't read dice: dialogue and bracket parts are excluded from just_now" do
     llm = StubLLM.new { "The room holds still." }
     described_class.render(
       context: ctx(llm: llm),
       parts: [
         { kind: :dialogue, text: "\"Look at that wall Sindri threw up.\"" },
+        { kind: :bracket,  text: "[press Bess — Charisma 2 vs 18: failure]" },
         { kind: :line, text: "You take the locket." }
       ]
     )
     input = llm.user_calls.last
     expect(input).not_to include("wall Sindri")
+    expect(input).not_to include("Charisma 2 vs 18")
     expect(input).to include("You take the locket.")
   end
 
   describe ".view_delta" do
-    it "reports the moved person whole, departures by name, and moved fields only" do
-      prev = { "people" => [ { "name" => "A", "doing" => "raking" }, { "name" => "B", "doing" => "sitting" } ],
+    it "reports a moved person as name, role and the moved fields only; a newcomer whole; departures by name; other fields only when moved" do
+      prev = { "people" => [ { "name" => "A", "role" => "porter", "appearance" => "lean", "doing" => "raking" }, { "name" => "B", "doing" => "sitting" } ],
                "time_of_day" => "day", "things" => [ "rake" ] }
-      curr = { "people" => [ { "name" => "A", "doing" => "pacing" } ],
+      curr = { "people" => [ { "name" => "A", "role" => "porter", "appearance" => "lean", "doing" => "pacing" },
+                             { "name" => "C", "role" => "cook", "appearance" => "round", "bearing" => "humming" } ],
                "time_of_day" => "evening", "things" => [ "rake" ] }
       d = described_class.view_delta(prev, curr)
-      expect(d["people"]).to eq([ { "name" => "A", "doing" => "pacing" } ])
+      expect(d["people"]).to eq([ { "name" => "A", "role" => "porter", "doing" => "pacing" },
+                                  { "name" => "C", "role" => "cook", "appearance" => "round", "bearing" => "humming" } ])
       expect(d["departed"]).to eq([ "B" ])
       expect(d["time_of_day"]).to eq("evening")
       expect(d).not_to have_key("things")
@@ -111,17 +117,34 @@ RSpec.describe Harness::Turn::Perception do
     end
   end
 
-  it "renders a delta through the shift prompt, changed fields only" do
+  describe ".visible_shift?" do
+    it "is false for a disposition flip alone, true for doing, a newcomer, a departure, or the hour" do
+      expect(described_class.visible_shift?(nil)).to be(false)
+      expect(described_class.visible_shift?({})).to be(false)
+      expect(described_class.visible_shift?({ "people" => [ { "name" => "Bess", "role" => "barkeep", "disposition" => "hostile" } ] })).to be(false)
+      expect(described_class.visible_shift?({ "people" => [ { "name" => "Bess", "role" => "barkeep", "doing" => "counting coin", "disposition" => "hostile" } ] })).to be(true)
+      expect(described_class.visible_shift?({ "people" => [ { "name" => "Osric", "role" => "porter", "gender" => "male", "doing" => "arriving" } ] })).to be(true)
+      expect(described_class.visible_shift?({ "departed" => [ "Bess" ] })).to be(true)
+      expect(described_class.visible_shift?({ "time_of_day" => "evening" })).to be(true)
+    end
+  end
+
+  it "a SHIFT render gives the model only the place name and what changed — never the standing room, not even the hour" do
+    Npc.create!(name: "Bess", subrole: "barkeep", location: tavern, current_hp: 5, max_hp: 5)
     llm = StubLLM.new { "The light goes amber." }
-    text = described_class.render_delta(
-      context: ctx(llm: llm), parts: [],
-      delta: { "time_of_day" => "evening" }, place: { "name" => "Tavern", "description" => "beams" }
-    )
-    expect(text).to eq("The light goes amber.")
-    expect(llm.system_calls.last).to include("what just SHIFTED")
+    described_class.render(context: ctx(llm: llm), parts: [], shift_only: true,
+                           changed: { "people" => [ { "name" => "Bess", "role" => "barkeep", "doing" => "counting coin" } ] })
     input = llm.user_calls.last
-    expect(input).to include('"evening"')
-    expect(input).not_to include("beams")   # anchor is the name only — no re-establishment material
+    expect(input).to include('"changed"').and include("counting coin").and include('"Tavern"')
+    expect(input).not_to include("peat smoke")     # the description is establishment material
+    expect(input).not_to include('"people"' + ": [\n") if false
+    expect(JSON.parse(input.sub(/\AINPUT:\n/, "")).keys).to contain_exactly("place", "changed", "you")
+
+    described_class.render(context: ctx(llm: llm), parts: [], shift_only: true)   # nothing changed: place only
+    expect(JSON.parse(llm.user_calls.last.sub(/\AINPUT:\n/, "")).keys).to contain_exactly("place", "you")
+
+    described_class.render(context: ctx(llm: llm), parts: [])                     # establishment: the whole view
+    expect(llm.user_calls.last).to include("peat smoke").and include('"people"')
   end
 
   it "swallows a flaked call — the mechanical parts carry the turn" do

@@ -5,7 +5,7 @@ You output STRICT JSON and nothing else:
 {
   "reasoning": "<dependency check — see below. Keep it to one or two clauses, 60 words MAX>",
   "plan": [
-    { "reason": "<one tight sentence: WHAT the player is doing in this step — the act itself ('offers healing services to the room', 'asks the barkeep about work', 'demands passage north') — not who is present or why the label fits>", "runner": "<one runner label>", "args": { } }
+    { "reason": "<one tight sentence: WHAT the player is doing in this step — the act itself, in the player's own terms — not who is present or why the label fits>", "runner": "<one runner label>", "args": { } }
   ]
 }
 

@@ -221,6 +221,10 @@ module Harness
           unless combat_result || @context.scene_dirty || @scene_manager.active&.in_combat? || player_conversed
             beat = maybe_run_initiative(transcript, narration)
             if beat && !beat.empty?
+              # Someone acted after all: the runner's "No one reacts." (nobody
+              # answered the player) would sit right above the beat and
+              # contradict it (tester run 2, t10 — 2026-09-12).
+              transcript.parts.reject! { |p| p[:kind] == :stock && p[:text] == ::Harness::Turn::Parts::SILENCE_LINE }
               # The beat prose is the voicing organ's own output; scrub the
               # engine word "the player" like every other part.
               transcript.parts << { kind: :beat, text: scrub_player_reference(beat) }
@@ -229,83 +233,41 @@ module Harness
             end
           end
 
-          # Perception — the player's eyes, DELTA-GATED (v2, ruled
-          # 2026-08-14): eyes fire when the OBSERVABLE VIEW changed or the
-          # player looked, and stay silent otherwise. The view is the whole
-          # ledger — every field Perception.observable_view exposes (place,
-          # phase, roster, appearance, doing, bearing, alterations, ...)
-          # triggers on change automatically; no per-attribute gate wiring.
-          # The stamp is the view's digest at last successful render, held on
-          # the Active scene — it dies with the scene, so an arrival fires
-          # as establishment for free; a flaked call doesn't stamp, so the
-          # gate stays open to retry. A no-change conversation turn pays
-          # nothing (the view build is pure SQL). Runs dead last so it reads
-          # post-commit state and every voice that spoke, including the
-          # beat. DISPLAY-ONLY: `narration` was joined above WITHOUT this
-          # part, so scene history, the context buffer, and every LLM
-          # payload never see the eyes' prose.
+          # Perception — the player's eyes, on every non-combat turn where
+          # something is there to see. The speaker-echo filter (2026-08-15)
+          # closed the eyes for whole conversations — the only people who
+          # change in a conversation are the ones who spoke — so it went
+          # (2026-09-12). The view is diffed against the last render: a
+          # SHIFT render gets the place, the hour and what changed, nothing
+          # else; an arrival or an explicit look ESTABLISHES with the full
+          # view and the extras. Nothing changed → nothing rendered. Runs
+          # dead last so it reads post-commit state and every voice that
+          # spoke, including the beat. DISPLAY-ONLY: `narration` was joined
+          # above WITHOUT this part, so scene history, the context buffer,
+          # and every LLM payload never see the eyes' prose.
           unless combat_result || @scene_manager.active&.in_combat?
             active = @scene_manager.active
             view   = ::Harness::Turn::Perception.observable_view(@context)
-            digest = ::Harness::Turn::Perception.view_digest(view)
             looked = Array(transcript.runners_ran).include?("inspection")
-            # The stamp is {digest, view} from the last successful render:
-            # digest = the no-change fast path, view = what the delta diffs
-            # against. (A legacy bare-string stamp from an older save reads
-            # as no stamp — one establishment render, then normal.)
+            # The stamp is the view at the last successful render — what the
+            # shift diffs against. (A legacy bare-string stamp from an older
+            # save reads as no stamp — one establishment render, then normal.)
             stamp = active&.perceived_view
-            stamp = nil unless stamp.is_a?(::Hash)
-            if looked || active.nil? || stamp.nil? || stamp["digest"] != digest
-              # An arrival or an explicit look ESTABLISHES: full view, and
-              # extras feed only here (no writer, near-never a delta — the
-              # narrations list is still empty on the scene's first render;
-              # record_narration runs below). A mere attribute shift renders
-              # ONLY the delta — the scene is not re-established because
-              # somebody coughed.
-              establishing = looked || stamp.nil? || Array(active&.narrations).empty?
-              eyes = if establishing
-                ::Harness::Turn::Perception.render(
-                  context: @context, parts: transcript.parts, view: view,
-                  include_figures: looked || Array(active&.narrations).empty?, logger: logger)
-              else
-                delta = ::Harness::Turn::Perception.view_delta(stamp["view"], view)
-                # A changed person who STAGED A LINE this turn already voiced
-                # their own shift — the eyes re-voicing it in the very next
-                # sentence is jarring (ruled). Their entries drop; a decliner's
-                # silent snub has no line, so it stays and renders. If nothing
-                # else moved, the change is absorbed into the stamp silently.
-                spoke = staged_speaker_names(transcript)
-                if spoke.any? && delta["people"].is_a?(Array)
-                  delta["people"] = delta["people"].reject { |p| spoke.include?(p["name"]) }
-                  delta.delete("people") if delta["people"].empty?
-                end
-                # An item the player just took (pickup/buy) leaves the room's
-                # "things" — but the taking already rendered with causal
-                # authority (the tool's own line), and the eyes re-narrating
-                # the room-side vanishing gets the direction wrong ("the
-                # sharpened stake leaves your hand"). When the things change
-                # is fully explained by this turn's acquisitions, it drops.
-                taken = acquired_item_names(transcript)
-                if taken.any? && delta["things"].is_a?(Array)
-                  prev_things = Array(stamp.dig("view", "things"))
-                  gone  = prev_things - delta["things"]
-                  added = delta["things"] - prev_things
-                  delta.delete("things") if added.empty? && (gone - taken).empty?
-                end
-                if delta.empty?
-                  active&.perceived_view = { "digest" => digest, "view" => view }
-                  nil
-                else
-                  ::Harness::Turn::Perception.render_delta(
-                    context: @context, parts: transcript.parts, delta: delta,
-                    place: view["place"], logger: logger)
-                end
-              end
-              if eyes
-                transcript.record_tool_calls([ { "name" => "display_perception", "args" => { "text" => eyes }, "result" => { "rendered" => true } } ])
-                transcript.parts << { kind: :perception, text: scrub_player_reference(eyes) }
-                active&.perceived_view = { "digest" => digest, "view" => view }
-              end
+            stamp = nil unless stamp.is_a?(::Hash) && stamp["view"].is_a?(::Hash)
+            establishing = looked || stamp.nil? || Array(active&.narrations).empty?
+            changed = establishing ? nil : ::Harness::Turn::Perception.view_delta(stamp["view"], view).presence
+            # A shift render with nothing shifted has nothing to see: given
+            # only the place and the hour the eyes wrote filler and put the
+            # player in the third person (2026-09-12). Silence is right there.
+            eyes = if establishing || ::Harness::Turn::Perception.visible_shift?(changed)
+              ::Harness::Turn::Perception.render(
+                context: @context, parts: transcript.parts, view: view, changed: changed, shift_only: !establishing,
+                include_figures: looked || Array(active&.narrations).empty?, logger: logger)
+            end
+            if eyes
+              transcript.record_tool_calls([ { "name" => "display_perception", "args" => { "text" => eyes }, "result" => { "rendered" => true } } ])
+              transcript.parts << { kind: :perception, text: scrub_player_reference(eyes) }
+              active&.perceived_view = { "view" => view }
             end
           end
 
@@ -358,7 +320,7 @@ module Harness
       # render what the player sees — scene card + perception establishment —
       # WITHOUT a turn. No planner (the "look around" is a foregone
       # conclusion), no TurnLog (the player typed nothing). The perception
-      # stamp is written so the next turn delta-gates instead of
+      # stamp is written so the next turn diffs against it instead of
       # re-establishing a scene the player was just shown.
       def render_opening!
         @scene_manager.ensure_entered
@@ -367,44 +329,19 @@ module Harness
         card = ::Harness::Turn::Parts.scene_card(snapshot, @context)
         parts << card if card
 
-        view   = ::Harness::Turn::Perception.observable_view(@context)
-        digest = ::Harness::Turn::Perception.view_digest(view)
+        view = ::Harness::Turn::Perception.observable_view(@context)
         eyes = ::Harness::Turn::Perception.render(
           context: @context, parts: parts, view: view,
           include_figures: true, logger: logger
         )
         if eyes
           parts << { kind: :perception, text: scrub_player_reference(eyes) }
-          @scene_manager.active&.perceived_view = { "digest" => digest, "view" => view }
+          @scene_manager.active&.perceived_view = { "view" => view }
         end
         join_parts(parts)
       end
 
       private
-
-      # Names of NPCs who staged a line this turn — their prose already voiced
-      # their own state shift. Resolved from the in-RAM scene snapshot, no DB
-      # hit; a promoted extra absent from the snapshot just isn't suppressed.
-      # Names of items that moved INTO the player's hands this turn — their
-      # disappearance from the room is the pickup's own story, not the eyes'.
-      def acquired_item_names(transcript)
-        Array(transcript.tool_calls).filter_map { |tc|
-          next unless %w[pickup buy_item].include?(tc["name"])
-          next if tc.dig("result", "error")
-          tc.dig("result", "item_name")
-        }
-      end
-
-      def staged_speaker_names(transcript)
-        ids = Array(transcript.tool_calls).filter_map { |tc|
-          next unless tc["name"] == "propose_event" && tc.dig("result", "staged")
-          Array(tc.dig("args", "participants"))
-            .find { |p| p.is_a?(Hash) && p["role"].to_s == "actor" }&.dig("character_id")
-        }
-        return [] if ids.empty?
-        Array(@scene_manager.active&.present_characters)
-          .select { |c| ids.include?(c.id) }.map(&:name)
-      end
 
       # A justified fourth-wall break: when a turn dead-ends, tell the PLAYER
       # (out of character) what the engine couldn't do, so they can rephrase.

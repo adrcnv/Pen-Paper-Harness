@@ -22,7 +22,7 @@ module Harness
     Active = Struct.new(
       :location, :snapshot, :narrations, :internal_state, :agendas, :extras, :entered_at_game_time,
       :combat, :initiative_cooldown, :last_initiator, :spoken_ids, :last_lines, :contest_ledger,
-      :dispositions, :doing, :perceived_view,
+      :dispositions, :doing, :perceived_view, :last_speakers, :doing_dirty,
       keyword_init: true
     ) do
       # The disposition ladder — each NPC's standing temperature toward the
@@ -71,6 +71,17 @@ module Harness
       def update_doing!(character_id, text)
         self.doing ||= {}
         doing[character_id] = text
+        self.doing_dirty = Array(doing_dirty) | [ character_id ]
+      end
+
+      # What the VOICING is handed as `doing`: the seed until the character's
+      # first line, then only a doing refreshed since they last spoke. Fed
+      # every turn, the standing line was performed verbatim as the opening
+      # gesture of every line ("Faelith leans forward, elbows on the bar…"
+      # twice running, 2026-09-12). The eyes keep reading doing_for.
+      def doing_for_voicing(character_id)
+        return doing_for(character_id) unless spoken?(character_id)
+        doing_for(character_id) if Array(doing_dirty).include?(character_id)
       end
 
       def clear_agenda!(character_id)
@@ -80,6 +91,13 @@ module Harness
       def mark_spoken!(character_id)
         self.spoken_ids ||= []
         spoken_ids << character_id unless spoken_ids.include?(character_id)
+        self.doing_dirty = Array(doing_dirty) - [ character_id ]   # the line consumed it
+      end
+
+      # Who staged a line on the PREVIOUS conversation turn — the exchange's
+      # live thread. An unnamed follow-up line is theirs to answer first.
+      def spoke_last?(character_id)
+        Array(last_speakers).include?(character_id)
       end
 
       # Each character's most recent staged dialogue line this scene — the

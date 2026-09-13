@@ -280,6 +280,26 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(row.location_id).to eq(city.id)
       expect(Event.count).to eq(1)   # only the source — knowledge never became an event
     end
+
+    # records_given ids are ONE space (events 1..E, facts E+1..): the id decides
+    # the store, whichever list the judge filed the detail under. Separate
+    # 1-based lists collided and put a fence-work detail on the daughter-
+    # argument event (2026-09-12).
+    it "resolves additions by id across both lists: a fact id under event_additions still revises the fact, an event id under fact_additions still supplements the event" do
+      old = Knowledge.create!(content: "The salt tithe was repealed.", location_id: city.id, current: true, game_time: 0)
+      judge = StubLLM.new { |prompt|
+        prompt.include?("standing_fact") ? { "relation" => "extends", "merged" => "The salt tithe was repealed by the reeve's order." }.to_json : "{}"
+      }
+      both = { "events" => records["events"], "facts" => [ [ old.id, old.content ] ] }
+      capture({ "event_additions" => [ { "event_id" => 2, "content" => "It was the reeve who ordered the repeal." } ],
+                "fact_additions"  => [ { "fact_id" => 1,  "content" => "The figs were spiced with cinnamon." } ] },
+              llm: judge, records: both)
+      expect(old.reload.current).to be(false)
+      expect(Knowledge.current.last.content).to include("reeve's order")
+      sup = Event.order(:id).last
+      expect(sup.references_event_id).to eq(source.id)
+      expect(sup.recall_text).to include("cinnamon")
+    end
   end
 
   describe "the player is never a referral" do
@@ -300,6 +320,22 @@ RSpec.describe Harness::Knowledge::Capture do
       }.to change(Event, :count).by(1)
       expect(Event.last.game_time).to eq(100)
       expect(Knowledge.count).to eq(0)
+    end
+  end
+
+  describe "event dedup across narrative shapes" do
+    it "compares a bare-string narrative as text and a nested one by its details, never raising" do
+      loc  = Location.create!(name: "Salt Quay")
+      who  = Npc.create!(name: "Ysolde", subrole: "harbormaster", location: loc)
+      flat = Event.create!(details: { "narrative" => "The herring run failed three turns ago." }, game_time: 5, scope: "local", location_id: loc.id)
+      deep = Event.create!(details: { "narrative" => { "details" => "The jetty needs hands at first light." } }, game_time: 6, scope: "local", location_id: loc.id)
+      [ flat, deep ].each { |ev| EventParticipant.create!(event: ev, character_id: who.id, role: "actor") }
+      cap = described_class.new(payload: {}, speaker: "Ysolde", llm: StubLLM.new { "{}" }, location: loc)
+
+      expect { cap.send(:duplicate_event?, "the herring run failed three turns ago.", [ who ]) }.not_to raise_error
+      expect(cap.send(:duplicate_event?, "the herring run failed three turns ago.", [ who ])).to be(true)
+      expect(cap.send(:duplicate_event?, "the jetty needs hands at first light.", [ who ])).to be(true)
+      expect(cap.send(:duplicate_event?, "nothing of the kind was said.", [ who ])).to be(false)
     end
   end
 

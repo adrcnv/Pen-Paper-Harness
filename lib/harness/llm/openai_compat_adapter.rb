@@ -52,6 +52,9 @@ module Harness
       DEFAULT_MODEL      = "local".freeze
       DEFAULT_MAX_TOKENS = 8192
       DIALECTS           = %w[llamacpp nvidia openai].freeze
+      # Statuses that mean "this request's schema was refused" — the only
+      # case the unconstrained fallback in #complete is for.
+      SCHEMA_REJECTED    = [ 400, 422 ].freeze
       # Max texts per /v1/embeddings request. llama.cpp caps a batch at its
       # --ubatch / -np window; chunk under it so a big backfill can't overflow
       # the server in one shot. Recall sends one text; capture a handful.
@@ -126,8 +129,12 @@ module Harness
         rescue APIError => e
           # A schema the server's grammar compiler rejects must not silently
           # kill the call site (reflection's rescue would eat the claims).
-          # Fall back to the unconstrained request, LOUD in the log.
-          raise unless schema
+          # Fall back to the unconstrained request, LOUD in the log. ONLY a
+          # rejection (4xx on the request itself): a 429/5xx that outlived the
+          # retries is throttling, and re-sending it without the grammar
+          # dropped the constraint exactly when the gateway was flaky
+          # (2026-09-12, "schema rejections 3" under a 429 storm).
+          raise unless schema && SCHEMA_REJECTED.include?(e.status)
           @logger.warn { "[OpenAICompatAdapter] json_schema rejected (#{e.message.to_s[0, 160]}) — retrying unconstrained" }
           post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete, max_tokens: max_tokens)
         end
@@ -370,6 +377,8 @@ module Harness
         end
       end
 
+      BACKOFF_CAP = 8.0
+
       def with_retries
         attempt = 0
         begin
@@ -377,8 +386,15 @@ module Harness
           yield
         rescue APIError => e
           if retryable?(e.status) && attempt <= @max_retries
-            sleep_time = 0.5 * (2 ** (attempt - 1))
-            logger.warn { "[OpenAICompatAdapter] retry #{attempt}/#{@max_retries} after #{sleep_time}s (status=#{e.status})" }
+            # Doubling stops at BACKOFF_CAP: a hosted free tier throttles in
+            # bursts that outlast a 16 s wait, and a call that exhausts its
+            # retries is a void turn — planner → fallback inspection, voice →
+            # silence (2026-09-12). Patience past the cap is bought linearly
+            # with retries (HARNESS_LLM_MAX_RETRIES), not by doubling.
+            sleep_time = [ 0.5 * (2 ** (attempt - 1)), BACKOFF_CAP ].min
+            # The body head rides along: a hosted gateway's 429 names its limit
+            # ("... 40 requests per minute"), which the status alone hides.
+            logger.warn { "[OpenAICompatAdapter] retry #{attempt}/#{@max_retries} after #{sleep_time}s (status=#{e.status}) #{e.message.to_s.gsub(/\s+/, ' ').slice(0, 160)}" }
             sleep(sleep_time)
             retry
           end

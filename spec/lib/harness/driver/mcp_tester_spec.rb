@@ -63,6 +63,16 @@ RSpec.describe Harness::Driver::McpTester do
     expect(entry["receipts"].last).to include("turn" => 1, "input" => "look around")
   end
 
+  it "appends every turn to transcript.jsonl — durable past the evidence ring and a killed run" do
+    tester.start_scenario
+    tester.play_turn(input: "look around")
+    tester.play_turn(input: "wait")
+    lines = File.readlines(File.join(run_dir, "transcript.jsonl")).map { |l| JSON.parse(l) }
+    expect(lines.map { |e| e["turn"] }).to eq([ 1, 2 ])
+    expect(lines.first).to include("input" => "look around")
+    expect(lines.first).to have_key("narration")
+  end
+
   it "sheet and map return the player surface" do
     tester.start_scenario(seed: 7)
     sheet = tester.sheet

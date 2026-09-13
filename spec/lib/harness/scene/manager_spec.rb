@@ -15,7 +15,8 @@ RSpec.describe Harness::Scene::Manager do
         states = present_npc_names.select { |n| prompt.include?(n) }.each_with_object({}) { |n, h|
           h[n] = "#{n} is in a perfectly ordinary mood today, neither up nor down."
         }
-        { "internal_states" => states }.to_json
+        doing = states.keys.each_with_object({}) { |n, h| h[n] = "wiping down the counter" }
+        { "internal_states" => states, "doing" => doing }.to_json
       else
         # Catch-up sim or other grunt calls — empty by default.
         { "events" => [] }.to_json
@@ -105,10 +106,11 @@ RSpec.describe Harness::Scene::Manager do
       expect(active.state_for(maren.id)).to match(/Maren/)
     end
 
-    it "seeds each NPC's doing from their seeded state — the decliner's null duty needs a reference" do
+    it "seeds each NPC's doing from the seeder's own doing key, not a copy of the mood line" do
       maren
       active = manager.ensure_entered
-      expect(active.doing_for(maren.id)).to eq(active.state_for(maren.id))
+      expect(active.doing_for(maren.id)).to eq("wiping down the counter")
+      expect(active.doing_for(maren.id)).not_to eq(active.state_for(maren.id))
     end
 
     it "skips internal-state generation when llm_grunt is nil" do

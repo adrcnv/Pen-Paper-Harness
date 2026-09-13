@@ -66,14 +66,27 @@ module Harness
         roster   = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
         nearby   = nearby_places(context)
         wares    = wares_here(context)
-        # Planner-bound contest: the roll (if any) lands BEFORE anyone is
-        # voiced — the target's payload gets the settled verdict, never the
-        # judgment call.
-        contest = run_contest(context, step, player, present, resolver, tcs, active)
+        # Planner-bound contest. An ability or a game of some stat is the
+        # player's act and rolls BEFORE anyone is voiced. Bare persuasion is
+        # DEFERRED: the planner proposes, the character disposes — the target
+        # is voiced first with no verdict in its payload, and only if its own
+        # emit reads the ask as guarded ("something I would not freely give")
+        # does the roll land, after which it is voiced again under the verdict.
+        # The planner alone bound a press on "where is the forge?" and "anyone
+        # worth knowing?" (tester run 4, 2026-09-12); two judges must agree.
+        contest = contest_spec(step, player, present, active)
+        contest = settle_contest!(contest, player, resolver, tcs, active) if contest && !contest[:deferred]
 
         spoken     = 0
         parsed_any = false
-        order = poll_order(present, extras, input, step)
+        tails      = []
+        # No bystander frame. Telling an un-addressed pollee that someone had
+        # already answered did not stop the restate ("…same as Solveig said",
+        # 2026-09-12) and once told the person being asked that no one had
+        # addressed them. The exchange itself is what a character reads; a
+        # dim chime-in is a character being dim, not the system (user ruling).
+        spoke_ids  = []
+        order = poll_order(present, extras, input, step, active)
         # Recall is for SPEECH: when the input names someone, un-addressed
         # bystanders skip the recall gate (they keep their raw recent events —
         # a chime-in grounds in the exchange, not deep lore). An open-mic
@@ -87,34 +100,51 @@ module Harness
           emit, voicing_user, fed = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest,
                                          frame: verdict_frame(contest, v), recall_gate: recall_gate)
           next unless emit
+          if emit["guarded"] == true && !(contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id])
+            # The other half of the gauge: the character read a guarded ask
+            # the planner bound no press on. One judge — no roll.
+            @logger.info { "[Runner conversation] #{who_for(v)} read the ask as guarded but the planner bound no press — no roll" }
+          end
+          if contest && contest[:deferred] && contest[:payload].nil? && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
+            if emit["guarded"] == true
+              # Both judges agree it is a press: roll (or re-serve), then the
+              # same character speaks again under the verdict. The first emit
+              # is discarded whole — the verdict must dictate the line.
+              settle_contest!(contest, player, resolver, tcs, active)
+              if contest[:payload]
+                emit, voicing_user, fed = voice_one(context, input, step, player, v, roster, thread_with_current(thread, input, tcs), nearby, wares, resolver, tcs, active, contest,
+                                               frame: verdict_frame(contest, v), recall_gate: recall_gate)
+                next unless emit
+              end
+            else
+              @logger.info { "[Runner conversation] planner bound a press on #{v[:char]['name']} but the character answered freely — no roll" }
+            end
+          end
           parsed_any = true
           applied = apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
           # The silent snub: a decliner's visible shift still lands on the
           # scene — no line of theirs carries it, so perception voices it
-          # (the delta gate fires on the doing change).
+          # (the doing change reaches the eyes as a shift).
           if !applied && v[:kind] == :npc && emit["speak"] == false && active &&
-             emit["doing"].is_a?(::String) && !emit["doing"].strip.empty?
+             emit["doing"].is_a?(::String) && !emit["doing"].strip.empty? &&
+             emit["doing"].strip != active.doing_for(v[:char]["id"]).to_s
             active.update_doing!(v[:char]["id"], emit["doing"].strip)
           end
           if applied
             spoken += 1
+            spoke_ids << (v[:kind] == :npc ? v[:char]["id"] : promo[v[:index]])
             # First speaking turn consumed the seeded mood/agenda; from now on the
             # thread carries this NPC (npc_knowledge drops the frozen self-state).
             active&.mark_spoken!(v[:char]["id"]) if v[:kind] == :npc
-            # Reflection immediately after the emit, while this speaker's
-            # voicing prefix is still hot in the llama.cpp KV cache. An
-            # engaged extra reflects too, under the identity apply_emit just
-            # minted — otherwise the debut line (usually the very claim the
-            # player engaged them for) is an intake hole.
-            if v[:kind] == :npc
-              reflect_knowledge(context, v, emit, fed)
-              reevaluate_state(context, v, emit, voicing_user, active)
-            elsif (minted = ::Character.find_by(id: promo[v[:index]]))
-              reflect_knowledge(context, { char: { "name" => minted.name } }, emit, fed)
-            end
+            tails << { v: v, emit: emit, voicing_user: voicing_user, fed: fed }
           end
           break if combat_started?(tcs)
         end
+        # The live thread: whoever spoke this turn is the presumptive addressee
+        # of the next unnamed line. Replaced whole (scene arrays are never
+        # mutated); a silent turn leaves it standing.
+        active.last_speakers = spoke_ids.compact if active && spoke_ids.any?
+        run_tails(context, tails, promo, active)
 
         return redispatch("conversation emit unparseable", tcs) unless parsed_any
         # Everyone declined (or was suppressed): mark the turn as an explicit
@@ -128,6 +158,29 @@ module Harness
 
       private
 
+      # The per-speaker TAIL — reflection (two judges) and taking-stock — runs
+      # after the LAST speaker is voiced, never between speakers. Between them
+      # it fed speaker B the row just minted from speaker A's line on top of
+      # the line itself in exchange_so_far: the same-turn echo amplifier
+      # (Dunstan reciting Kenric, 2026-09-12). Nothing a later speaker
+      # consumes depends on the tail, and the hearer set is the same room
+      # either way. The old placement bought a hot llama.cpp prefix for the
+      # judges; the hosted target has no prefix cache. An engaged extra
+      # reflects under the identity apply_emit minted — otherwise the debut
+      # line (usually the very claim the player engaged them for) is an
+      # intake hole.
+      def run_tails(context, tails, promo, active)
+        tails.each do |t|
+          v = t[:v]
+          if v[:kind] == :npc
+            reflect_knowledge(context, v, t[:emit], t[:fed])
+            reevaluate_state(context, v, t[:emit], t[:voicing_user], active)
+          elsif (minted = ::Character.find_by(id: promo[v[:index]]))
+            reflect_knowledge(context, { char: { "name" => minted.name } }, t[:emit], t[:fed])
+          end
+        end
+      end
+
       # Poll order: characters the player NAMED (by first name or role, in the
       # INPUT) go FIRST — so an addressee is always asked before the two-speaker
       # cap can be filled by chime-ins (otherwise two bystanders piping up could
@@ -139,20 +192,39 @@ module Harness
       # last: ambient figures only get drawn in if the named cast didn't already
       # answer the room. This is poll ORDER, not a speech ruling — each character
       # still self-decides whether it speaks.
-      def poll_order(present, extras, input, _step)
+      def poll_order(present, extras, input, _step, active = nil)
         hay = input.to_s.downcase
         npcs = present.map { |c| { kind: :npc, char: c } }
         named, rest = npcs.partition { |v| addressed_by_name?(v[:char], hay) }
         named.each { |v| v[:addressed] = true }
+        # CONTINUITY: when the line names nobody, whoever spoke last turn is
+        # polled first and carries `spoke_last` — a follow-up question in an
+        # exchange one person was carrying went unanswered because both
+        # present NPCs read "no name" as "not addressed" (2026-09-12). Poll
+        # order and a fact in the payload; each character still self-decides.
+        if named.empty? && active
+          carry, rest = rest.partition { |v| active.spoke_last?(v[:char]["id"]) }
+          carry.each { |v| v[:continuing] = true }
+          rest = carry + rest
+        end
         # Extras are ambient narration FLAVOR, not filler speakers. Poll one ONLY
         # when the player's input actually ENGAGES it ("talk to the recruit") —
         # engagement is what promotes an unnamed figure into a character. NEVER
         # poll an extra to top up the two-speaker cap: that let a whinnying horse
         # voice a present NPC and get minted into a phantom innkeeper. Unaddressed
         # ambience is narration's job; it never speaks here.
-        engaged = Array(extras).each_with_index
-          .select { |desc, _| addressed_extra?(desc, hay) }
-          .map { |desc, i| { kind: :extra, index: i, desc: desc } }
+        # A named NPC in the input settles who is being talked to: extras are
+        # not polled then. The word-overlap engagement is fuzzy by design and
+        # fired on every turn that shared a noun with the scene ("fence" in a
+        # boy's description, 2026-09-12) — two calls a turn for near-certain
+        # silence, and the odd extra answering AS a present NPC.
+        engaged = if named.any?
+          []
+        else
+          Array(extras).each_with_index
+            .select { |desc, _| addressed_extra?(desc, hay) }
+            .map { |desc, i| { kind: :extra, index: i, desc: desc, addressed: true } }
+        end
         named + engaged + rest
       end
 
@@ -191,7 +263,12 @@ module Harness
       # (player charisma vs target wisdom).
       BOUND_STATS = %w[strength dexterity constitution intelligence wisdom charisma].freeze
 
-      def run_contest(context, step, player, present, resolver, tcs, active)
+      # The prepared contest: who, what kind, how it would roll — nothing
+      # rolled yet. `deferred` marks bare persuasion, which waits for the
+      # character's own emit to confirm the press (see run); an ability or a
+      # stat game is the player's act and settles at once. nil when the step
+      # binds no check or names nobody present.
+      def contest_spec(step, player, present, active)
         spec = step&.args&.dig("check")
         return nil unless spec.is_a?(::Hash)
 
@@ -220,16 +297,14 @@ module Harness
         # kind separates ledger keys: a dexterity game against someone is a
         # different question from persuading them — a failed charm doesn't
         # pre-settle the dice game, and vice versa.
-        kind    = ability ? ability["id"].to_s : (stat || "social")
-        key     = "#{target['id']}:#{kind}"
-
-        if (prior = active&.contest_for(key))
-          @logger.info { "[Runner conversation] contest #{key} already settled this scene (#{prior['verdict'] || prior['result']}) — reusing verdict" }
-          return { target_id: target["id"], payload: prior }
-        end
+        kind = ability ? ability["id"].to_s : (stat || "social")
 
         args = { "actor_id" => player.id, "target_id" => target["id"],
-                 "action" => (step&.intent.to_s.strip.empty? ? "press #{target['name']}" : step.intent) }
+                 # The bracket renders this as the player's act. The planner's
+                 # intent is a paraphrase and sometimes a misread ("offers
+                 # healing services to the room" for a remark about a hurt
+                 # hand, 2026-09-12); the mechanical label never lies.
+                 "action" => "press #{target['name']}" }
         if ability
           # resolve's lookup matches on display name, not id
           args["ability_name"] = ability["name"]
@@ -241,10 +316,41 @@ module Harness
           args["target_stat"] = "wisdom"
         end
 
-        res, ok = execute_tool(resolver, "resolve", args, into: tcs)
+        { target_id: target["id"], target: target, key: "#{target['id']}:#{kind}", kind: kind,
+          args: args, ability: ability, stat: stat, deferred: ability.nil? && stat.nil?, payload: nil }
+      end
+
+      # Rolls a prepared contest — or re-serves the scene's standing verdict —
+      # and fills contest[:payload]. Returns the contest; payload stays nil
+      # when the roll itself failed (the character is then voiced plainly).
+      def settle_contest!(contest, player, resolver, tcs, active)
+        target  = contest[:target]
+        key     = contest[:key]
+        ability = contest[:ability]
+        stat    = contest[:stat]
+
+        if (prior = active&.contest_for(key))
+          @logger.info { "[Runner conversation] contest #{key} already settled this scene (#{prior['verdict'] || prior['result']}) — reusing verdict" }
+          # A second press meets the standing verdict as a FACT in the payload
+          # (and, when the player had won, the yield frame again — a fact
+          # alone left the winner's target silent, tester run 4 t7). Framed
+          # twice with the HOLD, the target re-emitted its refusal word for
+          # word (probe 9); the exchange already shows what it said.
+          verdict  = [ prior["verdict"], "pressed again, the verdict stands" ].compact.join("; ")
+          standing = prior.merge("verdict" => verdict, "repeat" => true)
+          # The ledger's decision is recorded and rendered like the roll it
+          # re-serves: Parts brackets it ("the verdict stands") so a silent
+          # hold reads as a stonewall rather than a void, and initiative keys
+          # its exclusion on it (a re-press turn has no resolve record).
+          tcs << tool_call("contest_standing", { "actor_id" => player.id, "target_id" => target["id"], "action" => "press #{target['name']}" }, standing)
+          contest[:payload] = standing
+          return contest
+        end
+
+        res, ok = execute_tool(resolver, "resolve", contest[:args], into: tcs)
         unless ok && res.is_a?(::Hash) && res["outcome"]
           @logger.warn { "[Runner conversation] contest roll failed (#{res.inspect[0, 140]}) — voicing plainly" }
-          return nil
+          return contest
         end
 
         player_won = %w[success critical_success].include?(res["outcome"])
@@ -257,17 +363,25 @@ module Harness
           # is computed here, never inferred by the model. Third person by
           # name: second-person payload strings get echoed back as "I"
           # (register pollution — the Bogumil first-person class).
-          "verdict" => (player_won ? "#{target['name']} lost — it went the player's way#{grade}" : "#{target['name']} won — the player's attempt failed#{grade}")
+          # First name: the target reads this in its own payload and the
+          # voicing copies whatever name it is shown (2/2 full-name openers
+          # under a full-name verdict, probe 8; 0/3 the turn before).
+          "verdict" => (player_won ? "#{first_name(target)} lost — it went the player's way#{grade}" : "#{first_name(target)} won — the player's attempt failed#{grade}")
         }
         payload["effect"]     = ability["description"] if ability && player_won
         payload["player_won"] = player_won
         active&.record_contest!(key, payload)
         @logger.info { "[Runner conversation] contest #{key} → #{res['outcome']}#{res['xp_gained'] ? " (+#{res['xp_gained']}xp)" : ""}" }
-        { target_id: target["id"], payload: payload }
+        contest[:payload] = payload
+        contest
       end
 
       # find_present / player_ability live in Runners::Base (shared with the
       # cast runner).
+
+      def first_name(char)
+        char["name"].to_s.split.first.to_s
+      end
 
       # A gate candidate carrying a synthetic id (so knowledge-row ids and
       # event-row ids can't collide inside one gate call) + its source, so the
@@ -388,10 +502,23 @@ module Harness
         The dice ruled this press against you: <<KIND>>. The are-you-speaking deliberation is settled — output the same JSON with "speak": true and yield in your manner: say or give what was pressed for.
       FRAME
 
+      # The other verdict. A press the player LOST had no teeth: the target
+      # read "Edmund won — the player's attempt failed" in its payload and
+      # answered the question anyway (probe 6, a critical failure, straight
+      # answer). The dice are causal both ways, so the winner is told to hold.
+      # The scene ledger keeps the verdict; a second press meets it as a
+      # payload fact, not this frame again. Rides after the payload, prefix-safe.
+      HELD_FRAME = <<~FRAME
+        --- VERDICT ---
+        The dice ruled this press in your favour: <<KIND>>. You are not moved. The are-you-speaking deliberation is settled — output the same JSON with "speak": true and hold in your manner: what was pressed for stays withheld — refuse it, deflect, or turn it back on them.
+      FRAME
+
       def verdict_frame(contest, v)
         return nil unless contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
-        return nil unless contest[:payload].is_a?(::Hash) && contest[:payload]["player_won"] == true
-        VERDICT_FRAME.sub("<<KIND>>") { contest[:payload]["kind"].to_s }
+        payload = contest[:payload]
+        return nil unless payload.is_a?(::Hash) && payload.key?("player_won")
+        return nil if payload["repeat"] && !payload["player_won"]   # a re-served HOLD rides as a payload fact only
+        (payload["player_won"] ? VERDICT_FRAME : HELD_FRAME).sub("<<KIND>>") { payload["kind"].to_s }
       end
 
       def voice_unprompted(context:, npc:, cause:, input:, transcript: nil)
@@ -439,10 +566,11 @@ module Harness
           else
             npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP, now: context.game_time)
           end
+        you["spoke_last"] = true if v[:continuing]
         fed = { "events" => fed_events, "facts" => [] }
         # The contest verdict rides in the TARGET's you-block — the dice have
         # ruled; the voicing renders the consequence, it does not re-judge.
-        if contest && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
+        if contest && contest[:payload] && v[:kind] == :npc && v[:char]["id"] == contest[:target_id]
           you = you.merge("contest" => contest[:payload])
         end
         # Recall (likely speakers only — see run's recall_gate): knowledge
@@ -510,7 +638,7 @@ module Harness
         # The exact user string rides along for the taking-stock pass (same
         # prefix); `fed` is what THIS speaker was handed — records with ids,
         # the thread, the room — for the reflection judges' clean contexts.
-        fed = fed.merge("thread" => thread, "others" => others.map { |o| o["name"] },
+        fed = fed.merge("thread" => thread, "input" => input, "others" => others.map { |o| o["name"] },
                         "places" => Array(nearby).map { |n| n["name"] })
         emit ? [ emit, sent_user, fed ] : nil
       rescue StandardError => e
@@ -524,7 +652,7 @@ module Harness
         return "not valid JSON" unless emit.is_a?(::Hash)
         dlg   = emit["dialogue"]
         prose = dlg.is_a?(::Hash) ? dlg["prose"].to_s.strip : ""
-        if emit["speak"] && prose.empty? && !emit["resolve_call"] && !emit["memorable"]
+        if emit["speak"] && prose.empty? && !emit["memorable"]
           # Explicit prose: "" is the grammar's escape hatch — a break-off,
           # handled (and logged) by apply_emit. Absent/null dialogue is
           # format loss of a line that likely existed — worth one bounce.
@@ -556,15 +684,15 @@ module Harness
       def apply_emit(resolver, context, scene, emit, v, player, promo, tcs)
         dlg     = emit["dialogue"]
         prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
-        engaged = emit["speak"] || prose != "" || emit["resolve_call"] || emit["memorable"] || Array(emit["beat"]).any?
+        engaged = emit["speak"] || prose != "" || emit["memorable"] || Array(emit["beat"]).any?
         @logger.debug do
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           "[Runner conversation] #{who} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
-          "resolve=#{!emit['resolve_call'].nil?} memorable=#{emit['memorable'].is_a?(Hash)} " \
+          "guarded=#{emit['guarded'] == true} memorable=#{emit['memorable'].is_a?(Hash)} " \
           "thought=#{emit['thought'].to_s[0, 120].inspect}"
         end
         return false unless engaged
-        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["resolve_call"] && !emit["memorable"] && Array(emit["beat"]).empty?
+        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["memorable"] && Array(emit["beat"]).empty?
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           @logger.info { "[Runner conversation] #{who} spoke-empty (in-grammar break-off) — treated as silence" }
           return false
@@ -573,16 +701,19 @@ module Harness
         actor_id = actor_id_for(v, emit, resolver, context, scene, promo, tcs)
         return false unless actor_id
 
-        # REPEAT-GUARD (mechanical): the weak model, shown its own labeled
-        # prior line in the thread, re-emits it near-verbatim turn after turn
-        # (the prompt's "advance or break off" rule loses to structure). A
-        # parrot emit is suppressed wholesale — the character breaks off, as
-        # the rule demanded.
+        # PARROT GAUGE (log only): a line that reproduces one already staged
+        # this scene is logged, never suppressed. The suppressor this used to
+        # be traded a repeat for a void — "No one reacts." to a re-ask — and
+        # the shapes it caught were fixed where they originate: the same-turn
+        # hearsay amplifier (tails deferred), the restate-then-add chorus
+        # (bystander frame), the seed-copied gesture (separate doing seed).
+        # A recurrence shows up here and in the probe tally; fix its source
+        # (ruling 2026-09-12: remove the pathology, not the symptom).
         active = context.active_scene
-        if prose != "" && repeat_of_last_line?(active, actor_id, prose)
-          who = ::Character.find_by(id: actor_id)&.name || actor_id
-          @logger.info { "[Runner conversation] repeat suppressed — #{who} re-emitted their previous line; breaking off instead" }
-          return false
+        if prose != "" && (echoed = parroted_line_owner(active, prose))
+          who   = ::Character.find_by(id: actor_id)&.name || actor_id
+          whose = echoed == actor_id ? "their own earlier line" : "#{::Character.find_by(id: echoed)&.name || echoed}'s line"
+          @logger.info { "[Runner conversation] parrot-shaped emit — #{who} repeats #{whose} (kept)" }
         end
 
         spoke = false
@@ -591,39 +722,56 @@ module Harness
           active&.record_line!(actor_id, prose)
           spoke = true
         end
-        commit_resolve(resolver, emit["resolve_call"], player, actor_id, tcs)
         commit_memorable(resolver, emit["memorable"], player, actor_id, tcs)
         acted = execute_beat(resolver, context, emit, actor_id, player, tcs)
         spoke || acted
       end
 
-      # A parrot: the new line reproduces ANY character's previous staged line
-      # this scene — exact after normalization, or sharing a verbatim run of
-      # ≥ PARROT_RUN chars (catches the observed shapes: own line regenerated
-      # with one clause mutated, and a fresh action beat wrapping a chunk
-      # copied from ANOTHER speaker's line — Sten reciting Ragnar's tail).
-      # Scene-wide on purpose: copying a roommate's line is as broken as
-      # copying your own. Formulaic short beats stay under the run floor.
+      # The id of the character whose last staged line this prose reproduces,
+      # nil when it reproduces none. Exact after normalization, or a shared
+      # verbatim run: SPEECH_RUN chars of quoted speech when both lines carry
+      # quotes (the beat is ignored then — a compliant model reuses its
+      # gesture verbatim around new words), else PARROT_RUN chars of whole
+      # line. Scene-wide, the speaker's own line included; the caller says
+      # whose it was.
       PARROT_RUN = 60
-      def repeat_of_last_line?(active, _actor_id, prose)
-        priors = (active&.last_lines || {}).values
-        return false if priors.empty?
-        a = normalize_line(prose)
-        priors.any? do |last|
-          b = normalize_line(last)
-          a == b || shared_run?(a, b)
+      SPEECH_RUN = 30
+      def parroted_line_owner(active, prose)
+        priors = active&.last_lines || {}
+        return nil if priors.empty?
+        a  = normalize_line(prose)
+        sa = normalize_speech(prose)
+        hit = priors.find do |_id, last|
+          sb = sa && normalize_speech(last)
+          if sb
+            sa == sb || shared_run?(sa, sb, SPEECH_RUN)
+          else
+            b = normalize_line(last)
+            a == b || shared_run?(a, b, PARROT_RUN)
+          end
         end
+        hit&.first
       end
 
       def normalize_line(s)
         s.to_s.downcase.gsub(/\s+/, " ").strip
       end
 
-      # Any PARROT_RUN-char window of `a` appearing verbatim in `b`. Brute
-      # windows over two ≤~1-2K-char strings — trivial per turn.
-      def shared_run?(a, b)
-        return false if a.length < PARROT_RUN || b.length < PARROT_RUN
-        (0..(a.length - PARROT_RUN)).any? { |i| b.include?(a[i, PARROT_RUN]) }
+      # Quoted spans: double quotes of any typography, and single quotes once
+      # intra-word apostrophes (Kiln's, you're) are dropped — those are not
+      # delimiters. nil when the line carries no quoted speech.
+      def normalize_speech(s)
+        text  = s.to_s.gsub(/(?<=\p{L})[’'](?=\p{L})/, "")
+        spans = text.scan(/["“”„]([^"“”„]+)["“”„]|[‘']([^‘’']+)[’']/).flatten.compact
+        return nil if spans.empty?
+        spans.join(" ").downcase.gsub(/[^\p{L}\p{N}\s]/, " ").gsub(/\s+/, " ").strip
+      end
+
+      # Any `run`-char window of `a` appearing verbatim in `b`. Brute windows
+      # over two ≤~1-2K-char strings — trivial per turn.
+      def shared_run?(a, b, run)
+        return false if a.length < run || b.length < run
+        (0..(a.length - run)).any? { |i| b.include?(a[i, run]) }
       end
 
       # The speaker's character_id: a real NPC carries its own id; an ambient
@@ -653,19 +801,25 @@ module Harness
         # keeps them current, so they can't yank a spoken NPC back to a stale
         # seed. Mood leads with the disposition-ladder word: the standing
         # temperature toward the player.
+        # The model calls itself whatever `name` says: given the full name it
+        # opened nine lines in ten with "Roderic Marston shifts…" whatever
+        # the prompt asked (2026-09-12). First name here; the surname rides
+        # separately for when someone asks.
         you = {
           "id"          => char["id"],
-          "name"        => char["name"],
+          "name"        => char["name"].to_s.split.first,
+          "full_name"   => (char["name"] if char["name"].to_s.split.size > 1),
           "subrole"     => char["subrole"],
           "lens"        => char["lens"],
           "personality" => (props["personality"] if props.is_a?(::Hash)),
           "appearance"  => ((props["appearance"] || props["physical"]) if props.is_a?(::Hash)),
           "mood"        => mood_line(active, char["id"]),
-          # The current activity microbeat — without it a decliner has no
-          # reference for "simply carry on" and re-asserts a paraphrase of
-          # the same act every turn (Bram returning to his ledger thrice:
-          # each rewrite moved the perception view and re-rendered him).
-          "doing"       => active&.doing_for(char["id"]),
+          # The current activity microbeat — a decliner's reference for
+          # "simply carry on" (without it Bram returned to his ledger thrice,
+          # each rewrite re-rendering him). Handed over until the first line,
+          # then only when refreshed since the last one: a standing doing was
+          # performed as the opening gesture of every line.
+          "doing"       => active&.doing_for_voicing(char["id"]),
           "agenda"      => active&.agenda_for(char["id"]),
           "debts"       => debts_for(char["id"], now),
           # The purse: the most a give step can hand over.
@@ -848,16 +1002,8 @@ module Harness
       # Persuasion: the PLAYER rolls charisma to extract something the character
       # would hesitate to share. actor is always the player; target is this
       # character.
-      def commit_resolve(resolver, rc, player, target_id, tcs)
-        return unless rc.is_a?(Hash) && rc["action"]
-        execute_tool(resolver, "resolve", {
-          "actor_id"     => player.id,
-          "stat"         => rc["stat"] || "charisma",
-          "action"       => rc["action"],
-          "target_id"    => target_id,
-          "difficulty"   => rc["difficulty"],
-          "time_minutes" => rc["time_minutes"] || 5
-        }, into: tcs)
+      def who_for(v)
+        v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
       end
 
       # The ONE durable event a character's turn can earn — ONLY when the emit
@@ -1052,14 +1198,13 @@ module Harness
             "properties" => { "summary" => { "type" => "string" }, "prose" => { "type" => "string" } },
             "required" => %w[summary prose], "additionalProperties" => false
           } ] },
-          "resolve_call" => { "anyOf" => [ { "type" => "null" }, {
-            "type" => "object",
-            "properties" => {
-              "stat" => { "type" => "string" }, "action" => { "type" => "string" },
-              "difficulty" => { "type" => "string", "enum" => %w[easy moderate hard] }
-            },
-            "required" => %w[stat action difficulty], "additionalProperties" => false
-          } ] },
+          # The character's read of THIS ask: is the player after something it
+          # would not freely give? Required, so the grammar forces the call on
+          # every voicing. Its optional predecessor (a request for dice with a
+          # stat and a difficulty) was emitted ZERO times across every logged
+          # run on both models — a judgment the model never volunteered, so
+          # the planner rolled alone and over-bound.
+          "guarded" => { "type" => "boolean" },
           "memorable" => { "anyOf" => [ { "type" => "null" }, {
             "type" => "object", "properties" => { "gist" => { "type" => "string" } },
             "required" => %w[gist], "additionalProperties" => false
@@ -1082,7 +1227,7 @@ module Harness
             "required" => %w[step who where coins], "additionalProperties" => false
           } }
         },
-        "required" => %w[thought speak],
+        "required" => %w[thought speak guarded],
         "additionalProperties" => false
       }.freeze
 
@@ -1204,7 +1349,10 @@ module Harness
           logger:    @logger
         )
       rescue StandardError => e
-        @logger.warn { "[Runner conversation] reflection capture failed for #{v[:char]['name']}: #{e.class}: #{e.message}" }
+        # The frame rides along: six silent losses of a speaker's reflection
+        # logged only "TypeError: String does not have #dig method" and
+        # nothing to find it by (2026-09-12).
+        @logger.warn { "[Runner conversation] reflection capture failed for #{v[:char]['name']}: #{e.class}: #{e.message} @ #{Array(e.backtrace).first(2).join(' <- ')}" }
       end
 
       # One judge call with its one correction bounce: when the model answers
@@ -1234,13 +1382,19 @@ module Harness
       # What the WORLD judge sees: the line, the acts, and the records the
       # speaker was handed, numbered 1..n per kind (records_given) so an
       # addition can name its record; Capture maps the numbers back to rows.
+      # records_given ids are ONE space across both lists — events 1..E, facts
+      # E+1.. — so a detail the judge files under the wrong list still names
+      # an unambiguous record (Capture resolves by id, not by list). Separate
+      # 1-based lists collided: event 1 and fact 1 in the same payload, and a
+      # fence-work detail landed on the daughter-argument event (2026-09-12).
       def world_payload(v, prose, did, fed)
-        given = ->(pairs) { Array(pairs).each_with_index.map { |(_, text), i| { "id" => i + 1, "text" => text } } }
+        events = Array(fed["events"])
+        given  = ->(pairs, offset) { Array(pairs).each_with_index.map { |(_, text), i| { "id" => offset + i + 1, "text" => text } } }
         {
           "you"            => { "name" => v[:char]["name"], "subrole" => v[:char]["subrole"] }.compact,
           "said"           => prose,
           "did"            => did,
-          "records_given"  => { "events" => given.call(fed["events"]), "facts" => given.call(fed["facts"]) },
+          "records_given"  => { "events" => given.call(events, 0), "facts" => given.call(fed["facts"], events.size) },
           "others_present" => Array(fed["others"]),
           "known_places"   => Array(fed["places"])
         }
@@ -1255,6 +1409,11 @@ module Harness
           "you"             => { "name" => v[:char]["name"] },
           "player"          => { "name" => player&.name }.compact,
           "exchange_so_far" => Array(fed["thread"]),
+          # The player's line THIS turn, on its own: for the first speaker of
+          # a turn it is not yet in the thread, and a judge that cannot see
+          # it booked an NPC's fresh offer as a debt the player owed
+          # (2026-09-12).
+          "player_said_now" => fed["input"],
           "you_said"        => prose,
           "you_did"         => did,
           "open_debts"      => debts_for(v[:char]["id"], context.game_time)
@@ -1316,14 +1475,17 @@ module Harness
         active.clear_agenda!(id) if %w[resolved abandoned].include?(taking["agenda"]) && active.agenda_for(id)
         # The activity microbeat: written silently (the staged line already
         # voiced the change this turn); perception reads it on later looks.
-        if taking["doing"].is_a?(::String) && !taking["doing"].strip.empty?
-          active.update_doing!(id, taking["doing"].strip)
-        end
+        # The judge often hands the current doing back verbatim. That is a
+        # hold, not a shift: stored as one it dirtied the voicing's copy and
+        # logged a shift the eyes never saw (probe 10, 2026-09-12).
+        doing = taking["doing"].is_a?(::String) ? taking["doing"].strip : ""
+        doing = "" if doing == active.doing_for(id).to_s
+        active.update_doing!(id, doing) unless doing.empty?
 
         @logger.info do
           "[Runner conversation] #{v[:char]['name']} takes stock: disposition=#{taking['disposition']}" \
             " (now #{active.disposition_for(id)}) mood #{taking['mood'] ? 'refreshed' : 'held'}" \
-            " agenda=#{taking['agenda'] || 'pursue'} doing #{taking['doing'] ? 'shifted' : 'held'}"
+            " agenda=#{taking['agenda'] || 'pursue'} doing #{doing.empty? ? 'held' : 'shifted'}"
         end
       rescue ::StandardError => e
         @logger.warn { "[Runner conversation] reevaluation failed for #{v[:char]['name']}: #{e.class}: #{e.message}" }

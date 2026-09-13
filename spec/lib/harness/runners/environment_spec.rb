@@ -25,7 +25,7 @@ RSpec.describe Harness::Runners::Environment do
     expect(out.tool_calls).to be_empty
     # Mini-narrator: carries its null explanation for the display floor
     # (rendered only if the whole turn ends empty).
-    expect(out.null_line).to eq("Nothing comes of it — kick the locked gate.")
+    expect(out.null_line).to eq("You kick the locked gate. Nothing comes of it.")
   end
 
   it "renders its own fragment after committing a delta" do
@@ -317,5 +317,12 @@ RSpec.describe Harness::Runners::Environment do
   it "redispatches on an unparseable emit" do
     out = run(ctx_emitting("not json at all"), "do something")
     expect(out.status).to eq(:redispatch)
+  end
+
+  it "asks for its emit under the grammar schema (an unconstrained emit once came back malformed and the act was re-planned as talk)" do
+    ctx = ctx_emitting({ "action" => "kick the gate", "roll" => nil, "time_minutes" => 1, "yields_item" => nil,
+                         "transforms_item" => nil, "location_change" => nil, "location_change_on_botch" => nil, "harm_on_botch" => nil })
+    run(ctx, "kick the locked gate")
+    expect(ctx.llm_nuance.schema_calls.first).to eq(described_class::EMIT_SCHEMA)
   end
 end

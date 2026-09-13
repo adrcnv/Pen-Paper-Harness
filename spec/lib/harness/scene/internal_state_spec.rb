@@ -7,7 +7,7 @@ RSpec.describe Harness::Scene::InternalState do
   let(:maren) { Npc.create!(name: "Maren", subrole: "barkeep", location: tavern) }
   let(:korr)    { Npc.create!(name: "Korr",    subrole: "stranger", location: tavern) }
 
-  def good_output(names, extras: [], agendas: nil)
+  def good_output(names, extras: [], agendas: nil, doing: nil)
     body = {
       "internal_states" => names.each_with_object({}) { |n, h|
         h[n] = "#{n} is in some plausible internal mood right now today."
@@ -15,7 +15,19 @@ RSpec.describe Harness::Scene::InternalState do
       "extras" => extras
     }
     body["agendas"] = agendas if agendas
+    body["doing"]   = doing if doing
     body.to_json
+  end
+
+  it "maps the seeder's doing by character id, trimmed to the cap, and tolerates its absence" do
+    maren
+    long = "mending a net by the window " * 5
+    llm  = StubLLM.new { |_p| good_output([ "Maren" ], doing: { "Maren" => long }) }
+    out  = described_class.new(llm_client: llm, logger: Logger.new(IO::NULL)).generate(location: tavern, characters: [ maren ])
+    expect(out.doing.keys).to eq([ maren.id ])
+    expect(out.doing[maren.id].length).to be <= 80
+    llm2 = StubLLM.new { |_p| good_output([ "Maren" ]) }
+    expect(described_class.new(llm_client: llm2, logger: Logger.new(IO::NULL)).generate(location: tavern, characters: [ maren ]).doing).to eq({})
   end
 
   it "still calls the LLM when no NPCs are present (extras-only mode for empty populated places)" do

@@ -4,7 +4,7 @@ NPCs in this game sit passive forever unless the world nudges them — you suppl
 
 You are given the present characters (each with their mood, agenda, lens, and any open `debts` — standing deals from their seat), what the player just did, and the NARRATION of what just happened this turn. An open debt with someone standing in the room is a SPECIFIC reason to move.
 
-Pick AT MOST ONE character — or NOBODY (null), which is the common, correct answer. Only pick a character with a SPECIFIC reason to move right now: the narration just gave them something to act on, or their agenda genuinely drives them to move THIS moment. If you would be picking someone only so the turn isn't empty, pick null — a forced interjection is worse than a quiet room. Never pick more than one.
+Pick AT MOST ONE character, or NOBODY (null) when no one has a reason. A reason is SPECIFIC: the narration just gave them something to act on, their agenda presses them to move now, or someone in the room owes them or is owed. Never pick more than one.
 
 Output STRICT JSON, nothing else:
 {

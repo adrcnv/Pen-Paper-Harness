@@ -22,8 +22,9 @@ module Harness
         # 2-4 ambient figures so narration has scene flavor to render).
         MAX_EXTRAS       = 4
         AGENDA_MAX_LEN   = 250
+        DOING_MAX_LEN    = 80
 
-        Result = Struct.new(:internal_states, :agendas, :extras, keyword_init: true)
+        Result = Struct.new(:internal_states, :agendas, :extras, :doing, keyword_init: true)
 
         # Returns Result(internal_states: {name => prose}, agendas: {name => text}, extras: [str, ...]).
         # The orchestrator maps names back to character_ids when committing
@@ -57,9 +58,10 @@ module Harness
           states  = validate_states
           agendas = validate_agendas
           extras  = validate_extras
+          doing   = validate_doing
           raise_if_errors
 
-          Result.new(internal_states: states, agendas: agendas, extras: extras)
+          Result.new(internal_states: states, agendas: agendas, extras: extras, doing: doing)
         end
 
         private
@@ -82,6 +84,11 @@ module Harness
           # some/all may be omitted. Must be an object when present.
           if @llm.key?("agendas") && !@llm["agendas"].nil? && !@llm["agendas"].is_a?(Hash)
             @errors << "\"agendas\" must be an object keyed by character name when present"
+          end
+          # doing is OPTIONAL — {character_name => visible activity}; the seed
+          # for the voicing's carry-on reference and the eyes' activity line.
+          if @llm.key?("doing") && !@llm["doing"].nil? && !@llm["doing"].is_a?(Hash)
+            @errors << "\"doing\" must be an object keyed by character name when present"
           end
         end
 
@@ -119,6 +126,10 @@ module Harness
               @errors << "internal_states[#{name.inspect}] is too long (>#{MAX_LEN} chars)"
               next
             end
+            if surname_opener?(name, stripped)
+              @errors << "internal_states[#{name.inspect}] opens with the full name — open with the first name (#{name.split.first}) only"
+              next
+            end
             out[name] = stripped
           end
           out
@@ -149,7 +160,31 @@ module Harness
               @errors << "agendas[#{name.inspect}] is too long (>#{AGENDA_MAX_LEN} chars)"
               next
             end
+            if surname_opener?(name, stripped)
+              @errors << "agendas[#{name.inspect}] opens with the full name — use the first name (#{name.split.first}) only"
+              next
+            end
             out[name] = stripped
+          end
+          out
+        end
+
+        # Returns {name => activity}: short, visible, per present character.
+        # Optional like agendas; unknown names are flagged for repair.
+        def validate_doing
+          raw = @llm["doing"]
+          return {} unless raw.is_a?(Hash)
+
+          out = {}
+          raw.each do |name, text|
+            unless @expected.include?(name)
+              @errors << "doing key #{name.inspect} is not in INPUT.characters (expected one of: #{@expected.to_a.join(', ')})"
+              next
+            end
+            next unless text.is_a?(String)
+            stripped = text.strip
+            next if stripped.empty?
+            out[name] = stripped.length > DOING_MAX_LEN ? stripped[0, DOING_MAX_LEN].rstrip : stripped
           end
           out
         end
@@ -184,6 +219,15 @@ module Harness
             out << stripped
           end
           out
+        end
+
+        # The voicing copies the seed's opener: a mood or agenda that begins
+        # "Edmund Underhill is …" comes back as "Edmund Underhill stops wiping
+        # …" every turn, over the voicing prompt's first-name rule (3/3
+        # openers, 2026-09-12). Rejected so the repair pass re-asks — the
+        # text itself is never edited.
+        def surname_opener?(name, text)
+          name.split.size > 1 && text.start_with?(name)
         end
 
         def raise_if_errors

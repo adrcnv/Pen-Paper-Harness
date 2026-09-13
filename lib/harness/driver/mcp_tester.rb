@@ -144,13 +144,22 @@ module Harness
       end
 
       # Ring buffers behind flag evidence. Dropping entries at >= this turn
-      # first keeps a retried turn from appearing twice.
+      # first keeps a retried turn from appearing twice. Every turn is ALSO
+      # appended to transcript.jsonl in the run folder — the whole session as
+      # the player read it, durable past the ring and past a killed run (a
+      # retried turn appends again under the same number; readers keep the
+      # last entry per turn).
       def remember(input, result)
         turn = @session.turn_number
         forget_after(turn - 1)
-        @transcript << { "turn" => turn, "input" => input,
-                         "narration" => result["narration"], "notice" => result["notice"] }
+        entry = { "turn" => turn, "input" => input,
+                  "narration" => result["narration"], "notice" => result["notice"] }
+        @transcript << entry
         @transcript.shift while @transcript.size > TRANSCRIPT_KEPT
+        File.open(File.join(@run_dir, "transcript.jsonl"), "a") do |f|
+          f.puts(JSON.generate(entry.merge("runners" => Array(result.dig("receipt", "runners")),
+                                           "game_time" => result["game_time"], "location" => result["location"])))
+        end
         if (receipt = result["receipt"])
           @receipts << receipt.merge("turn" => turn)
           @receipts.shift while @receipts.size > RECEIPTS_KEPT

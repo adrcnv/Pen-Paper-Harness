@@ -27,6 +27,10 @@ module Harness
 
       module_function
 
+      # The runner's word for a polled-and-declined turn. Turn::Loop drops it
+      # when initiative then makes someone act — the two would contradict.
+      SILENCE_LINE = "No one reacts.".freeze
+
       def compose(transcript:, context:, scene:)
         parts = []
         seen_scene_card = false
@@ -71,6 +75,7 @@ module Harness
 
         case tc["name"]
         when "resolve"          then bracket(tc)
+        when "contest_standing" then standing_bracket(tc)
         when "propose_event"    then event_part(args, result)
         when "display_fragment" then fragment_part(args)
         when "display_perception" then perception_part(args)
@@ -89,12 +94,22 @@ module Harness
         when "start_combat"     then line("⚔ The fight begins.")
         when "harm"             then line("You take #{result['damage']} damage: #{args['what']}.")
         when "npc_leave"        then line("#{args['name']} leaves for #{args['to']}.")
-        when "conversation_silence" then { kind: :stock, text: "No one reacts." }
+        when "conversation_silence" then { kind: :stock, text: SILENCE_LINE }
         when "meta"             then { kind: :stock, text: "(The moment passes.)" }
         end
       end
 
       # --- per-tool renderers -------------------------------------------------
+
+      # A re-pressed contest is not rerolled: the scene ledger re-serves the
+      # verdict, and that decision renders too — the same organ, the same
+      # bracket — so the hold that follows reads as a stonewall, not a void.
+      def standing_bracket(tc)
+        r = tc["result"]
+        return nil unless r.is_a?(Hash) && r["verdict"]
+        who = r["verdict"].to_s.split(" — ").first.to_s.strip
+        { kind: :bracket, text: "[#{tc.dig('args', 'action')} — the verdict stands: #{who}]" }
+      end
 
       # The bracket renders from the resolve tool result; the roll is
       # Ruby's truth, never prose.

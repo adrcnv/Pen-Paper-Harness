@@ -277,6 +277,40 @@ RSpec.describe Harness::Turn::Loop do
   # The player's eyes: appended dead last on every non-combat turn, and
   # DISPLAY-ONLY — the prose renders but never enters scene history, the
   # context buffer, or the persisted narration (fact-laundering firewall).
+  describe "silence then initiative" do
+    let(:silent_runner) do
+      Class.new(Harness::Runners::Base) do
+        def run(**)
+          Harness::Runners::Outcome.new(status: :ok, scene_dirty: false, tool_calls: [
+            { "name" => "conversation_silence", "args" => {}, "result" => { "nobody_spoke" => true } }
+          ])
+        end
+      end.new
+    end
+
+    def silent_loop
+      allow(Harness::Planner).to receive(:plan_for).and_return(
+        "plan" => [ { "runner" => "talk", "reason" => "talk", "args" => {} } ],
+        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
+      )
+      described_class.new(adapter: Harness::LLM::FakeAdapter.new(narration: "(n)"), context: context,
+                          registry: { "talk" => silent_runner })
+    end
+
+    it "drops the runner's 'No one reacts.' when initiative then makes someone act (the two contradict)" do
+      allow(Harness::Scene::Initiative).to receive(:run).and_return({ npc: nil, beat: "Osric coughs and looks up." })
+      t = silent_loop.run_turn(input: "anyone?")
+      expect(t.parts.map { |p| p[:kind] }).to eq([ :beat ])
+      expect(t.parts.first[:text]).to eq("Osric coughs and looks up.")
+    end
+
+    it "keeps 'No one reacts.' when nobody acts" do
+      allow(Harness::Scene::Initiative).to receive(:run).and_return(nil)
+      t = silent_loop.run_turn(input: "anyone?")
+      expect(t.parts).to eq([ { kind: :stock, text: "No one reacts." } ])
+    end
+  end
+
   describe "perception (the player's eyes)" do
     it "appends a :perception part last with its display record, kept OUT of the buffer" do
       allow(Harness::Turn::Perception).to receive(:render).and_return("The fire gutters low.")
@@ -304,126 +338,77 @@ RSpec.describe Harness::Turn::Loop do
       expect(transcript.parts.last[:text]).to eq("Dust hangs where Hero stood.")
     end
 
-    it "delta gate: renders once, then stays silent while the view holds (same scene, same phase)" do
-      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
+    # Eyes on every turn where something shifted (the speaker-echo filter
+    # that closed them for whole conversations is gone — 2026-09-12). What
+    # SHIFTED rides in the call as `changed` on a shift-only render; an
+    # arrival or a look establishes with the figures; nothing changed →
+    # nothing rendered.
+    def eyes_calls
+      calls = []
+      allow(Harness::Turn::Perception).to receive(:render) { |**kw| calls << kw; "The room settles." }
+      calls
+    end
+
+    it "establishes first, stays silent while nothing moves, then renders a person's shift as a shift-only call" do
+      npc   = Npc.create!(name: "Osric", subrole: "porter", location: tavern)
+      calls = eyes_calls
       loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
       loop_obj.run_turn(input: "first")
       second = loop_obj.run_turn(input: "second")
-      expect(Harness::Turn::Perception).to have_received(:render).once
+      context.active_scene.update_doing!(npc.id, "pacing the floor")    # taking-stock moves someone
+      loop_obj.run_turn(input: "third")
+      expect(calls.size).to eq(2)
       expect(second.parts.map { |p| p[:kind] }).not_to include(:perception)
+      expect(calls[0]).to include(include_figures: true, changed: nil, shift_only: false)
+      expect(calls[1]).to include(include_figures: false, shift_only: true)
+      expect(calls[1][:changed]["people"]).to eq([ { "name" => "Osric", "role" => "porter", "doing" => "pacing the floor" } ])
     end
 
-    it "delta gate: a clock-phase crossing renders as a DELTA, not a re-establishment" do
-      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
-      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("The light goes amber.")
+    it "a disposition flip alone keeps the eyes shut; it rides along with the next visible shift" do
+      npc   = Npc.create!(name: "Osric", subrole: "porter", location: tavern)
+      calls = eyes_calls
+      loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
+      loop_obj.run_turn(input: "first")                                  # establishes
+      context.active_scene.shift_disposition!(npc.id, "colder")          # a lost press soured him
+      second = loop_obj.run_turn(input: "second")
+      expect(calls.size).to eq(1)
+      expect(second.parts.map { |p| p[:kind] }).not_to include(:perception)
+      context.active_scene.update_doing!(npc.id, "turning his back to the bar")
+      loop_obj.run_turn(input: "third")
+      expect(calls.size).to eq(2)
+      expect(calls[1][:changed]["people"]).to eq([ { "name" => "Osric", "role" => "porter", "doing" => "turning his back to the bar", "disposition" => "guarded" } ])
+    end
+
+    it "a clock-phase crossing rides in `changed` as time_of_day" do
+      calls = eyes_calls
       loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
       loop_obj.run_turn(input: "first")                 # establishes, stamps the view (day, 12:00)
       context.game_time = 1100                          # 18:20 — evening
-      second = loop_obj.run_turn(input: "second")
-      expect(Harness::Turn::Perception).to have_received(:render).once
-      expect(Harness::Turn::Perception).to have_received(:render_delta).once do |delta:, **|
-        expect(delta).to eq({ "time_of_day" => "evening" })
-      end
-      expect(second.parts.last).to eq({ kind: :perception, text: "The light goes amber." })
+      loop_obj.run_turn(input: "second")
+      expect(calls[1][:changed]).to eq({ "time_of_day" => "evening" })
     end
 
-    it "delta gate: a flaked render leaves the gate open to retry next turn" do
-      allow(Harness::Turn::Perception).to receive(:render).and_return(nil, "The room settles.")
+    it "a flaked render leaves no stamp — the next turn establishes again" do
+      calls = []
+      allow(Harness::Turn::Perception).to receive(:render) { |**kw| calls << kw; calls.size == 1 ? nil : "The room settles." }
       loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
       loop_obj.run_turn(input: "first")                 # flake — no stamp
-      second = loop_obj.run_turn(input: "second")       # retried
-      expect(Harness::Turn::Perception).to have_received(:render).twice
+      second = loop_obj.run_turn(input: "second")
+      expect(calls[1]).to include(include_figures: false, changed: nil, shift_only: false)   # no stamp → establishes again
       expect(second.parts.map { |p| p[:kind] }).to include(:perception)
     end
 
-    it "delta gate: a present NPC settling into a different activity renders only that shift" do
-      npc = Npc.create!(name: "Osric", subrole: "porter", location: tavern)
-      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
-      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("Osric paces.")
-      loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
-      loop_obj.run_turn(input: "first")                                 # establishes, stamps the view
-      context.active_scene.update_doing!(npc.id, "pacing the floor")    # taking-stock moves someone
-      loop_obj.run_turn(input: "second")
-      expect(Harness::Turn::Perception).to have_received(:render).once
-      expect(Harness::Turn::Perception).to have_received(:render_delta).once do |delta:, **|
-        expect(delta["people"]).to eq([ { "name" => "Osric", "role" => "porter", "doing" => "pacing the floor" } ])
-      end
-      loop_obj.run_turn(input: "third")                                 # re-stamped — silent again
-      expect(Harness::Turn::Perception).to have_received(:render_delta).once
-    end
-
-    it "delta suppression: a speaker's own doing shift is absorbed silently (their line voiced it)" do
-      npc = Npc.create!(name: "Osric", subrole: "porter", location: tavern)
-      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
-      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("Osric shifts.")
-      speaker_runner = Class.new(Harness::Runners::Base) do
-        def initialize(npc_id) = (@npc_id, @calls = npc_id, 0)
-        def run(context:, **)
-          @calls += 1
-          context.active_scene.update_doing!(@npc_id, "activity ##{@calls}")
-          Harness::Runners::Outcome.new(status: :ok, scene_dirty: false, tool_calls: [ {
-            "name" => "propose_event",
-            "args" => { "details" => "Osric grunts and drums the table.",
-                        "participants" => [ { "character_id" => @npc_id, "role" => "actor" } ] },
-            "result" => { "staged" => true }
-          } ])
-        end
-      end
-      allow(Harness::Planner).to receive(:plan_for).and_return(
-        "plan" => [ { "runner" => "talk", "reason" => "talk", "args" => {} } ],
-        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
-      )
-      adapter  = Harness::LLM::FakeAdapter.new(narration: "(n)")
-      loop_obj = described_class.new(adapter: adapter, context: context,
-                                     registry: { "talk" => speaker_runner.new(npc.id) })
-      loop_obj.run_turn(input: "first")    # establishment render, stamps
-      loop_obj.run_turn(input: "second")   # speaker shifts doing + stages the line → absorbed
-      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
-      loop_obj.run_turn(input: "third")    # stamp absorbed the shift — still silent
-      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
-    end
-
-    it "delta suppression: a picked-up item's room-side vanishing is absorbed (the pickup line renders it)" do
-      stake = Item.create!(name: "sharpened stake", subrole: "object", location: tavern)
-      allow(Harness::Turn::Perception).to receive(:render).and_return("The room settles.")
-      allow(Harness::Turn::Perception).to receive(:render_delta).and_return("The stake leaves your hand.")
-      taker_runner = Class.new(Harness::Runners::Base) do
-        def initialize(item_id) = @item_id = item_id
-        def run(context:, **)
-          item = ::Item.find(@item_id)
-          item.update!(character_id: ::Player.first.id, location_id: nil)
-          Harness::Runners::Outcome.new(status: :ok, scene_dirty: false, tool_calls: [ {
-            "name"   => "pickup",
-            "args"   => { "item_id" => @item_id, "by_character_id" => ::Player.first.id },
-            "result" => { "item_id" => @item_id, "item_name" => "sharpened stake" }
-          } ])
-        end
-      end
-      allow(Harness::Planner).to receive(:plan_for).and_return(
-        "plan" => [ { "runner" => "take", "reason" => "take", "args" => {} } ],
-        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
-      )
-      adapter  = Harness::LLM::FakeAdapter.new(narration: "(n)")
-      loop_obj = described_class.new(adapter: adapter, context: context,
-                                     registry: { "take" => taker_runner.new(stake.id) })
-      loop_obj.run_turn(input: "look at the stake")   # establishment stamps view with the stake in things
-      loop_obj.run_turn(input: "take the stake")      # things loses it — fully explained by the pickup
-      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
-      loop_obj.run_turn(input: "wait")                # stamp absorbed the change — still silent
-      expect(Harness::Turn::Perception).not_to have_received(:render_delta)
-    end
-
-    it "delta gate: an ABSENT character's doing is invisible — no fire" do
-      allow(Harness::Turn::Perception).to receive(:render).and_return("The room shifts.")
+    it "an ABSENT character's doing is no shift — the eyes stay shut" do
+      calls = eyes_calls
       loop_obj = scripted_loop([ event_call("You pocket the coin.") ])
       loop_obj.run_turn(input: "first")
       context.active_scene.update_doing!(999_999, "pacing")   # nobody present has this id
       loop_obj.run_turn(input: "second")
-      expect(Harness::Turn::Perception).to have_received(:render).once
+      expect(calls.size).to eq(1)
     end
 
-    it "delta gate: an explicit look renders even when nothing changed" do
-      allow(Harness::Turn::Perception).to receive(:render).and_return("You take it in again.")
+    it "an explicit look re-establishes with the figures even when nothing changed" do
+      calls = eyes_calls
       allow(Harness::Planner).to receive(:plan_for).and_return(
         "plan" => [ { "runner" => "inspection", "reason" => "look", "args" => {} } ],
         "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
@@ -431,9 +416,10 @@ RSpec.describe Harness::Turn::Loop do
       adapter  = Harness::LLM::FakeAdapter.new(narration: "(n)")
       loop_obj = described_class.new(adapter: adapter, context: context,
                                      registry: { "inspection" => Harness::Runners::Inspection.new })
-      loop_obj.run_turn(input: "look around")   # establishes + stamps
-      loop_obj.run_turn(input: "look again")    # same phase — the look alone re-opens
-      expect(Harness::Turn::Perception).to have_received(:render).twice
+      loop_obj.run_turn(input: "look around")
+      loop_obj.run_turn(input: "look again")
+      expect(calls.size).to eq(2)
+      expect(calls[1]).to include(include_figures: true, changed: nil, shift_only: false)
     end
   end
 
@@ -505,6 +491,12 @@ RSpec.describe Harness::Turn::Loop do
       parts = compose([ resolve, staged ])
       expect(parts.map { |p| p[:kind] }).to eq([ :bracket, :dialogue ])
       expect(parts.first[:text]).to eq("[press — Charisma 15 vs 10: success]")
+    end
+
+    it "brackets a re-served verdict as standing — the ledger's decision renders like the roll" do
+      tcs = [ { "name" => "contest_standing", "args" => { "actor_id" => 1, "target_id" => 2, "action" => "press Edmund Underhill" },
+                "result" => { "kind" => "persuasion", "verdict" => "Edmund won — the player's attempt failed; pressed again, the verdict stands", "player_won" => false, "repeat" => true } } ]
+      expect(compose(tcs).first).to eq({ kind: :bracket, text: "[press Edmund Underhill — the verdict stands: Edmund won]" })
     end
 
     it "labels the bracket with the capitalized stat and flags criticals" do

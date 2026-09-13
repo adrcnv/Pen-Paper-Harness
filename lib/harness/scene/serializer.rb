@@ -30,7 +30,9 @@ module Harness
           "contest_ledger"       => active.contest_ledger || {},
           "dispositions"         => active.dispositions || {},
           "doing"                => active.doing || {},
-          "perceived_view"       => active.perceived_view
+          "perceived_view"       => active.perceived_view,
+          "last_speakers"        => active.last_speakers || [],
+          "doing_dirty"          => active.doing_dirty || []
         }
       end
 
@@ -54,7 +56,9 @@ module Harness
           contest_ledger:       data["contest_ledger"] || {},
           dispositions:         int_keyed(data["dispositions"]),
           doing:                int_keyed(data["doing"]),
-          perceived_view:       data["perceived_view"]
+          perceived_view:       data["perceived_view"],
+          last_speakers:        Array(data["last_speakers"]).map(&:to_i),
+          doing_dirty:          Array(data["doing_dirty"]).map(&:to_i)
         )
       end
 

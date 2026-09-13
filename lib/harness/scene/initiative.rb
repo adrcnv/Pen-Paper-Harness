@@ -47,11 +47,15 @@ module Harness
         player = ::Player.first
         return skip("no player row") unless player
 
-        # Arrival-settle: skip the turn the scene was entered, so nobody pipes
-        # up the instant the player walks in. Armed here, fires every turn after.
+        # Arrival-settle: nobody pipes up the instant the player walks in —
+        # the ENTRY turn never fires. The settle is that turn, not the first
+        # time this pass happens to run: a talk-heavy opening kept the pass
+        # gated for three turns and then spent the settle on the fourth
+        # (2026-09-12). Entry turn = no narration recorded in this scene yet
+        # (record_narration runs after this pass).
         if @active.initiative_cooldown.nil?
           @active.initiative_cooldown = 0
-          return skip("arrival-settle (armed; fires next turn)")
+          return skip("arrival-settle (entry turn)") if Array(@active.narrations).empty?
         end
 
         candidates = eligible(player)
@@ -129,8 +133,30 @@ module Harness
       # the throttle.
       def eligible(player)
         spoke = spoke_this_turn
+        held  = held_a_press_this_turn
         @active.present_characters.reject do |c|
-          c.id == player.id || follower?(c) || spoke.include?(c.id)
+          c.id == player.id || follower?(c) || spoke.include?(c.id) || held.include?(c.id)
+        end
+      end
+
+      # Targets of a press the player LOST this turn. The dice said they
+      # held; a silent hold left the turn empty, the selector picked the same
+      # person on the very guilt the press had aimed at, and the unprompted
+      # voicing — which carries no verdict — confessed it in the same turn
+      # (probe 11, 2026-09-12). The verdict outranks the impulse on the turn
+      # it was rolled.
+      def held_a_press_this_turn
+        @transcript.tool_calls.filter_map do |tc|
+          case tc["name"]
+          when "resolve"
+            next unless tc.dig("args", "action").to_s.start_with?("press ")
+            next unless %w[failure critical_failure].include?(tc.dig("result", "outcome").to_s)
+          when "contest_standing"   # a re-press: the ledger re-served a verdict the player lost
+            next unless tc.dig("result", "player_won") == false
+          else
+            next
+          end
+          tc.dig("args", "target_id")
         end
       end
 

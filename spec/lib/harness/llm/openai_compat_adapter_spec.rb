@@ -302,6 +302,33 @@ RSpec.describe Harness::LLM::OpenAICompatAdapter do
   end
 
   describe "error handling" do
+    it "falls back to an unconstrained request only when the schema itself is refused (400)" do
+      http = stub_http([ { status: 400, body: '{"error":"grammar"}' }, chat_response({ "role" => "assistant", "content" => "ok" }) ])
+      schema = { "type" => "object", "properties" => { "x" => { "type" => "string" } } }
+      expect(adapter(http).complete(system: "s", user: "u", schema: schema)).to eq("ok")
+      expect(http.calls.size).to eq(2)
+      expect(http.calls[0][:body]).to have_key("response_format")
+      expect(http.calls[1][:body]).not_to have_key("response_format")
+    end
+
+    it "does NOT drop the schema when throttling outlives the retries (429 raises)" do
+      http = stub_http([ { status: 429, body: "slow down" }, { status: 429, body: "slow down" }, chat_response({ "role" => "assistant", "content" => "never" }) ])
+      schema = { "type" => "object", "properties" => { "x" => { "type" => "string" } } }
+      expect { adapter(http, max_retries: 1).complete(system: "s", user: "u", schema: schema) }
+        .to raise_error(Harness::LLM::OpenAICompatAdapter::APIError, /429/)
+      expect(http.calls.size).to eq(2)
+      expect(http.calls.map { |c| c[:body].key?("response_format") }).to all(be(true))
+    end
+
+    it "caps the backoff so patience grows with retries instead of doubling past the throttle burst" do
+      http  = stub_http(Array.new(7) { { status: 429, body: "slow down" } })
+      waits = []
+      a = adapter(http, max_retries: 6)
+      allow(a).to receive(:sleep) { |s| waits << s }
+      expect { a.complete(system: "s", user: "u") }.to raise_error(Harness::LLM::OpenAICompatAdapter::APIError, /429/)
+      expect(waits).to eq([ 0.5, 1.0, 2.0, 4.0, 8.0, 8.0 ])
+    end
+
     it "raises APIError on non-retryable status" do
       http = stub_http([ { status: 400, body: '{"error":"bad request"}' } ])
       expect { adapter(http).complete(system: "", user: "u") }

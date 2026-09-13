@@ -253,4 +253,35 @@ RSpec.describe Harness::Scene::InternalState::Hydrator do
       }.to raise_error(described_class::InvalidOutput, /is too long/)
     end
   end
+
+  describe "full-name openers (the voicing copies the seed's opener)" do
+    let(:expected) { [ "Edmund Underhill", "Korr" ] }
+
+    it "rejects a mood line that opens with the character's full name" do
+      expect {
+        hydrate({ "internal_states" => {
+          "Edmund Underhill" => "Edmund Underhill is grimy and tense after the storm.",
+          "Korr"             => "Korr is bored and nursing the same drink again."
+        } })
+      }.to raise_error(described_class::InvalidOutput, /internal_states\["Edmund Underhill"\] opens with the full name.*first name \(Edmund\)/)
+    end
+
+    it "rejects an agenda that opens with the full name" do
+      expect {
+        hydrate({
+          "internal_states" => { "Edmund Underhill" => "Edmund is grimy and tense after the storm.", "Korr" => "Korr is bored and nursing the same drink again." },
+          "agendas"         => { "Edmund Underhill" => "Edmund Underhill wants spare hands for the kilns." }
+        })
+      }.to raise_error(described_class::InvalidOutput, /agendas\["Edmund Underhill"\] opens with the full name/)
+    end
+
+    it "accepts first-name openers and never trips on a single-word name" do
+      out = hydrate({
+        "internal_states" => { "Edmund Underhill" => "Edmund is grimy and tense after the storm.", "Korr" => "Korr is bored and nursing the same drink again." },
+        "agendas"         => { "Edmund Underhill" => "Edmund wants spare hands for the kilns.", "Korr" => "Korr wants to be left alone." }
+      })
+      expect(out.internal_states["Edmund Underhill"]).to start_with("Edmund is")
+      expect(out.agendas["Korr"]).to start_with("Korr")
+    end
+  end
 end

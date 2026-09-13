@@ -46,8 +46,8 @@ module Harness
       # bargain can bind them as debtor: a deal is spoken and accepted by
       # both sides, and one side was silent.
       # records: what the speaker was HANDED before speaking — {"events" =>
-      # [[id, text]...], "facts" => [[id, text]...]}; the judge's
-      # event_additions / fact_additions name these by 1-based position.
+      # [[id, text]...], "facts" => [[id, text]...]}; the judge's additions
+      # and retold ids name these in ONE 1-based space (events, then facts).
       def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, player_spoke: true, records: nil, logger: Rails.logger)
         @payload   = payload    # the speaker's parsed reflection output {facts, people, places}
         @records   = records || {}
@@ -634,34 +634,29 @@ module Harness
         rows = []
         seen = []   # one sentence lands once per pass — the same detail filed
                     # against two records of one chain is redundancy, not elaboration
-        Array(parsed["event_additions"]).each do |a|
+        additions = Array(parsed["event_additions"]).map { |a| [ a, a["event_id"] ] } +
+                    Array(parsed["fact_additions"]).map  { |a| [ a, a["fact_id"] ] }
+        additions.each do |a, id|
           next unless addition?(a)
-          next if seen.include?(a["content"].strip.downcase)
-          seen << a["content"].strip.downcase
-          if (source = given_record("events", a["event_id"], ::Event))
-            rows << write_event_addition(source, a["content"].strip)
-          else
-            @logger.info { "[Knowledge::Capture] event addition dropped (event_id #{a['event_id'].inspect} names no record given) :: #{a['content'].to_s[0, 80]}" }
+          content = a["content"].strip
+          next if seen.include?(content.downcase)
+          seen << content.downcase
+          # The id decides the store, not the list the judge filed it under.
+          kind, row = given_any(id)
+          case kind
+          when :event then rows << write_event_addition(row, content)
+          when :fact  then rows << write_fact_addition(row, content)
+          else @logger.info { "[Knowledge::Capture] addition dropped (id #{id.inspect} names no record given) :: #{content[0, 80]}" }
           end
         rescue ::StandardError => e
-          @logger.warn { "[Knowledge::Capture] event addition failed (non-fatal): #{e.class}: #{e.message}" }
-        end
-        Array(parsed["fact_additions"]).each do |a|
-          next unless addition?(a)
-          next if seen.include?(a["content"].strip.downcase)
-          seen << a["content"].strip.downcase
-          if (old = given_record("facts", a["fact_id"], ::Knowledge))
-            rows << write_fact_addition(old, a["content"].strip)
-          else
-            @logger.info { "[Knowledge::Capture] fact addition dropped (fact_id #{a['fact_id'].inspect} names no record given) :: #{a['content'].to_s[0, 80]}" }
-          end
-        rescue ::StandardError => e
-          @logger.warn { "[Knowledge::Capture] fact addition failed (non-fatal): #{e.class}: #{e.message}" }
+          @logger.warn { "[Knowledge::Capture] addition failed (non-fatal): #{e.class}: #{e.message}" }
         end
         # Telling is transmission: a handed event passed on, in detail or in
-        # passing, is now known to everyone who was in the room.
+        # passing, is now known to everyone who was in the room. Knowledge has
+        # no hearers (ruled) — a fact id here is ignored.
         Array(parsed["retold"]).map(&:to_i).uniq.each do |k|
-          if (source = given_record("events", k, ::Event))
+          kind, source = given_any(k)
+          if kind == :event
             hear!([ source ])
           else
             @logger.info { "[Knowledge::Capture] retold id #{k.inspect} names no event given — ignored" }
@@ -699,11 +694,20 @@ module Harness
 
       def addition?(a) = a.is_a?(::Hash) && a["content"].is_a?(::String) && !a["content"].strip.empty?
 
-      def given_record(kind, position, klass)
+      # records_given ids are one space: events 1..E, facts E+1.. (the payload
+      # side numbers them the same way). Returns [:event, row] | [:fact, row]
+      # | nil — resolved by id alone, so an addition filed under the wrong
+      # list still lands on the record it names.
+      def given_any(position)
         i = position.to_i
         return nil unless i >= 1
-        id = Array(@records[kind])[i - 1]&.first
-        id && klass.find_by(id: id)
+        events = Array(@records["events"])
+        facts  = Array(@records["facts"])
+        if i <= events.size
+          (id = events[i - 1]&.first) && (row = ::Event.find_by(id: id)) ? [ :event, row ] : nil
+        else
+          (id = facts[i - events.size - 1]&.first) && (row = ::Knowledge.find_by(id: id)) ? [ :fact, row ] : nil
+        end
       end
 
       # event → event: a SUPPLEMENT event referencing its source, backdated to
@@ -918,8 +922,13 @@ module Harness
         norm = content.downcase
         event_ids = ::EventParticipant.where(character_id: chars.map(&:id)).pluck(:event_id).uniq
         ::Event.where(id: event_ids).any? do |e|
-          e.details.is_a?(::Hash) &&
-            e.details.dig("narrative", "details").to_s.strip.downcase == norm
+          narrative = e.details.is_a?(::Hash) ? e.details["narrative"] : nil
+          # Writers differ: `narrative` is a nested hash for some events and a
+          # bare string for others. Digging through the string raised
+          # TypeError and cost the speaker its whole reflection — six silent
+          # losses before the log named the frame (2026-09-12).
+          text = narrative.is_a?(::Hash) ? narrative["details"] : narrative
+          text.to_s.strip.downcase == norm
         end
       end
 

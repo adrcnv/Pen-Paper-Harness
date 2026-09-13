@@ -153,6 +153,132 @@ RSpec.describe Harness::Runners::Conversation do
     expect(voicings[1].split("exchange_so_far").last).to include("any news, folks?") # ...as this turn's entry
   end
 
+  # The standing doing was performed verbatim as the opening gesture of every
+  # line. The voicing gets it until the first line, then only when refreshed.
+  it "hands the voicing `doing` before the first line, hides it afterwards until taking-stock refreshes it" do
+    payloads = []
+    ctx = context_with do |full|
+      if full.include?("TAKING STOCK")
+        { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue", "doing" => nil }.to_json
+      elsif full.include?("WORLD MEMORY")
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      else
+        payloads << full
+        { "speak" => true, "dialogue" => { "summary" => "talks", "prose" => "Tomas nods. \"Line #{payloads.size}.\"" } }.to_json
+      end
+    end
+    ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern),
+                                                  narrations: [], extras: [], doing: { barkeep.id => "wiping mugs" })
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
+    expect(payloads[0]).to match(/"doing": "wiping mugs"/)          # seed, first line
+    described_class.new.run(context: ctx, scene: scene, input: "and?", step: step)
+    expect(payloads[1]).not_to match(/^\s+"doing": "/)                # spoken, nothing refreshed
+    ctx.active_scene.update_doing!(barkeep.id, "counting coin")
+    described_class.new.run(context: ctx, scene: scene, input: "well?", step: step)
+    expect(payloads[2]).to match(/"doing": "counting coin"/)         # refreshed since the last line
+  end
+
+  # The judge often returns the current doing word for word; stored as a
+  # shift it re-fed the voicing and logged a shift the eyes never saw.
+  it "a taking-stock doing equal to the current one is a hold: nothing dirtied, nothing re-fed" do
+    payloads = []
+    ctx = context_with do |full|
+      if full.include?("TAKING STOCK")
+        { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue", "doing" => "wiping mugs" }.to_json
+      elsif full.include?("WORLD MEMORY")
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      else
+        payloads << full
+        { "speak" => true, "dialogue" => { "summary" => "talks", "prose" => "Tomas nods. \"Line #{payloads.size}.\"" } }.to_json
+      end
+    end
+    ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern),
+                                                  narrations: [], extras: [], doing: { barkeep.id => "wiping mugs" })
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
+    expect(ctx.active_scene.doing_dirty).to be_blank
+    described_class.new.run(context: ctx, scene: scene, input: "and?", step: step)
+    expect(payloads[1]).not_to match(/^\s+"doing": "/)
+  end
+
+  # Continuity: an unnamed follow-up goes first to whoever spoke last turn,
+  # who is told so — both NPCs read "no name" as "not addressed" and a
+  # direct follow-up went unanswered (2026-09-12).
+  it "polls last turn's speaker first on an unnamed line and tells them they spoke last" do
+    ruta = Npc.create!(name: "Ruta", subrole: "servant", location: tavern)
+    seen = []
+    ctx = context_with do |full|
+      next({ "facts" => [] }.to_json) if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
+      next({ "relevant" => [] }.to_json) if full.include?("filter stored facts")
+      seen << full
+      if full.include?(%("id": #{ruta.id},))
+        { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Ruta shrugs. \"Roads are quiet, mostly.\"" } }.to_json
+      else
+        { "speak" => false }.to_json
+      end
+    end
+    ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern),
+                                                  narrations: [], extras: [])
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "Ruta, anything on the roads?", step: step)   # named: Ruta speaks
+    expect(ctx.active_scene.last_speakers).to eq([ ruta.id ])
+    seen.clear
+    described_class.new.run(context: ctx, scene: scene, input: "any beasts on the ridge?", step: step)      # unnamed follow-up
+    expect(seen.first).to include(%("id": #{ruta.id},)).and match(/^\s+"spoke_last": true/)   # Ruta first, told so (payload line, not the prompt's shape)
+    expect(seen.last).not_to match(/^\s+"spoke_last": true/)                                   # Tomas is not
+  end
+
+  # The first speaker of a turn is judged before the current input joins the
+  # thread; without the player's line the bargains judge booked an NPC's
+  # fresh offer as a debt the player owed (2026-09-12).
+  it "hands the bargains judge the player's line for THIS turn on its own" do
+    ledger_users = []
+    ctx = context_with do |full|
+      if full.include?("BARGAINS")
+        ledger_users << full
+        { "deals" => [], "discharged" => [] }.to_json
+      elsif full.include?("WORLD MEMORY") || full.include?("TAKING STOCK")
+        { "facts" => [], "people" => [], "places" => [] }.to_json
+      else
+        { "speak" => true, "dialogue" => { "summary" => "offers", "prose" => "Tomas shrugs. \"Two silver if you haul it.\"" } }.to_json
+      end
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+    described_class.new.run(context: ctx, scene: scene, input: "any work going?", step: step)
+    expect(ledger_users.size).to eq(1)
+    expect(ledger_users.first).to include('"player_said_now": "any work going?"')
+  end
+
+  # The tail (two judges + taking-stock) used to run between speakers, which
+  # fed speaker B the row just minted from speaker A's line on top of the line
+  # itself — the same-turn echo amplifier (2026-09-12).
+  it "runs every speaker's tail (judges + taking-stock) after the LAST speaker is voiced, never between speakers" do
+    Npc.create!(name: "Ruta", subrole: "servant", location: tavern)
+    calls = []
+    ctx = context_with do |full|
+      if full.include?("WORLD MEMORY") || full.include?("TAKING STOCK")
+        calls << :tail
+        { "facts" => [], "people" => [], "places" => [], "deals" => [], "discharged" => [] }.to_json
+      elsif full.include?("filter stored facts")
+        { "relevant" => [] }.to_json
+      else
+        calls << :voice
+        line = calls.count(:voice) == 1 ? "The ferry sank on Tuesday." : "And the miller went down with it."
+        { "speak" => true, "dialogue" => { "summary" => "speaks", "prose" => line } }.to_json
+      end
+    end
+    scene = Harness::Tools::QueryScene.build(ctx)
+
+    described_class.new.run(context: ctx, scene: scene, input: "any news, folks?", step: step("asks the room"))
+    expect(calls.count(:voice)).to eq(2)
+    expect(calls.count(:tail)).to be >= 2
+    expect(calls.index(:tail)).to be > calls.rindex(:voice)
+  end
+
   it "the planner's intent never widens the address: a name only in the intent is not polled first" do
     bruna = Npc.create!(name: "Bruna", subrole: "fisher", location: tavern)
     polled = []
@@ -184,18 +310,18 @@ RSpec.describe Harness::Runners::Conversation do
     expect(ev.event_participants.pluck(:character_id)).to include(barkeep.id, player.id)
   end
 
-  it "fires a persuasion resolve when the character asks for one (player rolls, character is target)" do
+  # Two judges must agree that a line is a press: the planner (from the
+  # player's words) AND the character (from its own seat). The character
+  # asked for dice on plain questions too (probe 3), so alone it rolls nothing.
+  it "does not roll on a character's guarded read alone (no planner-bound check)" do
+    expect(Harness::Dice).not_to receive(:check)
     ctx = context_with do
-      { "speak" => true, "dialogue" => nil,
-        "resolve_call" => { "stat" => "charisma", "action" => "press for the secret", "difficulty" => "moderate" } }.to_json
+      { "speak" => true, "dialogue" => { "summary" => "stalls", "prose" => "Tomas says nothing of the docks." }, "guarded" => true }.to_json
     end
     scene = Harness::Tools::QueryScene.build(ctx)
 
     outcome = described_class.new.run(context: ctx, scene: scene, input: "tell me who runs the docks", step: step)
-    resolve = outcome.tool_calls.find { |t| t["name"] == "resolve" }
-    expect(resolve).to be_present
-    expect(resolve.dig("args", "actor_id")).to eq(player.id)
-    expect(resolve.dig("args", "target_id")).to eq(barkeep.id)
+    expect(outcome.tool_calls.find { |t| t["name"] == "resolve" }).to be_nil
   end
 
   # Named people are now realized by the post-turn Knowledge::Capture pass (the
@@ -497,7 +623,9 @@ RSpec.describe Harness::Runners::Conversation do
       char.update!(strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: cha)
     end
 
-    def speaking_ctx
+    # The character is the second judge: voiced with no verdict in its payload
+    # yet, it reads the ask as guarded (resists: true) or answers freely (false).
+    def speaking_ctx(resists: true)
       voiced = []
       ctx = context_with do |full|
         if (full.include?("WORLD MEMORY") || full.include?("TAKING STOCK"))
@@ -506,7 +634,8 @@ RSpec.describe Harness::Runners::Conversation do
           { "relevant" => [] }.to_json
         else
           voiced << full
-          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Fine. Ask your questions." } }.to_json
+          { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Fine. Ask your questions." },
+            "guarded" => (resists && !full.include?('"contest"')) }.to_json
         end
       end
       ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern), extras: [])
@@ -515,18 +644,33 @@ RSpec.describe Harness::Runners::Conversation do
 
     before { statted!(player, cha: 14); statted!(barkeep) }
 
-    it "rolls once before voicing and injects the settled verdict into the target's payload" do
+    it "rolls a bare press only once the character confirms it, then voices the character again under the verdict" do
       allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", margin: "clear", critical: false))
       ctx, voiced = speaking_ctx
       scene = Harness::Tools::QueryScene.build(ctx)
 
       outcome = described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
 
-      expect(voiced.first).to include('"contest"')
-      expect(voiced.first).to include("Tomas lost — it went the player's way")
+      expect(voiced.size).to eq(2)
+      expect(voiced.first).not_to include('"contest"')                        # the judgment call, no verdict yet
+      expect(voiced.last).to include('"contest"').and include("Tomas lost — it went the player's way")
       contest_record = outcome.tool_calls.find { |t| t["name"] == "resolve" }
       expect(contest_record).to be_present
       expect(ctx.active_scene.contest_ledger.keys).to eq([ "#{barkeep.id}:social" ])
+      expect(outcome.tool_calls.count { |t| t["name"] == "propose_event" && t.dig("result", "staged") }).to eq(1)   # one line, the framed one
+    end
+
+    it "never rolls a bare press the character answers freely — no bracket, no ledger, one voicing" do
+      expect(Harness::Dice).not_to receive(:check)
+      ctx, voiced = speaking_ctx(resists: false)
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "where would I find the forge?", step: contest_step("target" => "Tomas"))
+
+      expect(voiced.size).to eq(1)
+      expect(voiced.first).not_to include('"contest"')
+      expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("resolve", "contest_standing")
+      expect(ctx.active_scene.contest_ledger).to be_blank
     end
 
     it "frames the LOSING target's voicing with the settled verdict — the dice decide engagement, not the decline duty" do
@@ -534,15 +678,36 @@ RSpec.describe Harness::Runners::Conversation do
       ctx, voiced = speaking_ctx
       scene = Harness::Tools::QueryScene.build(ctx)
       described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
-      expect(voiced.first).to include("--- VERDICT ---", '"player_won": true')
+      expect(voiced.last).to include("--- VERDICT ---", '"player_won": true')
     end
 
-    it "does not frame a target who WON the contest (refusal is a legitimate render of winning)" do
+    it "frames a target who WON the contest to HOLD — a lost press has teeth, not a plain answer" do
       allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "failure", margin: "clear", critical: false))
       ctx, voiced = speaking_ctx
       scene = Harness::Tools::QueryScene.build(ctx)
       described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
-      expect(voiced.first).not_to include("--- VERDICT ---")
+      expect(voiced.last).to include("--- VERDICT ---", "in your favour: persuasion", '"player_won": false')
+      expect(voiced.last).not_to include("yield in your manner")
+    end
+
+    it "names the target by FIRST name in the verdict (the voicing copies whatever name it is shown)" do
+      edmund = Npc.create!(name: "Edmund Underhill", subrole: "burner", location: tavern)
+      statted!(edmund)
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "failure", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+      described_class.new.run(context: ctx, scene: scene, input: "press Edmund about the mitten", step: contest_step("target" => "Edmund Underhill"))
+      target_call = voiced.select { |u| u.include?(%("id": #{edmund.id},)) }.last
+      expect(target_call).to include("Edmund won — the player's attempt failed").and include("--- VERDICT ---")
+      expect(target_call).not_to include("Edmund Underhill won")
+    end
+
+    it "frames nobody when the roll itself failed (voicing plainly is the fallback)" do
+      allow(Harness::Dice).to receive(:check).and_raise(StandardError, "no dice")
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+      described_class.new.run(context: ctx, scene: scene, input: "press Tomas about the ledger", step: contest_step("target" => "Tomas"))
+      expect(voiced.last).not_to include("--- VERDICT ---")
     end
 
     it "reuses the scene's standing verdict instead of rerolling on a repeat attempt" do
@@ -552,9 +717,26 @@ RSpec.describe Harness::Runners::Conversation do
       runner = described_class.new
 
       runner.run(context: ctx, scene: scene, input: "press Tomas", step: contest_step("target" => "Tomas"))
-      runner.run(context: ctx, scene: scene, input: "press Tomas HARDER", step: contest_step("target" => "Tomas"))
+      second = runner.run(context: ctx, scene: scene, input: "press Tomas HARDER", step: contest_step("target" => "Tomas"))
 
-      expect(voiced.last).to include("Tomas won — the player's attempt failed") # verdict re-served, not rerolled
+      expect(voiced.last).to include("Tomas won — the player's attempt failed; pressed again, the verdict stands") # re-served as a fact, not rerolled
+      expect(voiced.last).not_to include("--- VERDICT ---")                                                        # and not framed twice
+      standing = second.tool_calls.find { |t| t["name"] == "contest_standing" }                                      # the re-serve is a recorded event
+      expect(standing).to be_present
+      expect(standing["args"]).to include("target_id" => barkeep.id, "action" => "press Tomas")
+      expect(standing["result"]).to include("player_won" => false, "repeat" => true)
+    end
+
+    it "re-serves a WON verdict with the yield frame again — a fact alone left the target silent (tester run 4, t7)" do
+      expect(Harness::Dice).to receive(:check).once.and_return(Harness::Dice::Outcome.new(result: "success", margin: "clear", critical: false))
+      ctx, voiced = speaking_ctx
+      scene = Harness::Tools::QueryScene.build(ctx)
+      runner = described_class.new
+
+      runner.run(context: ctx, scene: scene, input: "press Tomas", step: contest_step("target" => "Tomas"))
+      runner.run(context: ctx, scene: scene, input: "press Tomas again", step: contest_step("target" => "Tomas"))
+
+      expect(voiced.last).to include("pressed again, the verdict stands").and include("--- VERDICT ---", "against you")
     end
 
     it "binds a planner stat as a symmetric opposed game, ledger-keyed by stat" do
@@ -752,7 +934,7 @@ RSpec.describe Harness::Runners::Conversation do
     end
   end
 
-  describe "repeat-guard (the parrot suppressor)" do
+  describe "parrot gauge (log only — a repeated line is kept, never suppressed)" do
     def active_scene_for(ctx)
       Harness::Scene::Active.new(
         location: tavern, snapshot: nil, narrations: [], internal_state: {}, agendas: {},
@@ -760,7 +942,17 @@ RSpec.describe Harness::Runners::Conversation do
       ).tap { |a| ctx.active_scene = a }
     end
 
-    it "suppresses a verbatim re-emit of the speaker's previous line (breaks off instead)" do
+    def active_with(lines)
+      Harness::Scene::Active.new(
+        location: tavern, snapshot: nil, narrations: [], internal_state: {}, agendas: {},
+        extras: [], entered_at_game_time: 0
+      ).tap { |a| lines.each { |id, l| a.record_line!(id, l) } }
+    end
+
+    # The suppressor this used to be answered a re-ask with "No one reacts."
+    # (2026-09-12); the shapes it caught are fixed at their source. The
+    # detector stays as a gauge that names whose line was reproduced.
+    it "keeps a verbatim re-emit of the speaker's previous line" do
       line = "Aye, the salt tithe was repealed last winter, and good riddance to it."
       ctx = context_with do |full|
         next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
@@ -771,38 +963,22 @@ RSpec.describe Harness::Runners::Conversation do
 
       first  = described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
       second = described_class.new.run(context: ctx, scene: scene, input: "tell me more", step: step)
-
       expect(first.tool_calls.count  { |t| t["name"] == "propose_event" }).to eq(1)
-      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(0)
+      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(1)
     end
 
-    it "suppresses a long re-emit with an identical head but a mutated tail (the Arn case)" do
-      base = "His grin doesn't waver, though he lowers his voice just enough to cut through the cold stare. He leans in close"
-      lines = [ "#{base} and names the Flats.", "#{base} and names the docks instead." ]
-      calls = 0
-      ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
-        calls += 1
-        { "speak" => true, "dialogue" => { "summary" => "pitches", "prose" => lines[calls - 1] } }.to_json
-      end
-      active_scene_for(ctx)
-      scene = Harness::Tools::QueryScene.build(ctx)
-
-      described_class.new.run(context: ctx, scene: scene, input: "go on", step: step)
-      second = described_class.new.run(context: ctx, scene: scene, input: "who exactly?", step: step)
-      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(0)
-    end
-
-    it "suppresses a CROSS-SPEAKER copy (an action beat wrapping a chunk of another's line — the Sten case)" do
+    it "keeps a cross-speaker copy (the Sten case) — the chorus is fixed where it is fed, not by an output filter" do
       Npc.create!(name: "Ragnar", subrole: "innkeeper", location: tavern)
-      chunk = "The Reeve is haggling for timber rights again. Not exactly a secret, just business, drink up friend."
-      turn  = 0
+      chunk    = "The Reeve is haggling for timber rights again. Not exactly a secret, just business, drink up friend."
+      tomas_id = Npc.find_by!(name: "Tomas").id
+      turn     = 0
       ctx = context_with do |full|
         next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
-        tomas = full.include?("\"name\": \"Tomas\"")
-        if turn == 1      # turn 1: Tomas speaks the chunk, Ragnar stays silent
+        # Route on the speaker's OWN block: the room list names Tomas in Ragnar's call too.
+        tomas = full.include?("\"you\": {\n    \"id\": #{tomas_id},")
+        if turn == 1
           tomas ? { "speak" => true, "dialogue" => { "summary" => "gossips", "prose" => "Tomas leans on the bar. \"#{chunk}\"" } }.to_json : { "speak" => false }.to_json
-        else              # turn 2: RAGNAR parrots Tomas's chunk inside a fresh action beat
+        else
           tomas ? { "speak" => false }.to_json : { "speak" => true, "dialogue" => { "summary" => "echoes", "prose" => "Ragnar crosses his arms. \"#{chunk}\"" } }.to_json
         end
       end
@@ -812,29 +988,29 @@ RSpec.describe Harness::Runners::Conversation do
       turn = 1
       first = described_class.new.run(context: ctx, scene: scene, input: "any news?", step: step)
       expect(first.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(1)
-
       turn = 2
       second = described_class.new.run(context: ctx, scene: scene, input: "timber rights?", step: step)
-      expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(0)
-    end
-
-    it "lets a genuinely NEW line through" do
-      calls = 0
-      ctx = context_with do |full|
-        next({ "facts" => [] }.to_json) if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
-        calls += 1
-        prose = calls == 1 ? "Aye, what'll it be?" : "The cellar's flooded again, if you must know."
-        { "speak" => true, "dialogue" => { "summary" => "talks", "prose" => prose } }.to_json
-      end
-      active_scene_for(ctx)
-      scene = Harness::Tools::QueryScene.build(ctx)
-
-      described_class.new.run(context: ctx, scene: scene, input: "hello", step: step)
-      second = described_class.new.run(context: ctx, scene: scene, input: "what's wrong?", step: step)
       expect(second.tool_calls.count { |t| t["name"] == "propose_event" }).to eq(1)
     end
-  end
 
+    it "detects the shapes it logs: quoted speech lifted from another speaker, a whole-line run, an exact own repeat" do
+      runner = described_class.new
+      active = active_with(
+        1 => "Tomas watches the kiln. 'Kiln’s burning slow today — steady heat, no flare. Good for even char.'",
+        2 => "His grin doesn't waver, though he lowers his voice just enough to cut through the cold stare. He leans in close and names the Flats."
+      )
+      expect(runner.send(:parroted_line_owner, active, "Swithun plucks a string. ‘I wrote a verse: steady heat, no flare, good for even char.’")).to eq(1)
+      expect(runner.send(:parroted_line_owner, active, "His grin doesn't waver, though he lowers his voice just enough to cut through the cold stare. He leans in close and names the docks instead.")).to eq(2)
+      expect(runner.send(:parroted_line_owner, active, "Tomas watches the kiln. 'Kiln’s burning slow today — steady heat, no flare. Good for even char.'")).to eq(1)
+    end
+
+    it "does not count a repeated BEAT around new words, nor a fresh short answer" do
+      runner = described_class.new
+      active = active_with(1 => "Tomas wipes soot from his brow and meets your gaze. \"I need ore hauled up the ridge. Two silver.\"")
+      expect(runner.send(:parroted_line_owner, active, "Tomas wipes soot from his brow and meets your gaze. \"Last man? Went up the ridge and never came down.\"")).to be_nil
+      expect(runner.send(:parroted_line_owner, active, "Tomas shrugs. \"Couldn't say.\"")).to be_nil
+    end
+  end
   describe "venue exposure" do
     it "tells every voicing call WHERE the conversation is (the Common Room leak fix)" do
       voicing_prompt = nil

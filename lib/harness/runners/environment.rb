@@ -18,6 +18,34 @@ module Harness
       PROMPT_PATH          = Rails.root.join("lib/harness/prompts/runners/environment.txt")
       FRAGMENT_PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/environment_fragment.txt")
 
+      # Grammar-constrained emit (same mechanism as the voicing schema): the
+      # model cannot produce the wrong shape. Unconstrained, one duplicated
+      # token mid-object made the emit unparseable, the step redispatched, and
+      # the planner re-read a physical act as conversation (2026-09-12).
+      STATS = %w[strength dexterity constitution intelligence wisdom charisma].freeze
+      nullable = ->(type) { { "type" => [ type, "null" ] } }
+      obj = ->(props, required) { { "type" => "object", "properties" => props, "required" => required, "additionalProperties" => false } }
+      maybe = ->(schema) { { "anyOf" => [ { "type" => "null" }, schema ] } }
+      EMIT_SCHEMA = obj.call({
+        "action" => { "type" => "string" },
+        "roll" => maybe.call(obj.call({
+          "stat"         => maybe.call({ "type" => "string", "enum" => STATS }),
+          "ability_name" => nullable.call("string"),
+          "difficulty"   => maybe.call({ "type" => "string", "enum" => %w[easy moderate hard] })
+        }, %w[stat ability_name difficulty])),
+        "time_minutes" => { "type" => "integer" },
+        "yields_item" => maybe.call(obj.call({
+          "name" => { "type" => "string" }, "subrole" => { "type" => "string" }, "properties" => { "type" => "object" }
+        }, %w[name subrole properties])),
+        "transforms_item" => maybe.call(obj.call({
+          "item_id" => { "type" => "integer" }, "name" => nullable.call("string"),
+          "subrole" => nullable.call("string"), "consumes_item_id" => nullable.call("integer")
+        }, %w[item_id name subrole consumes_item_id])),
+        "location_change"          => nullable.call("string"),
+        "location_change_on_botch" => nullable.call("string"),
+        "harm_on_botch"            => nullable.call("string")
+      }, %w[action roll time_minutes yields_item transforms_item location_change location_change_on_botch harm_on_botch]).freeze
+
       def run(context:, scene:, input:, step:)
         player = ::Player.first
         return redispatch("no player row") unless player
@@ -95,9 +123,12 @@ module Harness
 
         # A pure-flavor poke that committed nothing stays blank when a sibling
         # runner renders; the null_line covers the solo case (the old "let
-        # narration render it" assumed the executed narrator).
+        # narration render it" assumed the executed narrator). The act itself
+        # HAPPENED — "Nothing comes of it — operate the forge bellows" read as
+        # a void where the player had just done what the smith kept asking
+        # for (tester run 2, t13 — 2026-09-12).
         Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok,
-                    null_line: (tcs.empty? ? "Nothing comes of it — #{action}." : nil))
+                    null_line: (tcs.empty? ? "You #{action}. Nothing comes of it." : nil))
       end
 
       private
@@ -232,7 +263,7 @@ module Harness
           "held_items"      => ::Item.where(character_id: player.id).order(:id).map { |i| { "id" => i.id, "name" => i.name } }
         )
         raw = ::Harness::CostTracker.in_subsystem(:runner_environment) do
-          llm(context).complete(system: preamble, user: "INPUT:\n#{user}")
+          llm(context).complete(system: preamble, user: "INPUT:\n#{user}", schema: EMIT_SCHEMA)
         end
         parse_emit(raw)
       rescue StandardError => e

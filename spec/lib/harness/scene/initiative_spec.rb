@@ -116,6 +116,26 @@ RSpec.describe Harness::Scene::Initiative do
     expect(a.initiative_cooldown).to eq(0) # armed; fires from next turn
   end
 
+  # The settle is the ENTRY turn, not the first invocation: talk turns keep
+  # the pass gated, and a settle spent on the fourth turn muted an entire
+  # opening (2026-09-12).
+  it "does not spend the settle on a later turn: cooldown nil but turns already recorded → arms and consults the selector" do
+    called = false
+    probe = Class.new do
+      define_method(:complete) do |system:, user:, schema: nil|
+        called = true
+        { "actor" => nil }.to_json
+      end
+    end.new
+    context.llm_nuance = probe
+    maren = npc(name: "Maren")
+    a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player" }, cooldown: nil)
+    a.append_narration("hello", "Maren nods.")   # a talk turn already happened here
+    run(a, transcript)
+    expect(called).to be(true)
+    expect(a.initiative_cooldown).to eq(0)
+  end
+
   it "fires through the FULL voicing: staged line (no Event row), mark_spoken, last_initiator recorded" do
     maren = npc(name: "Maren", subrole: "barkeep")
     a = active_with(present: [ maren ], agendas: { maren.id => "wants to warn the player about the docks" })
@@ -219,6 +239,22 @@ RSpec.describe Harness::Scene::Initiative do
     context.llm_nuance = stub_llm(selector: { "actor" => "Maren", "cause" => "warn" }, line: "Maren speaks.")
     t = transcript([ spoke_this_turn ])
     expect(run(a, t)).to be_nil # she already had her voice this turn
+  end
+
+  # The dice said Maren held; the same turn's initiative must not have her
+  # volunteer what the press failed to extract (probe 11, 2026-09-12).
+  it "excludes the target of a press the player LOST this turn; a won press leaves them eligible" do
+    maren = npc(name: "Maren")
+    a = active_with(present: [ maren ], agendas: { maren.id => "wants the stranger gone" })
+    context.llm_nuance = stub_llm(selector: { "actor" => "Maren", "cause" => "guilt" }, line: "Maren confesses.")
+    lost = { "name" => "resolve", "args" => { "actor_id" => player.id, "target_id" => maren.id, "action" => "press Maren", "stat" => "charisma" },
+             "result" => { "outcome" => "failure", "margin" => "clear" } }
+    expect(run(a, transcript([ lost ]))).to be_nil
+    won  = lost.merge("result" => { "outcome" => "success", "margin" => "clear" })
+    expect(run(active_with(present: [ maren ], agendas: { maren.id => "wants the stranger gone" }), transcript([ won ]))[:beat]).to match(/confesses/)
+    standing = { "name" => "contest_standing", "args" => { "actor_id" => player.id, "target_id" => maren.id, "action" => "press Maren" },
+                 "result" => { "verdict" => "Maren won — the player's attempt failed; pressed again, the verdict stands", "player_won" => false, "repeat" => true } }
+    expect(run(active_with(present: [ maren ], agendas: { maren.id => "wants the stranger gone" }), transcript([ standing ]))).to be_nil   # a re-press turn, same rule
   end
 
   it "the beat's voicing sees lines staged earlier this turn (same-turn visibility)" do
