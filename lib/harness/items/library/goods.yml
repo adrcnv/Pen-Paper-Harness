@@ -1,0 +1,40 @@
+# Goods — trade wares a working person can put on the table: hides, cloth,
+# cordage, hand tools, sundries. No modifiers, no effects; worth a few coins
+# via the `goods` tag (Items::Value). A character's own word for the thing
+# picks the template by kind (Library.template_for) and names the row.
+
+- id: hide
+  kind_pool:    [pelt, hide, fleece, fur, skin]
+  flavor_pool:  [fox, hare, sheep, goat, deer, wolf, cured, raw]
+  base_tags:    [goods, hide]
+  weight: 30
+
+- id: cloth
+  kind_pool:    [bundle of wool, bolt of cloth, length of linen, woven blanket, wool cloak, sack]
+  flavor_pool:  [coarse, undyed, grey, thick, patched]
+  base_tags:    [goods, cloth]
+  weight: 30
+
+- id: cordage
+  kind_pool:    [length of rope, coil of twine, fishing net, leather strap, cord]
+  flavor_pool:  [tarred, hempen, frayed, new]
+  base_tags:    [goods]
+  weight: 15
+
+- id: tool
+  kind_pool:    [flint scraper, awl, knife, needle, whetstone, hatchet, hammer, chisel]
+  flavor_pool:  [worn, iron, bone, keen, chipped]
+  base_tags:    [goods, tool]
+  weight: 20
+
+- id: timber
+  kind_pool:    [length of squared pine, plank, beam, pole, bundle of staves, split log]
+  flavor_pool:  [green, seasoned, knotty, straight, pitch-smelling]
+  base_tags:    [goods, timber]
+  weight: 15
+
+- id: sundries
+  kind_pool:    [tallow candle, block of salt, jar of tallow, bundle of firewood, sack of charcoal, clay jug, basket]
+  flavor_pool:  [rough, plain, small, heavy]
+  base_tags:    [goods]
+  weight: 15

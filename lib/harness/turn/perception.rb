@@ -125,10 +125,12 @@ module Harness
       def render(context:, parts:, view: nil, changed: nil, shift_only: false, include_figures: true, logger: Rails.logger)
         view ||= observable_view(context)
         payload = if shift_only
-          # The place name only: the hour rides in `changed` when it turned,
-          # and as a standing field it was the hook for an establishing
-          # opener ("Morning light slants through…") on every shift.
-          { "place" => (view["place"] || {}).slice("name") }.compact
+          # The place name and the hour. The hour was dropped once (it hooked
+          # an establishing opener on every shift) and the model then invented
+          # one — "late afternoon light" at 10:42, three times in one run
+          # (items probe 2026-09-13). A wrong fact is worse than a filler
+          # opener; the opener is the prompt's job to hold.
+          { "place" => (view["place"] || {}).slice("name"), "time_of_day" => view["time_of_day"] }.compact
         else
           view.dup
         end

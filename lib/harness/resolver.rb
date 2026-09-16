@@ -27,6 +27,7 @@ module Harness
       Tools::GiveItem,
       Tools::BuyItem,
       Tools::SellItem,
+      Tools::TradeItems,
       Tools::OpenContainer,
       Tools::Resolve,
       Tools::AwardXP,

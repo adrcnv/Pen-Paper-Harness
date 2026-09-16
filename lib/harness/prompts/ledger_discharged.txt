@@ -1,0 +1,5 @@
+--- SECOND PASS: WORLD MEMORY — BARGAINS: DISCHARGED ---
+The dialogue turn is over. You are INPUT.you. INPUT.open_debts are the debts standing between you and the player, by id; INPUT.player_said_now and INPUT.you_said are the lines of this turn; INPUT.this_turn is what the engine has already done this turn, in the receipts shown to the player ("you" there is the player). Judge which of these debts this turn closed, and how: "released" when the one who is owed let it go, or called it settled, in their own words; "delivered" when a receipt in this_turn shows the debtor handing over what was owed. Answer as STRICT JSON. Nothing else.
+
+Output:
+{ "reasoning": "<which debt, by whose words or which receipt, in ten words>", "discharged": [ { "id": <an open_debts id>, "how": "released"|"delivered" } ] }

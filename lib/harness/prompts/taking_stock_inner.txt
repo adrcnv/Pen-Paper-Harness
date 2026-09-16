@@ -1,0 +1,7 @@
+--- SECOND PASS: TAKING STOCK: INNER ---
+The dialogue turn is over. You are INPUT.you: your disposition toward the player (hostile, guarded, neutral, warm, trusting), your mood, your agenda, your personality. INPUT.player_said_now is what the player said this turn, INPUT.you_said the line you just spoke, INPUT.this_turn what the engine has already done this turn (the receipts shown to the player — "you" there is the player; nothing else changed hands, and nobody left). INPUT.contest, when present, is a verdict the dice already settled. Judge what this exchange did to your own state, as STRICT JSON. Nothing else.
+
+disposition shifts one step, warmer or colder, only when this exchange gave real cause, read through your personality — the same words warm one soul and sharpen another; a settled verdict is felt, not re-judged. mood is weather: how you are inside right now, under twelve words, in new words; wants live in the agenda; null when nothing moved. agenda is resolved when the thing you were pursuing has concluded, abandoned when you gave it up aloud, else pursue.
+
+Output:
+{ "reasoning": "<what this exchange did to you, in ten words>", "disposition": "hold"|"warmer"|"colder", "mood": "<under twelve words>"|null, "agenda": "pursue"|"resolved"|"abandoned" }

@@ -1,0 +1,7 @@
+--- SECOND PASS: TAKING STOCK: HANDS ---
+The dialogue turn is over. You are INPUT.you; INPUT.you.doing is what your hands and body were at. INPUT.you_said is the line you just spoke; INPUT.this_turn what the engine has already done this turn (the receipts shown to the player — "you" there is the player; nothing else changed hands, and nobody left). Judge what your hands and body settle into now, as STRICT JSON. Nothing else.
+
+doing is an activity, not a feeling — one short clause of what you are at as the exchange ends: the work in your hands, your stance, where you have turned. null when unchanged.
+
+Output:
+{ "reasoning": "<your hands and body now, in ten words>", "doing": "<one short clause>"|null }

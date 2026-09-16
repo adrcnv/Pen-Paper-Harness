@@ -9,6 +9,12 @@
   base_tags:    [provision, drink]
   weight: 50
 
+- id: staple
+  kind_pool:    [wheel of cheese, sack of barley, sack of oats, round of butter, jar of honey, string of onions]
+  flavor_pool:  [hard, coarse, fresh, last-season, sweet]
+  base_tags:    [provision, food]
+  weight: 30
+
 - id: meal
   kind_pool:    [stew, pottage, black bread, salt fish, hard cheese, sausage]
   flavor_pool:  [hot, hearty, day-old, thin, smoked, greasy]

@@ -37,6 +37,20 @@ module Harness
       # A resolver over the full tool set. The runner only CALLS the subset it
       # needs — the narrowness is in the runner's code + prompt, not the tool
       # registry. (In structured-emit runners the LLM sees no tools at all.)
+      # What the engine has already done this turn, as the receipts shown to
+      # the player: earlier steps' tool calls on the transcript plus this
+      # runner's own so far. Judges read it so a thing already handed over,
+      # bought or paid for is history to them, not a fresh act.
+      RECEIPT_CALLS = %w[pickup drop give_item trade_items transfer_coins buy_item sell_item offer_item destroy_item
+                         wager_void wager_stake haggled npc_leave resolve contest_standing contest_chance].freeze
+      def receipts_this_turn(context, tcs)
+        calls = Array(context.turn_transcript&.tool_calls) + Array(tcs)
+        calls.filter_map do |tc|
+          next unless RECEIPT_CALLS.include?(tc["name"])
+          ::Harness::Turn::Parts.render_call(tc, context, nil)&.dig(:text).presence
+        end
+      end
+
       def resolver_for(context)
         ::Harness::Resolver.new(context: context, tools: ::Harness::Resolver::DEFAULT_TOOLS, logger: @logger)
       end
@@ -142,21 +156,69 @@ module Harness
       #
       # `cache` memoizes index→id so a figure referenced twice in one turn
       # (healed AND spoken to) promotes exactly once. Returns the new id or nil.
-      def promote_extra(resolver, context, scene, index, subrole, into:, cache:)
+      # THE PROMOTION JUDGE: who a painted figure is, judged once from its
+      # description when the player engages it — the trade (the vocations
+      # alphabet, commoner when none is named) and the gender the words
+      # paint. Replaces the voicing's `subrole` emit and the gendered-word
+      # lists (2026-09-16): "an old woman sorting mushrooms" is named as a
+      # woman, and a promoted extra with a trade lays a table.
+      PROMOTION_PATH = Rails.root.join("lib/harness/prompts/promotion.txt")
+      def promotion_schema
+        @promotion_schema ||= {
+          "type" => "object",
+          "properties" => {
+            "reasoning" => { "type" => "string" },
+            "trade"     => { "type" => "string", "enum" => ::Harness::Vocations.all + %w[commoner] },
+            "gender"    => { "type" => "string", "enum" => %w[male female unknown] }
+          },
+          "required" => %w[reasoning trade gender],
+          "additionalProperties" => false
+        }.freeze
+      end
+
+      def judge_figure(context, desc)
+        payload = { "looks" => desc, "trades" => ::Harness::Vocations.all + %w[commoner] }
+        raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
+          llm(context).complete(system: (@promotion_prompt ||= File.read(PROMOTION_PATH)), user: "INPUT:\n#{JSON.pretty_generate(payload)}",
+                                schema: promotion_schema, temperature: 0, thinking: false)
+        end
+        out = parse_emit(raw)
+        return nil unless out.is_a?(::Hash) && out.key?("trade")
+        @logger.info { "[Runner #{self.name}] figure judged: #{out['trade']}, #{out['gender']} (#{out['reasoning']})" }
+        out
+      rescue StandardError => e
+        @logger.warn { "[Runner #{self.name}] promotion judge failed: #{e.class}: #{e.message}" }
+        nil
+      end
+
+      def promote_extra(resolver, context, scene, index, into:, cache:)
         return cache[index] if cache.key?(index)
         desc = Array(scene && scene["present_extras"])[index]
         return (cache[index] = nil) unless desc.is_a?(String) && desc.strip != ""
 
-        name = ::Harness::Naming.unique_for(location: context.player_location)
+        judged = judge_figure(context, desc) || {}
+        trade  = ::Harness::Vocations.all.include?(judged["trade"]) ? judged["trade"] : "commoner"
+        gender = %w[male female].include?(judged["gender"]) ? judged["gender"] : nil
+        # Named as painted: "an old woman sorting mushrooms" is not Vseslav
+        # (items run 8 t26). Nothing gendered in the words → the usual roll.
+        name = ::Harness::Naming.unique_for(location: context.player_location, gender: gender)
         res, ok = execute_tool(resolver, "propose_character", {
           "name"       => name,
-          "subrole"    => subrole.to_s.strip.presence || "commoner",
+          "subrole"    => trade,
           "connection" => "materialized from an ambient figure the player engaged directly: #{desc}",
           "properties" => { "physical" => desc },
           "from_extra" => desc
         }, into: into)
 
         id = (ok && res.is_a?(Hash)) ? (res["character_id"] || res["id"]) : nil
+        if id && (npc = ::Npc.find_by(id: id))
+          # The thing painted on the figure comes real with them (Items::Offers).
+          if (ware = ::Harness::Items::Offers.materialize_described!(npc, desc, context.player_location, context.game_time))
+            price = ::Harness::Tools::QueryScene.shop_price(ware, context.player_location)
+            into << tool_call("offer_item", { "seller_id" => npc.id, "item_id" => ware.id },
+                              { "item_id" => ware.id, "item_name" => ware.name, "seller_id" => npc.id, "price" => price })
+          end
+        end
         if id && (active = context.active_scene)
           active.snapshot = ::Harness::Scene::Assembler.for(location: context.player_location)
         end

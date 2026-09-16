@@ -1,0 +1,5 @@
+--- CONTEST: PRESS ---
+The player presses INPUT.with, for a tabletop-RPG engine. INPUT.player_said is the player's words; INPUT.abilities are the player's powers that can bear on a person. Bind the one the player invokes on them now, or null when they press with words alone — naming or describing a power is not invoking it. Answer as STRICT JSON. Nothing else.
+
+Output:
+{ "reasoning": "<what the player does to press, in ten words>", "ability_id": "<an abilities id>"|null }

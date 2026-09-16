@@ -63,7 +63,9 @@ module Harness
           arrival = { part: part, place: tc.dig("result", "moved_to", "name") } if tc["name"] == "transition"
         end
         if transcript.unresolved
-          parts << { kind: :stock, text: "Nothing comes of it — #{transcript.unresolved.to_s.strip}." }
+          # The runner that hit the dead end voices it when it can (causal
+          # authority = rendering authority); the generic stall line is the floor.
+          parts << { kind: :stock, text: Array(transcript.null_lines).first.presence || "Nothing comes of it — #{transcript.unresolved.to_s.strip}." }
         end
         parts.reject { |p| p[:text].to_s.strip.empty? }
       end
@@ -75,17 +77,24 @@ module Harness
 
         case tc["name"]
         when "resolve"          then bracket(tc)
+        when "contest_chance"   then bracket(tc)
         when "contest_standing" then standing_bracket(tc)
         when "propose_event"    then event_part(args, result)
         when "display_fragment" then fragment_part(args)
         when "display_perception" then perception_part(args)
         when "transition"       then arrival_card(result, context, scene)
         when "travel"           then travel_line(result)
-        when "pickup"           then line("You take the #{result['item_name']}.")
+        when "pickup"           then pickup_line(result)
         when "drop"             then line("You set down the #{result['item_name']}.")
         when "give_item"        then give_line(args, result)
+        when "trade_items"      then line("You trade the #{result['item_name']}#{" and #{coins(result['coins'])}" if result['coins'].to_i > 0} for #{Array(result['received']).map { |r| "the #{r['name']}" }.join(' and ')}.")
         when "transfer_coins"   then coins_line(result)
         when "buy_item"         then trade_line(result, "buy")
+        when "offer_item"       then offer_line(result)
+        when "destroy_item"     then (result["consumed"] ? line("You #{result['consumed']} the #{result['item_name']}.") : nil)
+        when "wager_void"       then line("No wager — #{result['reason']}.")
+        when "wager_stake"      then line(result["player_won"] ? "The #{result['item_name']} is yours." : "The #{result['item_name']} goes to #{result['target_name']}'s table.")
+        when "haggled"          then line("#{char_name(args['target_id'])} lets the #{result['item_name']} go for #{coins(result['price'])}.")
         when "sell_item"        then trade_line(result, "sell")
         when "open_container"   then open_line(result)
         when "pass_time"        then pass_time_line(result)
@@ -94,7 +103,7 @@ module Harness
         when "start_combat"     then line("⚔ The fight begins.")
         when "harm"             then line("You take #{result['damage']} damage: #{args['what']}.")
         when "npc_leave"        then line("#{args['name']} leaves for #{args['to']}.")
-        when "conversation_silence" then { kind: :stock, text: SILENCE_LINE }
+        when "conversation_silence" then { kind: :stock, text: (result.is_a?(Hash) && result["nobody_here"]) ? "No one here answers." : SILENCE_LINE }
         when "meta"             then { kind: :stock, text: "(The moment passes.)" }
         end
       end
@@ -153,23 +162,52 @@ module Harness
         { kind: :card, text: card }
       end
 
+      # Whoever gave: the player's own hand-over, or a character's give beat
+      # (items run 8 t34: Borys's ale rendered as "You hand the sour ale to Mira").
       def give_line(args, result)
         item = result.is_a?(Hash) && result["item_name"] || "item"
-        to   = char_name(result.is_a?(Hash) && result["to_id"] || args["to_id"])
-        line("You hand the #{item} to #{to}.")
+        from = (result.is_a?(Hash) && result["from_id"]) || args["from_id"]
+        to   = (result.is_a?(Hash) && result["to_id"]) || args["to_id"]
+        return line("#{char_name(from)} hands you the #{item}.") if from && from != player_id && to == player_id
+        return line("#{char_name(from)} hands the #{item} to #{char_name(to)}.") if from && from != player_id
+        line("You hand the #{item} to #{char_name(to)}.")
       end
 
       def coins_line(result)
         return nil unless result.is_a?(Hash) && result["amount"]
         payer_is_player = result["from_id"] == player_id
         other = char_name(payer_is_player ? result["to_id"] : result["from_id"])
-        text  = payer_is_player ? "You pay #{other} #{result['amount']} coins." :
-                                  "#{other} pays you #{result['amount']} coins."
+        text  = payer_is_player ? "You pay #{other} #{coins(result['amount'])}." :
+                                  "#{other} pays you #{coins(result['amount'])}."
         if (ob = result["obligation"])
           text += ob["status"] == "settled" ? " The debt is settled." :
-                                              " #{ob['remaining']} coins still owed."
+                                              " #{coins(ob['remaining'])} still owed."
         end
         line(text)
+      end
+
+      def pickup_line(result)
+        return nil unless result.is_a?(Hash)
+        text = "You take the #{result['item_name']}."
+        text += " #{result['stolen_from']} watches it go — #{coins(result['price'])} owed." if result["stolen_from"]
+        line(text)
+      end
+
+      # A thing an NPC set out for sale this turn (Items::Offers): the record
+      # of the offer, price included, so the player's next line binds to it.
+      def offer_line(result)
+        return nil unless result.is_a?(Hash)
+        name = result["item_name"].to_s
+        return nil if name.empty?
+        line("#{char_name(result['seller_id'])} presents #{article(name)} #{name}#{result['price'] ? " (#{coins(result['price'])})" : ''}.")
+      end
+
+      def article(name)
+        name.to_s =~ /\A[aeiou]/i ? "an" : "a"
+      end
+
+      def coins(n)
+        n.to_i == 1 ? "1 coin" : "#{n} coins"
       end
 
       def trade_line(result, verb)
@@ -177,7 +215,7 @@ module Harness
         item  = result["item_name"] || result.dig("item", "name") || "the goods"
         price = result["price"] || result["amount"]
         text  = verb == "buy" ? "You buy the #{item}" : "You sell the #{item}"
-        text += " for #{price} coins" if price
+        text += " for #{coins(price)}" if price
         line("#{text}.")
       end
 

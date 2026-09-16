@@ -7,8 +7,8 @@ RSpec.describe Harness::Knowledge::Capture do
   # Ingestion-only since the reflection rework: the payload arrives already
   # extracted (the speaker's own reflection output); the llm serves only the
   # revision judge + embeddings.
-  def capture(payload, location: tavern, game_time: 100, context: nil, speaker: "Tomas", llm: StubLLM.new { "{}" }, player_spoke: true, records: nil)
-    described_class.ingest(payload: payload, speaker: speaker, llm: llm, location: location, game_time: game_time, context: context, player_spoke: player_spoke, records: records)
+  def capture(payload, location: tavern, game_time: 100, context: nil, speaker: "Tomas", llm: StubLLM.new { "{}" }, player_spoke: true, records: nil, tool_calls: nil)
+    described_class.ingest(payload: payload, speaker: speaker, llm: llm, location: location, game_time: game_time, context: context, player_spoke: player_spoke, records: records, tool_calls: tool_calls)
   end
 
   def facts(*fs) = { "facts" => fs }
@@ -353,7 +353,34 @@ RSpec.describe Harness::Knowledge::Capture do
     let!(:speaker_row) { Npc.create!(name: "Tomas", subrole: "barkeep", location: tavern) }
     let!(:player)      { Player.create!(name: "Gu", location: tavern) }
 
-    def deals(*ds) = { "deals" => ds }
+    # Every deal closes on someone's word: proposed by one side, accepted by
+    # the other. Specs that test the closing razor override these.
+    def deals(*ds) = { "deals" => ds.map { |d| { "proposed_by" => "player", "accepted_by" => "you" }.merge(d) } }
+
+    describe "the closing razor (a proposal left hanging is not a deal)" do
+      it "drops a deal with no acceptance, or one side doing both" do
+        expect {
+          capture({ "deals" => [ { "who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 2, "terms" => "Two coins for the fish", "proposed_by" => "you" } ] })
+          capture({ "deals" => [ { "who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 2, "terms" => "Two coins for the fish", "proposed_by" => "you", "accepted_by" => "you" } ] })
+        }.not_to change(Obligation, :count)
+      end
+
+      it "the player's acceptance needs the player's words this turn" do
+        expect {
+          capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "deed", "terms" => "Bring the net round", "proposed_by" => "you", "accepted_by" => "player"), player_spoke: false)
+        }.not_to change(Obligation, :count)
+        expect {
+          capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "deed", "terms" => "Bring the net round", "proposed_by" => "you", "accepted_by" => "player"), player_spoke: true)
+        }.to change(Obligation, :count).by(1)
+      end
+
+      it "a wager the dice settled this turn is done, not owed" do
+        roll = { "name" => "resolve", "args" => { "actor_id" => player.id, "target_id" => speaker_row.id, "action" => "wager with Tomas: 2 coins against 2 coins" }, "result" => { "outcome" => "success" } }
+        expect {
+          capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "coins", "amount" => 2, "terms" => "Two coins on the throw"), tool_calls: [ roll ])
+        }.not_to change(Obligation, :count)
+      end
+    end
 
     it "writes an open obligation between the speaker and the player" do
       capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 5,
@@ -380,92 +407,64 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Location.where("LOWER(name) = ?", "the old bridge")).to be_empty
     end
 
-    describe "machine-tense (a payment executed this turn is history, not a debt)" do
-      def ctx_with_transfer(from_id, to_id)
-        ctx = Harness::Turn::Context.new(player_location: tavern)
-        ctx.turn_transcript = Struct.new(:tool_calls).new(
-          [ { "name" => "transfer_coins", "result" => { "from_id" => from_id, "to_id" => to_id, "amount" => 3 } } ]
-        )
-        ctx
-      end
-
-      it "skips a coins deal when the matching transfer already executed this turn" do
-        expect {
-          capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "coins", "amount" => 3,
-                        "terms" => "Three coppers for the sweat"),
-                  context: ctx_with_transfer(speaker_row.id, player.id))
-        }.not_to change(Obligation, :count)
-      end
-
-      it "still mints when the executed transfer was a different pair or direction" do
-        expect {
-          capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "coins", "amount" => 3,
-                        "terms" => "Three coppers for the ale"),
-                  context: ctx_with_transfer(speaker_row.id, player.id))
-        }.to change(Obligation, :count).by(1)
-      end
-
-      it "never suppresses deed deals (only coins have a transfer to match)" do
-        expect {
-          capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed",
-                        "terms" => "Haul the stone"),
-                  context: ctx_with_transfer(player.id, speaker_row.id))
-        }.to change(Obligation, :count).by(1)
-      end
-    end
-
-    describe "discharged (the settle writer — rows die the way they're born, by the spoken word)" do
+    describe "discharged (the settle writer — rows die the way they're born, on the ledger's word, by id)" do
       def discharge(*ds) = { "discharged" => ds }
 
-      it "settles an open obligation when the CREDITOR speaks the release" do
+      it "settles the named open obligation when the creditor's words released it" do
         ob = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
                                 terms: "Secure the crates", status: "open", game_time: 90)
-        capture(discharge("who_owed" => "Gu", "kind" => "deed"))
+        capture(discharge("id" => ob.id, "how" => "released"))
         expect(ob.reload.status).to eq("settled")
       end
 
-      it "settles the OLDEST open row of that kind between the pair" do
+      it "a coin debt dies by transfer or by release — never by delivery in words" do
+        ob = Obligation.create!(debtor: player, creditor: speaker_row, kind: "coins", amount: 41,
+                                terms: "took the falchion without paying", status: "open", game_time: 90)
+        capture(discharge("id" => ob.id, "how" => "delivered"))
+        expect(ob.reload.status).to eq("open")
+        capture(discharge("id" => ob.id, "how" => "released"))
+        expect(ob.reload.status).to eq("settled")
+      end
+
+      it "settles the row it names, not the oldest of its kind" do
         older = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
                                    terms: "Secure the crates", status: "open", game_time: 80)
         newer = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
                                    terms: "Move the bunks", status: "open", game_time: 90)
-        capture(discharge("who_owed" => "Gu", "kind" => "deed"))
-        expect(older.reload.status).to eq("settled")
-        expect(newer.reload.status).to eq("open")
+        capture(discharge("id" => newer.id, "how" => "delivered"))
+        expect(older.reload.status).to eq("open")
+        expect(newer.reload.status).to eq("settled")
       end
 
-      it "the PLAYER's release of the speaker's own debt settles it (who_owed = the speaker; the player has no pass of their own)" do
+      it "the speaker's own debt to the player settles on the player's release (the debtor's pass reports it; the player has no pass)" do
         ob = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
                                 terms: "Mend the net for Gu", status: "open", game_time: 90)
-        capture(discharge("who_owed" => "Tomas", "kind" => "deed"))
+        capture(discharge("id" => ob.id, "how" => "released"))
         expect(ob.reload.status).to eq("settled")
       end
 
-      it "a self-named release with no debt to the player behind it settles nothing (the debtor's imagined release)" do
-        ob = Obligation.create!(debtor: speaker_row, creditor: player, kind: "coins", amount: 3,
-                                terms: "Three coppers", status: "open", game_time: 90)
-        capture(discharge("who_owed" => "Tomas", "kind" => "deed"))
-        expect(ob.reload.status).to eq("open")
+      it "a debt with a third party is not the speaker's to settle, whichever seat they hold" do
+        harek  = Npc.create!(name: "Harek", subrole: "fisher", location: tavern)
+        theirs = Obligation.create!(debtor: speaker_row, creditor: harek, kind: "deed",
+                                    terms: "Mend Harek's net", status: "open", game_time: 90)
+        capture(discharge("id" => theirs.id, "how" => "released"))
+        expect(theirs.reload.status).to eq("open")
       end
 
-      it "a third party's name releases nothing either way" do
-        ob = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
-                                terms: "Mend the net for Gu", status: "open", game_time: 90)
-        capture(discharge("who_owed" => "Harek", "kind" => "deed"))
-        expect(ob.reload.status).to eq("open")
+      it "an id with no open row behind it settles nothing and doesn't raise" do
+        ob = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
+                                terms: "Secure the crates", status: "settled", game_time: 90)
+        expect {
+          capture(discharge({ "id" => ob.id, "how" => "released" }, { "id" => ob.id + 1000, "how" => "released" }))
+        }.not_to raise_error
+        expect(ob.reload.status).to eq("settled")
       end
 
-      it "an imagined debt (no matching open row) settles nothing and doesn't raise" do
-        ob = Obligation.create!(debtor: player, creditor: speaker_row, kind: "coins", amount: 3,
-                                terms: "Three coppers", status: "open", game_time: 90)
-        capture(discharge("who_owed" => "Gu", "kind" => "deed"))
+      it "a malformed discharge (no id, or a how outside released/delivered) is ignored" do
+        ob = Obligation.create!(debtor: player, creditor: speaker_row, kind: "deed",
+                                terms: "Secure the crates", status: "open", game_time: 90)
+        capture(discharge({ "who_owed" => "Gu", "kind" => "deed", "how" => "released" }, { "id" => ob.id, "how" => "paid" }))
         expect(ob.reload.status).to eq("open")
-      end
-
-      it "a deal struck and acknowledged done in the same pass settles at birth" do
-        capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed",
-                      "terms" => "Haul the stone").merge(discharge("who_owed" => "Gu", "kind" => "deed")))
-        expect(Obligation.last).to have_attributes(kind: "deed", status: "settled")
       end
     end
 
@@ -485,7 +484,7 @@ RSpec.describe Harness::Knowledge::Capture do
       end
 
       it "claims the pair, so the refused bargain cannot slip in as a same-pair fact" do
-        capture({ "deals" => [ { "who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Help mend the roof" } ],
+        capture({ "deals" => [ { "who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Help mend the roof", "proposed_by" => "you", "accepted_by" => "player" } ],
                   "facts" => [ { "content" => "Gu agreed to help Tomas mend the roof.", "scope" => "local",
                                  "concerns" => [ "Gu", "Tomas" ] } ] },
                 player_spoke: false)

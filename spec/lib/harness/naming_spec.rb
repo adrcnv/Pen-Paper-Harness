@@ -66,6 +66,14 @@ RSpec.describe Harness::Naming do
   end
 
   describe ".unique_for" do
+    it "draws from the pool of the gender given, when the culture has gendered pools" do
+      stub_culture = { "id" => "two", "given_male" => [ "Vseslav" ], "given_female" => [ "Bogna" ], "family" => [ "Mardek" ] }
+      allow(Harness::Naming::Library).to receive(:default).and_return(stub_culture)
+      allow(described_class).to receive(:culture_for).and_return(stub_culture)
+      expect(described_class.unique_for(location: sub, rng: Random.new(0), gender: "female")).to eq("Bogna Mardek")
+      expect(described_class.unique_for(location: sub, rng: Random.new(0), gender: "male")).to eq("Vseslav Mardek")
+    end
+
     it "returns a name not present in Character.name" do
       name = described_class.unique_for(location: sub, rng: Random.new(0))
       expect(Character.exists?(name: name)).to be(false)

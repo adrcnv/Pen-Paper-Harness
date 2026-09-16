@@ -1,0 +1,7 @@
+--- SECOND PASS: WORLD MEMORY — BARGAINS: STRUCK ---
+The dialogue turn is over. You are INPUT.you. INPUT.exchange is the conversation as it stood, INPUT.player_said_now what the player said this turn, INPUT.you_said the line you just spoke, INPUT.this_turn what the engine has already done this turn (the receipts shown to the player — "you" there is the player), INPUT.open_debts what already stands between you and the player. Judge ONE thing: did this exchange close a bargain between you and the player — terms put forward by one side and taken by the other side's own words, now. Answer as STRICT JSON. Nothing else.
+
+A bargain closes on words from both sides: a price named and taken, a swap proposed and agreed, work promised for pay, a meeting fixed. The terms may have been put forward in the exchange before; the words that close on them are in this turn. A debt already in open_debts was struck before. A game or wager is the dice's business, not a bargain. Most exchanges close nothing.
+
+Output:
+{ "reasoning": "<the words in player_said_now or you_said that take terms, or none — ten words>", "struck": true|false, "proposed_by": "player"|"you"|"none", "accepted_by": "player"|"you"|"none" }

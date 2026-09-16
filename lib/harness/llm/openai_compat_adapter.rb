@@ -119,13 +119,14 @@ module Harness
         )
       end
 
-      def complete(system:, user:, schema: nil, max_tokens: nil)
+      def complete(system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil)
         messages = []
         messages << { "role" => "system", "content" => system } if system.is_a?(String) && !system.empty?
         messages << { "role" => "user",   "content" => user }
+        think = thinking.nil? ? @think_in_complete : thinking
 
         response = begin
-          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete, schema: schema, max_tokens: max_tokens)
+          post_chat(messages: messages, tools: nil, enable_thinking: think, schema: schema, max_tokens: max_tokens, temperature: temperature)
         rescue APIError => e
           # A schema the server's grammar compiler rejects must not silently
           # kill the call site (reflection's rescue would eat the claims).
@@ -136,7 +137,7 @@ module Harness
           # (2026-09-12, "schema rejections 3" under a 429 storm).
           raise unless schema && SCHEMA_REJECTED.include?(e.status)
           @logger.warn { "[OpenAICompatAdapter] json_schema rejected (#{e.message.to_s[0, 160]}) — retrying unconstrained" }
-          post_chat(messages: messages, tools: nil, enable_thinking: @think_in_complete, max_tokens: max_tokens)
+          post_chat(messages: messages, tools: nil, enable_thinking: think, max_tokens: max_tokens, temperature: temperature)
         end
         extract_text(response)
       end
@@ -194,12 +195,13 @@ module Harness
       }.freeze
 
       # Public so OpenAICompatTurn can call back in.
-      def post_chat(messages:, tools: nil, enable_thinking: nil, schema: nil, max_tokens: nil)
+      def post_chat(messages:, tools: nil, enable_thinking: nil, schema: nil, max_tokens: nil, temperature: nil)
         payload = {
           "model"      => @model,
           "max_tokens" => max_tokens || @max_tokens,
           "messages"   => messages
         }
+        payload["temperature"] = temperature unless temperature.nil?
         payload.merge!(DRY_SAMPLING) if @dialect == "llamacpp"
         payload["tools"] = tools if tools.is_a?(Array) && !tools.empty?
         # Grammar-constrained output: the model CANNOT emit the wrong shape.

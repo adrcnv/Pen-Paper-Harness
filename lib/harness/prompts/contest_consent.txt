@@ -1,0 +1,5 @@
+--- CONTEST: CONSENT ---
+You are INPUT.you, a character in a tabletop-RPG conversation: your personality, your disposition toward the player (hostile, guarded, neutral, warm, trusting), your mood, your agenda, your purse, what stands between you (debts). INPUT.player_said is what the player asks of you; INPUT.kind is what the engine read it as; INPUT.terms, when present, what is on the table. Judge whether it becomes a contest, as STRICT JSON. For a press: would you withhold what is asked — is it something you would not freely give? For a game or wager: do you take the challenge? Nothing else.
+
+Output:
+{ "reasoning": "<why you would, or would not, in ten words>", "contest": true|false }

@@ -10,11 +10,12 @@ RSpec.describe Harness::Scene::Initiative do
   let(:context) { Harness::Turn::Context.new(player_location: loc, game_time: 100, llm_nuance: llm) }
 
   # v4: the initiative pass is a SELECTOR; the chosen NPC then speaks through
-  # the conversation runner's full voicing (+ reflection + taking-stock).
-  # The stub serves all four surfaces by prompt sniffing.
-  def stub_llm(selector:, line: nil, speak: true, beat: nil)
+  # the conversation runner's full voicing (+ act judge + reflection +
+  # taking-stock). The stub serves all five surfaces by prompt sniffing.
+  NO_ACT = { "act" => "none", "to_id" => nil, "coins" => nil, "item_id" => nil, "item" => nil, "category" => nil, "place_id" => nil }.freeze
+  def stub_llm(selector:, line: nil, speak: true, act: nil)
     Class.new do
-      define_method(:complete) do |system:, user:, schema: nil|
+      define_method(:complete) do |system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil|
         full = "#{system}\n#{user}"
         if full.include?("TAKING STOCK")
           { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
@@ -22,8 +23,10 @@ RSpec.describe Harness::Scene::Initiative do
           { "facts" => [], "people" => [], "places" => [] }.to_json
         elsif full.include?("filter stored facts")
           { "relevant" => [] }.to_json
+        elsif full.include?("DID with their hands")
+          (act || NO_ACT).to_json
         elsif full.include?("You voice ONE character")
-          { "speak" => speak, "dialogue" => (speak ? { "summary" => "acts", "prose" => line.to_s } : nil), "beat" => beat }.compact.to_json
+          { "speak" => speak, "dialogue" => (speak ? { "summary" => "acts", "prose" => line.to_s } : nil) }.to_json
         else
           selector.to_json
         end
@@ -63,7 +66,7 @@ RSpec.describe Harness::Scene::Initiative do
     it "skips the selector LLM entirely when no candidate has agenda, debts, or disposition" do
       selector_called = false
       probe = Class.new do
-        define_method(:complete) do |system:, user:, schema: nil|
+        define_method(:complete) do |system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil|
           selector_called = true
           { "actor" => nil }.to_json
         end
@@ -77,7 +80,7 @@ RSpec.describe Harness::Scene::Initiative do
     it "still consults the selector when a candidate has an agenda" do
       called = false
       probe = Class.new do
-        define_method(:complete) do |system:, user:, schema: nil|
+        define_method(:complete) do |system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil|
           called = true
           { "actor" => nil }.to_json
         end
@@ -95,7 +98,7 @@ RSpec.describe Harness::Scene::Initiative do
                          terms: "Three coins for the room", game_time: 90)
       called = false
       probe = Class.new do
-        define_method(:complete) do |system:, user:, schema: nil|
+        define_method(:complete) do |system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil|
           called = true
           { "actor" => nil }.to_json
         end
@@ -122,7 +125,7 @@ RSpec.describe Harness::Scene::Initiative do
   it "does not spend the settle on a later turn: cooldown nil but turns already recorded → arms and consults the selector" do
     called = false
     probe = Class.new do
-      define_method(:complete) do |system:, user:, schema: nil|
+      define_method(:complete) do |system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil|
         called = true
         { "actor" => nil }.to_json
       end
@@ -155,13 +158,14 @@ RSpec.describe Harness::Scene::Initiative do
     expect(a.last_initiator).to eq(maren.id)
   end
 
-  it "an unprompted beat with no line still acts: the silent payment goes through the hands" do
+  it "an unprompted line that pays goes through the hands: the act judge reads it and the coins move" do
     ivo = npc(name: "Ivo")
     ivo.update!(coins: 6)
     player.update!(coins: 0)
     Obligation.create!(debtor_id: ivo.id, creditor_id: player.id, kind: "coins", amount: 3, terms: "for the ale", status: "open", game_time: 0)
-    context.llm_nuance = stub_llm(selector: { "actor" => "Ivo", "cause" => "settle what he owes" }, speak: false,
-                                  beat: [ { "step" => "give", "who" => player.name, "where" => nil, "coins" => 3 } ])
+    context.llm_nuance = stub_llm(selector: { "actor" => "Ivo", "cause" => "settle what he owes" },
+                                  line: "Ivo counts three coppers onto the table. 'For the ale.'",
+                                  act: NO_ACT.merge("act" => "give", "to_id" => player.id, "coins" => 3))
     active = active_with(present: [ ivo ], agendas: { ivo.id => "pay the player back" })
     t = transcript
     run(active, t)
@@ -271,7 +275,7 @@ RSpec.describe Harness::Scene::Initiative do
     voicing_prompt = nil
     a = active_with(present: [ maren, gerd ], agendas: { gerd.id => "wants the flooding dealt with" })
     context.llm_nuance = Class.new do
-      define_method(:complete) do |system:, user:, schema: nil|
+      define_method(:complete) do |system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil|
         full = "#{system}\n#{user}"
         if full.include?("TAKING STOCK")
           { "assessment" => "holds", "disposition" => "hold", "mood" => nil, "agenda" => "pursue" }.to_json
@@ -310,7 +314,7 @@ RSpec.describe Harness::Scene::Initiative do
                        terms: "For the mended cloak", game_time: 0)
     selector_prompt = nil
     context.llm_nuance = Class.new do
-      define_method(:complete) do |system:, user:, schema: nil|
+      define_method(:complete) do |system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil|
         selector_prompt = user unless user.include?("You voice ONE character")
         { "actor" => nil, "cause" => "" }.to_json
       end

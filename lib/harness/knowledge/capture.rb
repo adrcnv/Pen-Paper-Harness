@@ -48,8 +48,9 @@ module Harness
       # records: what the speaker was HANDED before speaking — {"events" =>
       # [[id, text]...], "facts" => [[id, text]...]}; the judge's additions
       # and retold ids name these in ONE 1-based space (events, then facts).
-      def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, player_spoke: true, records: nil, logger: Rails.logger)
+      def initialize(payload:, speaker:, llm:, location:, game_time: 0, context: nil, player_spoke: true, records: nil, tool_calls: nil, logger: Rails.logger)
         @payload   = payload    # the speaker's parsed reflection output {facts, people, places}
+        @tool_calls = tool_calls   # the calling runner's own trail this turn — not yet on the transcript while it runs
         @records   = records || {}
         @speaker   = speaker.to_s
         @llm       = llm        # revision judge + embeddings only (no extraction call)
@@ -248,6 +249,29 @@ module Harness
             next
           end
           pair = [ debtor.id, creditor.id ].sort
+          # A bargain closes on someone's word. The judge names who proposed
+          # and who accepted; a deal with no acceptance, or one side doing
+          # both, is a proposal left hanging (items run 8: Zenek's own offer
+          # to buy the fish booked as the player's debt; a refused wager
+          # booked whole). The player's acceptance needs the player's words.
+          prop, acc = d["proposed_by"].to_s, d["accepted_by"].to_s
+          unless %w[player you].include?(prop) && %w[player you].include?(acc) && prop != acc
+            @logger.info { "[Knowledge::Capture] deal dropped (no closing word: proposed_by=#{prop.inspect} accepted_by=#{acc.inspect}): #{d['terms'].to_s[0, 80]}" }
+            pairs << pair   # claimed: a hanging proposal must not slip in as a same-pair fact either
+            next
+          end
+          if acc == "player" && !@player_spoke
+            @logger.info { "[Knowledge::Capture] deal dropped (the player accepted nothing on a turn they did not speak): #{d['terms'].to_s[0, 80]}" }
+            pairs << pair
+            next
+          end
+          # A wager settled by the dice this turn is history, not a debt —
+          # the stakes already moved (one writer: the contest).
+          if wager_settled_this_turn?(debtor, creditor)
+            @logger.info { "[Knowledge::Capture] deal dropped (a wager between #{debtor.name} and #{creditor.name} settled this turn): #{d['terms'].to_s[0, 80]}" }
+            pairs << pair
+            next
+          end
           # The silent-player razor: an unprompted line cannot commit the
           # player to anything — they said nothing to accept. The pair is
           # still claimed so the same bargain can't slip in as a fact.
@@ -258,15 +282,6 @@ module Harness
           end
           if ::Obligation.open_now.exists?(debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s)
             @logger.info { "[Knowledge::Capture] deal skipped (open #{d['kind']} obligation #{debtor.name}→#{creditor.name} already on the books)" }
-            pairs << pair
-            next
-          end
-          # Machine-tense: a coin payment that already EXECUTED this turn is
-          # history, not a debt — judged from the turn's tool trail, never
-          # from the prose's tense (the model narrating the handover it also
-          # performed must not double-book it as owed).
-          if d["kind"] == "coins" && transfer_executed_this_turn?(debtor, creditor)
-            @logger.info { "[Knowledge::Capture] deal skipped (transfer #{debtor.name}→#{creditor.name} already executed this turn — paid, not owed)" }
             pairs << pair
             next
           end
@@ -306,54 +321,50 @@ module Harness
         end
       end
 
-      def transfer_executed_this_turn?(debtor, creditor)
+      def wager_settled_this_turn?(a, b)
         calls = @context.respond_to?(:turn_transcript) ? @context&.turn_transcript&.tool_calls : nil
-        Array(calls).any? { |tc|
-          tc["name"] == "transfer_coins" &&
-            tc.dig("result", "from_id") == debtor.id && tc.dig("result", "to_id") == creditor.id
+        ids   = [ a.id, b.id ]
+        (Array(calls) + Array(@tool_calls)).any? { |tc|
+          %w[resolve contest_standing contest_chance].include?(tc["name"]) &&
+            tc.dig("args", "action").to_s.start_with?("wager with") &&
+            ids.include?(tc.dig("args", "target_id")) && ids.include?(tc.dig("args", "actor_id"))
         }
       end
 
       def extract_discharges(parsed)
         Array(parsed.is_a?(::Hash) ? parsed["discharged"] : nil).select do |d|
-          d.is_a?(::Hash) && ::Obligation::KINDS.include?(d["kind"].to_s) && d["who_owed"].to_s.strip != ""
+          d.is_a?(::Hash) && d["id"].is_a?(::Integer) && %w[released delivered].include?(d["how"].to_s)
         end
       end
 
       # The discharge writer — the mirror of write_deals: rows are born when
-      # a deal is spoken, they die when release is spoken. The razor is
-      # mechanical: only the CREDITOR releases, and the creditor is the
-      # SPEAKER — the debtor claiming it's done settles nothing. Matches the
-      # oldest open row of that kind between the pair; no row → the model
-      # imagined a debt, drop silently.
-      # A release is the CREDITOR's spoken word. Two legal shapes: the speaker
-      # releasing a debt owed to them (who_owed = the debtor), or the player
-      # releasing a debt the speaker owes (who_owed = the speaker). The player
-      # has no reflection pass, so the debtor's own pass reports the player's
-      # release — the same seat already reports the player's spoken acceptance
-      # when a deal is struck. Never a third party, never self-to-self.
+      # a deal is spoken, they die when the ledger's discharge judge names
+      # them by id: released by the creditor's own words, or delivered as
+      # the turn's receipts show. Mechanical here: the row must be open and
+      # between the speaker and the player (the only pair a speaker's pass
+      # can settle), and coins die only by release — the engine counts
+      # coins, so a coin debt paid is settled by transfer_coins, never by
+      # word (items run 8 t25: 17 coins against 41 owed, the transfer
+      # refused, the voice said "paid in full", the old judge settled it).
       def settle_discharges(discharges)
         return if discharges.empty?
         speaker = deal_party(@speaker)
-        return unless speaker
-        player = ::Player.first
+        player  = ::Player.first
+        return unless speaker && player && player.id != speaker.id
+        pair = [ speaker.id, player.id ].sort
 
         discharges.each do |d|
-          named = deal_party(d["who_owed"])
-          next unless named
-          if named.id == speaker.id
-            next unless player && player.id != speaker.id
-            debtor, creditor = speaker, player
-          else
-            debtor, creditor = named, speaker
+          ob = ::Obligation.open_now.find_by(id: d["id"])
+          unless ob && [ ob.debtor_id, ob.creditor_id ].sort == pair
+            @logger.info { "[Knowledge::Capture] discharge dropped (no open debt ##{d['id']} between #{speaker.name} and #{player.name})" }
+            next
           end
-          ob = ::Obligation.open_now.where(debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s).order(:id).first
-          unless ob
-            @logger.info { "[Knowledge::Capture] discharge dropped (no open #{d['kind']} obligation #{debtor.name}→#{creditor.name})" }
+          if ob.kind == "coins" && d["how"] != "released"
+            @logger.info { "[Knowledge::Capture] discharge dropped (coins settle by transfer, not by word: ##{ob.id})" }
             next
           end
           ob.update!(status: "settled")
-          @logger.info { "[Knowledge::Capture] OBLIGATION ##{ob.id} SETTLED by #{creditor.name}'s word: #{ob.terms}" }
+          @logger.info { "[Knowledge::Capture] OBLIGATION ##{ob.id} SETTLED (#{d['how']}): #{ob.terms}" }
         rescue ::StandardError => e
           @logger.warn { "[Knowledge::Capture] discharge failed: #{e.class}: #{e.message}" }
         end

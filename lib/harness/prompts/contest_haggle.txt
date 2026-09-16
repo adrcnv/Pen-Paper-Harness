@@ -1,0 +1,5 @@
+--- CONTEST: HAGGLE ---
+The player haggles with INPUT.with, for a tabletop-RPG engine. INPUT.player_said is the player's words; INPUT.wares are their things for sale here, by id, with the asking price. Bind the ware the player bargains over and the coins the player names for it. Answer as STRICT JSON. Nothing else.
+
+Output:
+{ "reasoning": "<which ware, what price named, in ten words>", "ware_id": <a wares id>|null, "offer": <integer>|null }

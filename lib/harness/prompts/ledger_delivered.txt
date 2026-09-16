@@ -1,0 +1,5 @@
+--- SECOND PASS: WORLD MEMORY — BARGAINS: DELIVERED ---
+You are INPUT.you. A bargain between you and the player closed this turn; INPUT.sides lists what each side owes under it, numbered. INPUT.this_turn is what the engine has already done this turn, in the receipts shown to the player ("you" there is the player; a buy or sell receipt carries both the coins and the thing). Judge which sides those receipts already carried out in full — the coins counted over, the thing handed over. Answer as STRICT JSON. Nothing else.
+
+Output:
+{ "reasoning": "<which receipt carries out which side, in ten words>", "delivered": [ <side numbers> ] }

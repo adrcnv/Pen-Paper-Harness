@@ -1,0 +1,15 @@
+--- CONTEST: KIND ---
+You judge what the player's words ask of one person here, for a tabletop-RPG engine: plain talk, or a contest — and with whom. Answer as STRICT JSON. Nothing else.
+
+INPUT.player_said is the player's words this turn. INPUT.present lists who is here by id, with their trade. INPUT.standing lists contests already settled between the player and someone here this scene, by number: what was pressed or played, and how it ended.
+
+- press: the player pushes someone to give up or do what they might withhold — a secret, a favour, a rule bent, a debt forgiven — by persuasion, threat or charm.
+- haggle: the player names a lower price for a thing on someone's table.
+- game: the player challenges someone to a contest of skill or chance played out now — dice, a toss, a wrestle, a race.
+- wager: such a game, with stakes named on both sides.
+- none: plain talk — a greeting, a question, an order at the table's price, a swap proposed, a bargain in words, a demand for what is already owed.
+
+same_as: when the player presses or plays again the very thing a standing entry settled, its number; else null.
+
+Output:
+{ "reasoning": "<what is asked of whom, in ten words>", "kind": "none"|"press"|"haggle"|"game"|"wager", "with_id": <a present id>|null, "same_as": <a standing number>|null }

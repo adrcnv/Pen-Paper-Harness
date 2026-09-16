@@ -309,6 +309,25 @@ RSpec.describe Harness::Turn::Loop do
       t = silent_loop.run_turn(input: "anyone?")
       expect(t.parts).to eq([ { kind: :stock, text: "No one reacts." } ])
     end
+
+    it "stays quiet on a turn whose step was skipped — a non-event earns no reaction, and the dead end speaks for itself" do
+      skipping = Class.new(Harness::Runners::Base) do
+        def run(**)
+          Harness::Runners::Outcome.new(status: :skipped, scene_dirty: false, tool_calls: [],
+                                        note: "give without item_id", null_line: "There's nothing like that to hand over.")
+        end
+      end.new
+      allow(Harness::Planner).to receive(:plan_for).and_return(
+        "plan" => [ { "runner" => "hand", "reason" => "hand over the shield", "args" => {} } ],
+        "parse_error" => nil, "raw" => "", "duration_ms" => 1, "model" => "fake", "world" => {}
+      )
+      expect(Harness::Scene::Initiative).not_to receive(:run)
+      loop = described_class.new(adapter: Harness::LLM::FakeAdapter.new(narration: "(n)"), context: context,
+                                 registry: { "hand" => skipping })
+      t = loop.run_turn(input: "hand over the shield")
+      expect(t.unresolved).to be_present
+      expect(t.parts).to eq([ { kind: :stock, text: "There's nothing like that to hand over." } ])
+    end
   end
 
   describe "perception (the player's eyes)" do

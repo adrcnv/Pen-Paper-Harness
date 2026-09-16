@@ -53,6 +53,24 @@ RSpec.describe Harness::Planner do
       expect(result["world"]).to be_a(Hash)
     end
 
+    it "tells the planner what the player carries — a carried thing named as handed over is inventory, not a gesture" do
+      player = Player.create!(name: "Hero", location: tavern)
+      Item.create!(name: "battered round shield", character: player)
+      captured = nil
+      a = adapter(->(user) { captured = user; { "plan" => [] }.to_json })
+      plan_for(model: a, location: tavern, sm: scene_manager_for(tavern, characters: [ npc ]), input: "hold out the shield. 'Take it.'")
+      expect(captured).to include('"carried"').and include("battered round shield")
+    end
+
+    it "reads present items fresh from the rows — a table laid after the scene was built is bindable (items run 9, t32)" do
+      captured = nil
+      a = adapter(->(user) { captured = user; { "plan" => [] }.to_json })
+      sm = scene_manager_for(tavern, characters: [ npc ], items: [])   # the snapshot predates the laying
+      butter = Item.create!(name: "hard round of butter", location: tavern, properties: { "for_sale" => true, "seller_id" => npc.id })
+      plan_for(model: a, location: tavern, sm: sm, input: "five coins against that butter")
+      expect(captured).to include("hard round of butter").and include(%("id": #{butter.id}))
+    end
+
     it "surfaces present characters, items, and nearby locations to the planner" do
       captured = nil
       a = adapter(->(user) { captured = user; { "plan" => [] }.to_json })
@@ -72,7 +90,27 @@ RSpec.describe Harness::Planner do
 
       plan_for(model: a, location: tavern, sm: scene_manager_for(tavern, extras: [ "a hunched figure mending a net" ]), input: "talk to the figure")
 
-      expect(JSON.parse(captured.sub(/\AINPUT:\n/, ""))["present_extras"]).to eq([ "a hunched figure mending a net" ])
+      expect(JSON.parse(captured.sub(/\AINPUT:\n/, ""))["present_extras"]).to eq([ { "index" => 0, "looks" => "a hunched figure mending a net" } ])
+    end
+  end
+
+  describe "the addressee (A1): whom a conversation step's words are for" do
+    it "binds with_id or figure from the step into its args, ints only; nothing named is the room" do
+      body = { "reasoning" => "single step", "plan" => [
+        { "reason" => "ask Tomas", "runner" => "conversation", "with_id" => npc.id, "figure" => nil },
+        { "reason" => "hand it over", "runner" => "inventory", "with_id" => nil, "figure" => nil },
+        { "reason" => "ask the figure", "runner" => "conversation", "with_id" => nil, "figure" => 0 }
+      ] }.to_json
+      result = plan_for(model: adapter(body), location: tavern, sm: scene_manager_for(tavern, characters: [ npc ], extras: [ "a hunched figure" ]), input: "…")
+      expect(result["plan"].map { |st| st["args"] }).to eq([ { "with_id" => npc.id }, {}, { "figure" => 0 } ])
+    end
+
+    it "the plan grammar: reason before runner, the addressee fields required-nullable; every field the prompt names is in the grammar" do
+      step = described_class::PLAN_SCHEMA["properties"]["plan"]["items"]
+      expect(step["properties"].keys).to eq(%w[reason runner with_id figure])
+      expect(step["required"]).to eq(step["properties"].keys)
+      named = File.read(described_class::PROMPT_PATH).split("You output STRICT JSON", 2).last.split("RUNNER LABELS", 2).first.scan(/"(\w+)":/).flatten.uniq
+      expect(named.sort).to eq(%w[figure plan reason reasoning runner with_id])
     end
   end
 

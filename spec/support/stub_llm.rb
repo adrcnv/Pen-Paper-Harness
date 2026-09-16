@@ -18,23 +18,25 @@
 class StubLLM
   class CacheDriftError < StandardError; end
 
-  attr_reader :system_calls, :user_calls, :schema_calls
+  attr_reader :system_calls, :user_calls, :schema_calls, :sampling_calls
 
   def initialize(strict: false, &block)
-    @block        = block
-    @strict       = strict
-    @system_calls = []
-    @user_calls   = []
-    @schema_calls = []
+    @block          = block
+    @strict         = strict
+    @system_calls   = []
+    @user_calls     = []
+    @schema_calls   = []
+    @sampling_calls = []
   end
 
-  def complete(system:, user:, schema: nil, max_tokens: nil)
+  def complete(system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil)
     if @strict && @system_calls.any? && @system_calls.last != system
       raise CacheDriftError, drift_message(@system_calls.last, system)
     end
-    @system_calls << system
-    @user_calls   << user
-    @schema_calls << schema
+    @system_calls   << system
+    @user_calls     << user
+    @schema_calls   << schema
+    @sampling_calls << { temperature: temperature, thinking: thinking, max_tokens: max_tokens }
     @block.call("#{system}\n#{user}")
   end
 

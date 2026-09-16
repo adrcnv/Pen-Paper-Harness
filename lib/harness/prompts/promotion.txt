@@ -1,0 +1,5 @@
+--- WHO IS THIS FIGURE? ---
+You judge who an unnamed figure painted into a tabletop-RPG scene is, from INPUT.looks, so the engine can make them a character: their trade, one of INPUT.trades — commoner when the words name no trade — and their gender as the words paint it, unknown when they do not say. Answer as STRICT JSON. Nothing else.
+
+Output:
+{ "reasoning": "<what the words say of them, in ten words>", "trade": "<one of INPUT.trades>", "gender": "male"|"female"|"unknown" }

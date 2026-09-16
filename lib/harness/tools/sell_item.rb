@@ -52,10 +52,18 @@ module Harness
         return { "error" => "merchant id=#{merchant_id} is not at a location" } unless shop
         return { "error" => "seller id=#{seller_id} is not with the merchant" } unless seller.location_id == shop.id
 
-        categories = shop.properties.is_a?(Hash) ? Array(shop.properties["shop"]) : []
-        return { "error" => "#{shop.name} is not a shop" } if categories.empty?
+        # A shop buys what it stocks, through whoever sells here (staff, or the
+        # venue's trade); a person buys what their own trade deals in besides
+        # (Items::Offers — the same map that lays their table). Nobody with a
+        # trade → nobody to sell to. Items run 8 t22: the market square's stall
+        # list (weapons/armor/jewelry) stood in for the fishmonger's own trade
+        # and he could not buy back a fish.
+        stocked    = shop.properties.is_a?(Hash) ? Array(shop.properties["shop"]) : []
+        categories = ::Harness::Items::Offers.categories_for(merchant, shop)
+        categories = (categories + stocked).uniq if sells_here?(merchant, shop)
+        return { "error" => "#{merchant.name} doesn't buy such things" } if categories.empty?
         unless deals_in?(categories, item)
-          return { "error" => "#{shop.name} doesn't deal in that (sells: #{categories.join('/')})" }
+          return { "error" => "#{merchant.name} doesn't deal in that (buys: #{categories.join('/')})" }
         end
 
         facts = ::Harness::Settlement::Facts.for(shop)
@@ -69,7 +77,8 @@ module Harness
           merchant.update!(coins: merchant.coins - price)
           seller.update!(coins: seller.coins + price)
           props = item.properties.dup
-          props["for_sale"] = true
+          props["for_sale"]  = true
+          props["seller_id"] = merchant.id   # it re-enters the economy on the buyer's table, under their name
           item.update!(character_id: nil, location_id: shop.id, properties: props)
         end
 
@@ -87,10 +96,17 @@ module Harness
 
       private
 
+      def sells_here?(merchant, shop)
+        return true if merchant.respond_to?(:home_location_id) && merchant.home_location_id == shop.id
+        trade = shop.properties.is_a?(Hash) ? shop.properties["trade"].to_s : ""
+        !trade.empty? && merchant.subrole.to_s.downcase.include?(trade.downcase)
+      end
+
       def deals_in?(categories, item)
         tags = Array(item.properties.is_a?(Hash) ? item.properties["tags"] : nil)
-        # category keys map to a tag: weapons→weapon, armor→armor, jewelry→jewelry
-        wanted = categories.map { |c| c.to_s.sub(/s\z/, "") }
+        # category keys map to a tag: weapons→weapon, armor→armor, jewelry→jewelry,
+        # goods→goods (the tag keeps its s)
+        wanted = categories.flat_map { |c| [ c.to_s, c.to_s.sub(/s\z/, "") ] }
         (wanted & tags).any?
       end
 
@@ -100,6 +116,7 @@ module Harness
           scope:     "personal",
           location:  merchant.location,
           details: {
+            "summary"   => "#{seller.name} sold #{item.name} to #{merchant.name} for #{price} coins",
             "sell_item" => {
               "seller_id" => seller.id, "merchant_id" => merchant.id,
               "item_id" => item.id, "item_name" => item.name, "price" => price

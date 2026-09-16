@@ -49,14 +49,25 @@ module Harness
         unless item.properties.is_a?(Hash) && item.properties["for_sale"]
           return { "error" => "item id=#{item_id} is not for sale" }
         end
+        # A ware put on the table in conversation is paid to whoever put it
+        # there, whichever present character the runner named as merchant.
+        if (seller = ::Character.find_by(id: item.properties["seller_id"]))
+          merchant = seller
+        end
 
         shop_loc = item.location_id
         return { "error" => "item id=#{item_id} is not anchored to a shop (owned, not stock)" } if shop_loc.nil?
         return { "error" => "buyer id=#{buyer_id} is not at the shop (loc=#{buyer.location_id}, item at #{shop_loc})" } unless buyer.location_id == shop_loc
         return { "error" => "merchant id=#{merchant_id} is not at the shop" } unless merchant.location_id == shop_loc
+        # Shop stock is sold by the venue's keeper (staff at their post) or
+        # someone of its trade — not by whichever patron the runner named
+        # (items run 3: a labourer took a coin for the tavern's cider while
+        # the barkeep slept). A recorded seller was resolved above.
+        unless seller || sells_here?(merchant, item.location)
+          return { "error" => "#{merchant.name} does not keep this stall — no one here to sell it" }
+        end
 
-        facts = ::Harness::Settlement::Facts.for(item.location)
-        price = ::Harness::Economy::Pricing.buy_price(item, wealth: facts["wealth"], economic_basis: facts["economic_basis"])
+        price = ::Harness::Tools::QueryScene.shop_price(item, item.location)   # a won haggle's price, else the settlement's
 
         if buyer.coins.to_i < price
           return { "error" => "buyer id=#{buyer_id} has #{buyer.coins.to_i} coins; #{item.name} costs #{price}" }
@@ -67,6 +78,8 @@ module Harness
           merchant.update!(coins: merchant.coins + price)
           props = item.properties.dup
           props.delete("for_sale")
+          props.delete("seller_id")
+          props.delete("haggled_price")
           item.update!(location_id: nil, character_id: buyer.id, properties: props)
         end
 
@@ -84,12 +97,19 @@ module Harness
 
       private
 
+      def sells_here?(merchant, shop)
+        return true if merchant.respond_to?(:home_location_id) && merchant.home_location_id == shop.id
+        trade = shop.properties.is_a?(Hash) ? shop.properties["trade"].to_s : ""
+        !trade.empty? && merchant.subrole.to_s.downcase.include?(trade.downcase)
+      end
+
       def log_event(buyer, merchant, item, price, context)
         ::Harness::Event::ForwardAppender.append(
           game_time: context.game_time || 0,
           scope:     "personal",
           location:  buyer.location || merchant.location,
           details: {
+            "summary"  => "#{buyer.name} bought #{item.name} from #{merchant.name} for #{price} coins",
             "buy_item" => {
               "buyer_id" => buyer.id, "merchant_id" => merchant.id,
               "item_id" => item.id, "item_name" => item.name, "price" => price

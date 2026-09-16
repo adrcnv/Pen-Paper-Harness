@@ -25,9 +25,9 @@ module Harness
   # `culture_id` when missing.
   module Naming
     class << self
-      def for(location:, rng: Random.new)
+      def for(location:, rng: Random.new, gender: nil)
         culture = culture_for(location) || Library.default
-        given   = sample(given_pool(culture, rng), rng)
+        given   = sample(given_pool(culture, rng, gender), rng)
         family  = culture["family"].any? ? sample(culture["family"], rng) : nil
         [ given, family ].compact.reject(&:empty?).join(" ")
       end
@@ -61,11 +61,11 @@ module Harness
       # OPEN with a loud warn and the old full-name-only rule — a Roman
       # suffix keeps its first token, so pretending would be worse than a
       # rare honest duplicate. Never blocks a spawn.
-      def unique_for(location:, rng: Random.new, attempts: 10)
+      def unique_for(location:, rng: Random.new, attempts: 10, gender: nil)
         taken    = settlement_first_names(location)
         families = player_family_names
         attempts.times do
-          name   = self.for(location: location, rng: rng)
+          name   = self.for(location: location, rng: rng, gender: gender)
           tokens = name.split(/\s+/)
           next if taken.include?(tokens.first.downcase)
           # The player's family name is off-limits everywhere too: a stranger
@@ -262,16 +262,21 @@ module Harness
         taken << name.to_s.downcase if taken
       end
 
-      # Roll a gender, return the matching given-name pool. Falls back to the
-      # combined/legacy `given` pool when a culture lacks the gendered pools
-      # (test stubs, hand-built culture hashes). The gender roll consumes one
-      # rng draw before the name sample, which is fine — callers that need
-      # determinism seed their own rng.
-      def given_pool(culture, rng)
+      # Roll a gender — or take the one given (a figure the eyes painted as a
+      # woman is named as one) — and return the matching given-name pool.
+      # Falls back to the combined/legacy `given` pool when a culture lacks
+      # the gendered pools (test stubs, hand-built culture hashes). The gender
+      # roll consumes one rng draw before the name sample, which is fine —
+      # callers that need determinism seed their own rng.
+      def given_pool(culture, rng, gender = nil)
         male   = Array(culture["given_male"])
         female = Array(culture["given_female"])
         if male.any? && female.any?
-          rng.rand < 0.5 ? male : female
+          case gender.to_s
+          when "female" then female
+          when "male"   then male
+          else rng.rand < 0.5 ? male : female
+          end
         else
           Array(culture["given"])
         end

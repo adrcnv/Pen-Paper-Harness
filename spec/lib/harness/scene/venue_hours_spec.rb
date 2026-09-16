@@ -27,9 +27,9 @@ RSpec.describe Harness::Scene::VenueHours do
   end
 
   describe ".open? / .closed?" do
-    it "a tavern is shut of a morning only — staffed day, evening, and NIGHT" do
+    it "a tavern is staffed round the clock (user ruling 2026-09-15: off-hours read as a vacuum)" do
       tavern = loc("the Alehouse")
-      expect(described_class.open?(tavern, :morning)).to be(false)
+      expect(described_class.open?(tavern, :morning)).to be(true)
       expect(described_class.open?(tavern, :day)).to be(true)
       expect(described_class.open?(tavern, :evening)).to be(true)
       expect(described_class.open?(tavern, :night)).to be(true)
@@ -64,13 +64,24 @@ RSpec.describe Harness::Scene::VenueHours do
   describe ".residents_present? (who is home and awake)" do
     it "classified venues follow their hours, including tavern nights" do
       expect(described_class.residents_present?(loc("the Alehouse"), :night)).to be(true)
-      expect(described_class.residents_present?(loc("the Alehouse"), :morning)).to be(false)
+      expect(described_class.residents_present?(loc("the Alehouse"), :morning)).to be(true)   # round the clock
       expect(described_class.residents_present?(loc("the Mill"), :evening)).to be(false)
     end
 
     it "everywhere else follows the day/night rhythm" do
       expect(described_class.residents_present?(loc("the Moot Hall"), :day)).to be(true)
       expect(described_class.residents_present?(loc("the Moot Hall"), :night)).to be(false)
+    end
+  end
+
+  describe ".kind — a minted venue" do
+    it "reads the kind from the manifest key or the description's opening when the name carries no venue word" do
+      cask = Location.create!(name: "the Sunken Cask", description: "A weathered tavern built into the lee of a salt-bleached dune, its low door kept ajar.")
+      expect(described_class.kind(cask)).to eq("tavern")
+      forge = Location.create!(name: "Hewett's", properties: { "manifest_key" => "smithy" })
+      expect(described_class.kind(forge)).to eq("trade")
+      hut = Location.create!(name: "a turf hut", description: "A low hut of turf and driftwood. Its owner drinks at the tavern most nights.")
+      expect(described_class.kind(hut)).to be_nil
     end
   end
 end

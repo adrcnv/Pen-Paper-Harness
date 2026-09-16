@@ -6,10 +6,10 @@ module Harness
     # cache, an old reliquary) roll for a chest at a weighted rarity. Idempotent
     # via `properties["treasure_seeded"]`. Pure mechanical.
     #
-    # This is ADDITIVE to Items::LocationSeeder's scattered floor-loot — a
-    # hideout can have loose gear AND a locked strongbox (the real prize).
-    # Adventure sites (crypts/ruins, when built) place chests explicitly rather
-    # than relying on this bucket roll.
+    # Chests are the only thing structure leaves lying in a place: loose
+    # floor-loot scatter was cut (2026-09-15) — things live in shops, chests,
+    # and hands, or the player makes them. Adventure sites (crypts/ruins, when
+    # built) place chests explicitly rather than relying on this bucket roll.
     module Seeder
       # bucket => weighted [rarity|nil]. nil = no chest this time.
       TABLE = {
@@ -29,7 +29,7 @@ module Harness
         return nil if location.nil?
         return nil if seeded?(location)
 
-        bucket = ::Harness::Items::LocationSeeder.bucket_for(location)
+        bucket = encounter_bucket(location)
         weights = TABLE[bucket]
         return mark(location) { nil } unless weights
 
@@ -47,6 +47,15 @@ module Harness
 
       def seeded?(location)
         location.properties.is_a?(Hash) && location.properties["treasure_seeded"] == true
+      end
+
+      # A wilderness leaf's encounter type names its bucket; every other
+      # location has none.
+      def encounter_bucket(location)
+        props = location.properties.is_a?(Hash) ? location.properties : {}
+        return nil unless props["kind"] == "wilderness_leaf"
+        etype = props["encounter_type"]
+        etype ? "encounter_#{etype}" : nil
       end
 
       def weighted_pick(weights, rng)

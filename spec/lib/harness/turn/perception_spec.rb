@@ -129,7 +129,7 @@ RSpec.describe Harness::Turn::Perception do
     end
   end
 
-  it "a SHIFT render gives the model only the place name and what changed — never the standing room, not even the hour" do
+  it "a SHIFT render gives the model the place name, the hour and what changed — never the standing room" do
     Npc.create!(name: "Bess", subrole: "barkeep", location: tavern, current_hp: 5, max_hp: 5)
     llm = StubLLM.new { "The light goes amber." }
     described_class.render(context: ctx(llm: llm), parts: [], shift_only: true,
@@ -138,10 +138,11 @@ RSpec.describe Harness::Turn::Perception do
     expect(input).to include('"changed"').and include("counting coin").and include('"Tavern"')
     expect(input).not_to include("peat smoke")     # the description is establishment material
     expect(input).not_to include('"people"' + ": [\n") if false
-    expect(JSON.parse(input.sub(/\AINPUT:\n/, "")).keys).to contain_exactly("place", "changed", "you")
+    expect(JSON.parse(input.sub(/\AINPUT:\n/, "")).keys).to contain_exactly("place", "time_of_day", "changed", "you")
+    expect(input).to include('"time_of_day": "day"')   # a fact, or the model invents one
 
-    described_class.render(context: ctx(llm: llm), parts: [], shift_only: true)   # nothing changed: place only
-    expect(JSON.parse(llm.user_calls.last.sub(/\AINPUT:\n/, "")).keys).to contain_exactly("place", "you")
+    described_class.render(context: ctx(llm: llm), parts: [], shift_only: true)   # nothing changed: place and hour only
+    expect(JSON.parse(llm.user_calls.last.sub(/\AINPUT:\n/, "")).keys).to contain_exactly("place", "time_of_day", "you")
 
     described_class.render(context: ctx(llm: llm), parts: [])                     # establishment: the whole view
     expect(llm.user_calls.last).to include("peat smoke").and include('"people"')

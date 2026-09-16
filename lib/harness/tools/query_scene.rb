@@ -161,6 +161,8 @@ module Harness
       # Buy price for a for-sale ware, using the enclosing settlement's wealth +
       # economic basis. Falls back to bare item value if no profile is resolvable.
       def self.shop_price(item, loc)
+        props = item.properties.is_a?(Hash) ? item.properties : {}
+        return props["haggled_price"].to_i if props["haggled_price"]   # settled by a won haggle, until it sells
         facts = ::Harness::Settlement::Facts.for(loc)
         ::Harness::Economy::Pricing.buy_price(
           item,

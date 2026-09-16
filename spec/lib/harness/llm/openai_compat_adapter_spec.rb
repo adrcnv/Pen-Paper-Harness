@@ -89,6 +89,18 @@ RSpec.describe Harness::LLM::OpenAICompatAdapter do
       expect(http.calls.first[:body]).not_to have_key("response_format")
     end
 
+    it "per-call sampling: temperature rides when given, thinking overrides the configured default" do
+      http = stub_http([ chat_response(text_message("{}")), chat_response(text_message("{}")) ])
+      a = adapter(http, dialect: "nvidia")
+      a.complete(system: "s", user: "u", temperature: 0, thinking: true)
+      a.complete(system: "s", user: "u")
+      judged, voiced = http.calls.map { |c| c[:body] }
+      expect(judged["temperature"]).to eq(0)
+      expect(judged["chat_template_kwargs"]).to eq({ "enable_thinking" => true })
+      expect(voiced).not_to have_key("temperature")
+      expect(voiced["chat_template_kwargs"]).to eq({ "enable_thinking" => false })
+    end
+
     it "omits the system message when empty" do
       http = stub_http([ chat_response(text_message("ok")) ])
       adapter(http).complete(system: "", user: "u")

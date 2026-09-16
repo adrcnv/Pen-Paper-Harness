@@ -17,8 +17,10 @@ module Harness
           "input_schema" => {
             "type"       => "object",
             "properties" => {
-              "item_id" => { "type" => "integer" },
-              "reason"  => { "type" => "string", "description" => "short free-text cause of the destruction" }
+              "item_id"  => { "type" => "integer" },
+              "reason"   => { "type" => "string", "description" => "short free-text cause of the destruction" },
+              "consumed" => { "type" => "string", "description" => "eat|drink when a provision was used up by its holder" },
+              "summary"  => { "type" => "string", "description" => "one line for the memory of those present" }
             },
             "required" => [ "item_id" ]
           }
@@ -41,17 +43,18 @@ module Harness
           scope:     "personal",
           location:  event_loc,
           details: {
+            "summary"     => args["summary"].to_s.strip.presence,
             "destruction" => {
               "target_type" => "item",
               "target_id"   => id,
               "target_name" => name,
               "reason"      => args["reason"].to_s.strip.presence
             }.compact
-          },
+          }.compact,
           participants: holder ? [ { character: holder, role: "holder" } ] : []
         )
 
-        { "item_id" => id, "item_name" => name, "destroyed" => true }
+        { "item_id" => id, "item_name" => name, "destroyed" => true, "consumed" => args["consumed"].to_s.strip.presence }.compact
       end
     end
   end

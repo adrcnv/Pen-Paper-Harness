@@ -75,6 +75,10 @@ module Harness
           scope:     "personal",
           location:  from.location,
           details: {
+            # The summary is what a voice reads back from memory; the tool hash
+            # alone renders as nothing (items run 2: Pellanor "hadn't brought
+            # it yet" one turn after handing it over).
+            "summary"   => "#{from.name} handed #{to.name} #{item.name}",
             "give_item" => {
               "from_id"   => from.id,
               "to_id"     => to.id,

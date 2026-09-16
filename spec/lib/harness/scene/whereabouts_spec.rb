@@ -69,11 +69,11 @@ RSpec.describe Harness::Scene::Whereabouts do
       expect(described_class.resolve(bandit, WB_NIGHT)).to eq(lair.id)
     end
 
-    it "keeps a tavern keeper behind the bar at night and sleeping of a morning" do
+    it "keeps a tavern keeper behind the bar at night and of a morning alike (round the clock, ruling 2026-09-15)" do
       alehouse = Location.create!(name: "the Alehouse", parent_id: mirehold.id)
       keeper   = npc(subrole: "barkeep", location_id: alehouse.id, home_location_id: alehouse.id)
       expect(described_class.resolve(keeper, WB_NIGHT)).to eq(alehouse.id)
-      expect(described_class.resolve(keeper, WB_MORNING)).to be_nil
+      expect(described_class.resolve(keeper, WB_MORNING)).to eq(alehouse.id)
     end
 
     it "honors a live pin for a free NPC" do

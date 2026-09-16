@@ -218,7 +218,10 @@ module Harness
           player_conversed = Array(transcript.tool_calls).any? { |tc|
             tc["name"] == "propose_event" && tc.dig("result", "staged")
           }
-          unless combat_result || @context.scene_dirty || @scene_manager.active&.in_combat? || player_conversed
+          # A skipped or unresolved step is a non-event: nothing happened for
+          # anyone to react to, and a beat here narrates the act that failed
+          # (items probe t12: "Nothing comes of it" above Eldri taking the shield).
+          unless combat_result || @context.scene_dirty || @scene_manager.active&.in_combat? || player_conversed || transcript.unresolved
             beat = maybe_run_initiative(transcript, narration)
             if beat && !beat.empty?
               # Someone acted after all: the runner's "No one reacts." (nobody

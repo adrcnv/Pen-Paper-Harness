@@ -7,121 +7,371 @@ RSpec.describe Harness::Runners::Inventory do
   let!(:locket)  { Item.create!(name: "smooth locket", location: tavern) }
   let(:step)    { Harness::Dispatcher::Step.new(runner: "inventory", intent: "take it", args: {}) }
 
-  def context_with(&block)
-    Harness::Turn::Context.new(player_location: tavern, llm_nuance: StubLLM.new(&block), game_time: 100)
+  INV_ACT_MARK  = "player's own hands"
+  INV_BIND_MARK = "bind the thing"
+
+  # One stub for the step: the act judge answers `act`, the binder `bind`
+  # (a hash, or a block called at bind time). `seen` collects every prompt.
+  def inv_ctx(act:, bind: nil, seen: [], extras: [], last_speakers: [])
+    stub = StubLLM.new do |full|
+      seen << full
+      if full.include?(INV_ACT_MARK)     then act.to_json
+      elsif full.include?(INV_BIND_MARK) then (bind.respond_to?(:call) ? bind.call : bind).to_json
+      else "{}"
+      end
+    end
+    ctx = Harness::Turn::Context.new(player_location: tavern, llm_nuance: stub, game_time: 100)
+    if extras.any? || last_speakers.any?
+      ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [], extras: extras, last_speakers: last_speakers)
+    end
+    ctx
   end
 
-  it "picks up an item off the floor" do
-    ctx = context_with { { "action" => "pickup", "item_id" => locket.id, "reason" => "pocket it" }.to_json }
-    scene = Harness::Tools::QueryScene.build(ctx)
+  def act(kind, with_id: nil, figure: nil, amount: nil) = { "reasoning" => "judged", "act" => kind, "with_id" => with_id, "figure" => figure, "amount" => amount }
+  def bound(id, *for_ids) = { "reasoning" => "bound", "item_id" => id, "for_item_ids" => for_ids }
+  def run!(ctx, input) = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: input, step: step)
+  def payload_of(prompt)
+    body = prompt.split("INPUT:\n", 2).last
+    JSON.parse(body[0..body.rindex("}")])
+  end
+  def prompts(seen, mark) = seen.select { |p| p.include?(mark) }
 
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "take the locket", step: step)
-    expect(outcome.status).to eq(:ok)
-    expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "pickup" ])
-    expect(locket.reload.character_id).to eq(player.id)
+  describe "the act judge" do
+    it "sees the player's words, purse, carried names and debts, what lies here with sellers and prices, who is here by id with their trade, painted figures by index, and the turn's receipts" do
+      Item.create!(name: "dark ale", subrole: "drink", location: tavern, properties: { "tags" => %w[provision drink], "modifiers" => [], "effects" => [], "for_sale" => true, "seller_id" => barkeep.id })
+      Item.create!(name: "trowel", character: player)
+      seen = []
+      ctx = inv_ctx(act: act("none"), seen: seen, extras: [ "a boy by the hearth" ], last_speakers: [ barkeep.id ])
+      Obligation.create!(debtor: barkeep, creditor: player, kind: "coins", amount: 1, terms: "for the cider", game_time: 90)
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "hand me the knife")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "give_item", "args" => { "item_id" => locket.id, "from_id" => barkeep.id, "to_id" => player.id }, "result" => { "item_id" => locket.id, "item_name" => "smooth locket", "from_id" => barkeep.id, "to_id" => player.id } } ])
+      run!(ctx, "hand me the knife")
+      judged = payload_of(prompts(seen, INV_ACT_MARK).first)
+      expect(judged["player_said"]).to eq("hand me the knife")
+      expect(judged["you"]).to eq("id" => player.id, "name" => "Hero", "coins" => 20)
+      expect(judged["carried"]).to eq([ "trowel" ])
+      expect(judged["debts"]).to eq([ "Tomas owes you 1 coins — for the cider" ])
+      expect(judged["here"]).to include({ "name" => "smooth locket" }, a_hash_including("name" => "dark ale", "for_sale_by" => "Tomas"))
+      expect(judged["here"].find { |h| h["name"] == "dark ale" }["price"]).to be_a(Integer)
+      expect(judged["present"]).to eq([ { "id" => barkeep.id, "name" => "Tomas", "trade" => "barkeep" } ])
+      expect(judged["figures"]).to eq([ { "index" => 0, "looks" => "a boy by the hearth" } ])
+      expect(judged["talking_to"]).to eq([ "Tomas" ])
+      expect(judged["this_turn"]).to eq([ "Tomas hands you the smooth locket." ])
+    end
+
+    it "none: asking someone else to hand over, pay or take is their act — the step is skipped with no line and no call" do
+      trowel = Item.create!(name: "trowel", character: player)
+      seen = []
+      outcome = run!(inv_ctx(act: act("none"), seen: seen), "\"Well? Hand me the knife then, Ragnar.\" Hold hand out and wait for him to actually give it over.")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to be_nil
+      expect(outcome.tool_calls).to be_empty
+      expect(prompts(seen, INV_BIND_MARK)).to be_empty
+      expect(trowel.reload.character_id).to eq(player.id)
+    end
+
+    it "runs at zero temperature with thinking off; reasoning first in both grammars; every field the prompts name is in the grammar" do
+      seen = []
+      ctx = inv_ctx(act: act("pickup"), bind: bound(locket.id), seen: seen)
+      run!(ctx, "take the locket")
+      llm = ctx.llm_nuance
+      expect(llm.sampling_calls).to all(eq(temperature: 0, thinking: false, max_tokens: nil))
+      expect(llm.sampling_calls.size).to eq(2)
+      { described_class::ACT_PROMPT_PATH => described_class::ACT_SCHEMA, described_class::BIND_PROMPT_PATH => described_class::BIND_SCHEMA }.each do |path, schema|
+        expect(schema["properties"].keys.first).to eq("reasoning")
+        expect(schema["required"]).to eq(schema["properties"].keys)
+        named = File.read(path).split("Output:", 2).last.scan(/"(\w+)":/).flatten.uniq
+        expect(named.sort).to eq(schema["properties"].keys.sort), "#{File.basename(path)} names #{named.inspect}"
+      end
+      output = File.read(described_class::ACT_PROMPT_PATH).split("Output:", 2).last
+      expect(output.scan(/"act": ((?:"\w+"\|?)+)/).flatten.first.scan(/\w+/).sort).to eq(described_class::ACTS.sort)
+    end
+
+    it "an unparseable act answer redispatches" do
+      ctx = Harness::Turn::Context.new(player_location: tavern, llm_nuance: StubLLM.new { "not json" }, game_time: 100)
+      expect(run!(ctx, "take the locket").status).to eq(:redispatch)
+    end
   end
 
-  it "transfers coins (player defaults as payer)" do
-    ctx = context_with { { "action" => "transfer_coins", "to_id" => barkeep.id, "amount" => 3, "reason" => "a tip" }.to_json }
-    scene = Harness::Tools::QueryScene.build(ctx)
+  describe "the binder sees only the list the act can be about, and an id off it binds nothing" do
+    it "pickup binds among the things lying here, never the player's own" do
+      trowel = Item.create!(name: "trowel", character: player)
+      seen = []
+      outcome = run!(inv_ctx(act: act("pickup"), bind: bound(locket.id), seen: seen), "take the locket")
+      expect(outcome.status).to eq(:ok)
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "pickup" ])
+      expect(locket.reload.character_id).to eq(player.id)
+      judged = payload_of(prompts(seen, INV_BIND_MARK).first)
+      expect(judged["act"]).to eq("pickup")
+      expect(judged["things"].map { |t| t["id"] }).to eq([ locket.id ])
+      expect(judged["things"].map { |t| t["id"] }).not_to include(trowel.id)
+    end
 
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "tip the barkeep 3 coins", step: step)
-    expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transfer_coins" ])
-    expect(player.reload.coins).to eq(17)
-    expect(barkeep.reload.coins).to eq(8)
+    it "a thing that exists only in fiction binds nothing — the dead end voices itself" do
+      outcome = run!(inv_ctx(act: act("pickup"), bind: bound(nil)), "take the ale")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("There's nothing like that here to take.")
+    end
+
+    it "with the chain shirt already gone, 'hand the chain shirt' binds nothing — the scimitar stays (an id off the list is refused, not substituted)" do
+      scimitar = Item.create!(name: "ancestral scimitar", character: player)
+      outcome = run!(inv_ctx(act: act("give", with_id: barkeep.id), bind: bound(nil)), "hand the chain shirt to Tomas")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("There's nothing like that to hand over.")
+      expect(scimitar.reload.character_id).to eq(player.id)
+      outcome = run!(inv_ctx(act: act("give", with_id: barkeep.id), bind: bound(locket.id)), "hand the locket to Tomas")   # not carried: off the list
+      expect(outcome.status).to eq(:skipped)
+      expect(locket.reload.location_id).to eq(tavern.id)
+    end
   end
 
-  it "skips (chain continues) when a transfer lacks recipient/amount — a deterministic dead end" do
-    ctx = context_with { { "action" => "transfer_coins", "reason" => "huh" }.to_json }
-    scene = Harness::Tools::QueryScene.build(ctx)
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "pay", step: step)
-    expect(outcome.status).to eq(:skipped)
+  describe "give" do
+    it "hands a carried thing to the present character the act judge named" do
+      shield = Item.create!(name: "studded round shield", character: player)
+      seen = []
+      outcome = run!(inv_ctx(act: act("give", with_id: barkeep.id), bind: bound(shield.id), seen: seen), "give Tomas my shield")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "give_item" ])
+      expect(shield.reload.character_id).to eq(barkeep.id)
+      expect(payload_of(prompts(seen, INV_BIND_MARK).first)["things"]).to eq([ { "id" => shield.id, "name" => "studded round shield" } ])
+    end
+
+    it "with no one bound to receive it, asks whom — never a guess from the room" do
+      shield = Item.create!(name: "studded round shield", character: player)
+      outcome = run!(inv_ctx(act: act("give"), bind: bound(shield.id)), "hand it over")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("Hand it to whom?")
+      expect(shield.reload.character_id).to eq(player.id)
+    end
+
+    it "a with_id that is not here, or the player's own, binds no one" do
+      shield = Item.create!(name: "studded round shield", character: player)
+      elsewhere = Npc.create!(name: "Far", subrole: "smith", location: Location.create!(name: "Elsewhere"))
+      expect(run!(inv_ctx(act: act("give", with_id: elsewhere.id), bind: bound(shield.id)), "give Far the shield").null_line).to eq("Hand it to whom?")
+      expect(run!(inv_ctx(act: act("give", with_id: player.id), bind: bound(shield.id)), "give myself the shield").null_line).to eq("Hand it to whom?")
+    end
+
+    it "a painted figure named by index is made real, as speech would make them, and receives it" do
+      kindling = Item.create!(name: "kindling", subrole: "firewood", character: player)
+      ctx = inv_ctx(act: act("give", figure: 0), bind: bound(kindling.id), extras: [ "a young boy stacking kindling near the hearth" ])
+      expect { run!(ctx, "walk up to the boy by the hearth and hand him the kindling") }.to change(Npc, :count).by(1)
+      boy = Npc.order(:id).last
+      expect(boy.properties["physical"]).to include("young boy")
+      expect(kindling.reload.character_id).to eq(boy.id)
+      expect(barkeep.reload.items).to be_empty
+    end
   end
 
-  it "records a no-recipient stake as an event without moving coins" do
-    ctx = context_with { { "action" => "transfer_coins", "amount" => 5, "reason" => "the knuckle-bones stake" }.to_json }
-    scene = Harness::Tools::QueryScene.build(ctx)
+  describe "drop and consume" do
+    it "drops a carried thing here" do
+      honey = Item.create!(name: "jar of honey", character: player)
+      outcome = run!(inv_ctx(act: act("drop"), bind: bound(honey.id)), "set the jar of honey on the bar")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "drop" ])
+      expect(honey.reload.location_id).to eq(tavern.id)
+    end
 
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "put 5 coins on the table", step: step)
+    it "eats or drinks a carried provision — the row is used up, the memory gets a line; anything else is refused" do
+      fish = Item.create!(name: "hot salt fish", subrole: "meal", character: player, properties: { "tags" => %w[provision food], "modifiers" => [], "effects" => [] })
+      outcome = run!(inv_ctx(act: act("consume"), bind: bound(fish.id)), "unwrap the hot salt fish and eat it")
+      expect(outcome.status).to eq(:ok)
+      expect(outcome.tool_calls.last).to include("name" => "destroy_item")
+      expect(outcome.tool_calls.last["result"]).to include("consumed" => "eat", "item_name" => "hot salt fish")
+      expect(Item.exists?(fish.id)).to be(false)
+      expect(Event.order(:id).last.details["summary"]).to eq("Hero ate the hot salt fish")
 
-    expect(outcome.status).to eq(:ok)
-    expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "propose_event" ])
-    expect(player.reload.coins).to eq(20)
-    expect(Event.joins(:event_participants).where(event_participants: { character_id: player.id })).to exist
+      stone = Item.create!(name: "whetstone", character: player)
+      outcome = run!(inv_ctx(act: act("consume"), bind: bound(stone.id)), "eat the whetstone")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("That isn't something to eat or drink.")
+      expect(Item.exists?(stone.id)).to be(true)
+    end
   end
 
-  it "skips a stake the player cannot cover" do
-    ctx = context_with { { "action" => "transfer_coins", "amount" => 500, "reason" => "bluff" }.to_json }
-    scene = Harness::Tools::QueryScene.build(ctx)
+  describe "pay" do
+    it "moves coins to the person the act judge named" do
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 3)), "tip the barkeep 3 coins")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transfer_coins" ])
+      expect(player.reload.coins).to eq(17)
+      expect(barkeep.reload.coins).to eq(8)
+    end
 
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "put 500 coins on the table", step: step)
+    it "without a sum, nothing changes hands" do
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id)), "pay")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("No sum was settled — nothing changes hands.")
+    end
 
-    expect(outcome.status).to eq(:skipped)
-    expect(outcome.null_line).to eq("You don't have that much coin.")
-    expect(Event.count).to eq(0)
+    it "with no one to receive it, records a stake as an event without moving coins; a stake the player cannot cover is refused" do
+      outcome = run!(inv_ctx(act: act("pay", amount: 5)), "put 5 coins on the table")
+      expect(outcome.status).to eq(:ok)
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "propose_event" ])
+      expect(player.reload.coins).to eq(20)
+      expect(Event.joins(:event_participants).where(event_participants: { character_id: player.id })).to exist
+
+      outcome = run!(inv_ctx(act: act("pay", amount: 500)), "put 500 coins on the table")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("You don't have that much coin.")
+    end
+
+    it "to a seller with a laid table: the binder names the ware the coins are for and it is bought; none named, their coin moves only for a debt or a thing they handed over this turn" do
+      mead = Item.create!(name: "honeyed mead", subrole: "drink", location: tavern, properties: { "tags" => %w[provision drink], "modifiers" => [], "effects" => [], "for_sale" => true, "seller_id" => barkeep.id })
+      seen = []
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 2), bind: bound(mead.id), seen: seen), "I'll take that honeyed mead — here's your two coins.")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "buy_item" ])
+      expect(mead.reload.character_id).to eq(player.id)
+      expect(payload_of(prompts(seen, INV_BIND_MARK).first)["things"].map { |t| t["id"] }).to eq([ mead.id ])
+    end
+
+    it "to a seller with a laid table and nothing bound, their coin moves only for a debt or a thing they handed over this turn" do
+      Item.create!(name: "honeyed mead", subrole: "drink", location: tavern, properties: { "tags" => %w[provision drink], "modifiers" => [], "effects" => [], "for_sale" => true, "seller_id" => barkeep.id })
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 2), bind: bound(nil)), "Tomas, two coppers for a handful of barley")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("Their goods are on the table — buy, or keep your coin.")
+      expect(player.reload.coins).to eq(20)
+
+      given = Item.create!(name: "sour cider", subrole: "drink", character: player)
+      ctx = inv_ctx(act: act("pay", with_id: barkeep.id, amount: 1), bind: bound(nil))
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "I'll take that cider. Hand him 1 coin.")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "give_item", "args" => { "item_id" => given.id, "from_id" => barkeep.id, "to_id" => player.id }, "result" => { "item_id" => given.id } } ])
+      outcome = run!(ctx, "I'll take that cider. Hand him 1 coin.")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transfer_coins" ])
+      expect(player.reload.coins).to eq(19)
+
+      Obligation.create!(debtor: player, creditor: barkeep, kind: "coins", amount: 3, terms: "for the ale", game_time: 90)
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 3), bind: bound(nil)), "here's what I owe you")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transfer_coins" ])
+      expect(player.reload.coins).to eq(16)
+      expect(Obligation.last.status).to eq("settled")
+    end
+
+    it "a refused transfer says so" do
+      player.update!(coins: 2)
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 10)), "pay Tomas 10 coins")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("You don't have that much coin.")
+    end
   end
 
-  it "skips a pickup of an item that exists only in fiction (the phantom ale)" do
-    ctx = context_with { { "action" => "pickup", "item_id" => nil, "reason" => "no ale item present" }.to_json }
-    scene = Harness::Tools::QueryScene.build(ctx)
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "take the ale", step: step)
-    expect(outcome.status).to eq(:skipped)
-    expect(outcome.note).to eq("pickup without item_id")
-    # Mini-narrator: the dead end voices itself instead of an OOC shrug
-    # (run-20260820-115058: two "deterministic pickup failure" flags were
-    # the engine rightly refusing a nonexistent object, reported as nothing).
-    expect(outcome.null_line).to eq("There's nothing like that here to take.")
+  describe "buy, sell, trade" do
+    let!(:ale) { Item.create!(name: "dark ale", subrole: "drink", location: tavern, properties: { "tags" => %w[provision drink], "modifiers" => [], "effects" => [], "for_sale" => true, "seller_id" => barkeep.id }) }
+
+    it "buy binds among the seller's wares on the table, with prices, and buys at the engine's price" do
+      seen = []
+      outcome = run!(inv_ctx(act: act("buy", with_id: barkeep.id), bind: bound(ale.id), seen: seen), "I'll take that ale — here's your coin")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "buy_item" ])
+      expect(ale.reload.character_id).to eq(player.id)
+      things = payload_of(prompts(seen, INV_BIND_MARK).first)["things"]
+      expect(things.map { |t| t["id"] }).to eq([ ale.id ])
+      expect(things.first["price"]).to be_a(Integer)
+    end
+
+    it "buy with no seller bound, or nothing bound on their table, is not for sale here" do
+      expect(run!(inv_ctx(act: act("buy"), bind: bound(ale.id)), "buy it").null_line).to eq("That isn't for sale here.")
+      outcome = run!(inv_ctx(act: act("buy", with_id: barkeep.id), bind: bound(nil)), "buy the honey")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("That isn't for sale here.")
+      expect(run!(inv_ctx(act: act("buy", with_id: barkeep.id), bind: bound(locket.id)), "buy the locket").null_line).to eq("That isn't for sale here.")   # loose, not a ware
+    end
+
+    it "buying a painted figure's painted goods: the figure is made real, their goods laid, the binder sees them, the buy is from them" do
+      ctx = inv_ctx(act: act("buy", figure: 0), bind: -> { bound(Item.where("name LIKE ?", "%cheese%").first&.id) }, extras: [ "an old man balancing a wheel of cheese on his knee" ])
+      outcome = run!(ctx, "pay the old man a coin for a slice of cheese")
+      old_man = Npc.order(:id).last
+      expect(old_man.properties["physical"]).to include("cheese")
+      names = outcome.tool_calls.map { |t| t["name"] }
+      expect(names).to include("propose_character", "offer_item", "buy_item")
+      expect(Item.where("name LIKE ?", "%cheese%").first.character_id).to eq(player.id)
+      expect(outcome.tool_calls.find { |t| t["name"] == "buy_item" }.dig("args", "merchant_id")).to eq(old_man.id)
+      expect(barkeep.reload.coins).to eq(5)
+    end
+
+    it "sell hands a carried thing to a buyer for coins; a buyer outside the trade refuses honestly" do
+      owned = Item.create!(name: "my ale", subrole: "drink", character: player, properties: { "tags" => %w[provision drink], "modifiers" => [], "effects" => [] })
+      outcome = run!(inv_ctx(act: act("sell", with_id: barkeep.id), bind: bound(owned.id)), "sell Tomas my ale")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "sell_item" ])
+      expect(owned.reload.character_id).not_to eq(player.id)
+      expect(run!(inv_ctx(act: act("sell"), bind: bound(owned.id)), "sell it").null_line).to eq("No one here will buy that.")
+    end
+
+    it "trade binds the carried thing and their wares, and swaps through trade_items" do
+      scimitar = Item.create!(name: "ancestral scimitar", subrole: "scimitar", character: player)
+      seen = []
+      outcome = run!(inv_ctx(act: act("trade", with_id: barkeep.id), bind: bound(scimitar.id, ale.id), seen: seen), "swap my scimitar for the ale")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "trade_items" ])
+      expect(ale.reload.character_id).to eq(player.id)
+      expect(scimitar.reload.character_id).to eq(barkeep.id)
+      judged = payload_of(prompts(seen, INV_BIND_MARK).first)
+      expect(judged["things"].map { |t| t["id"] }).to eq([ scimitar.id ])
+      expect(judged["theirs"].map { |t| t["id"] }).to eq([ ale.id ])
+    end
+
+    it "a trade for a thing that is not on their table binds nothing" do
+      scimitar = Item.create!(name: "ancestral scimitar", subrole: "scimitar", character: player)
+      outcome = run!(inv_ctx(act: act("trade", with_id: barkeep.id), bind: bound(scimitar.id, locket.id)), "swap my scimitar for the locket")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("Trade what for what?")
+      expect(scimitar.reload.character_id).to eq(player.id)
+    end
   end
 
-  describe "shop buy/sell dispatch (to_id is the merchant)" do
-    let(:shop) { Location.create!(name: "the Smithy", parent: Location.create!(name: "Town", x: 1, y: 1, properties: { "economic_basis" => "farming", "size" => "town", "wealth" => "modest" }), properties: { "shop" => %w[weapons armor] }) }
+  describe "shop stock (no seller recorded) sells through whoever the act judge named" do
+    let(:shop) { Location.create!(name: "the Smithy", parent: Location.create!(name: "Town", x: 1, y: 1, properties: { "economic_basis" => "farming", "size" => "town", "wealth" => "modest" }), properties: { "shop" => %w[weapons armor], "trade" => "smith" }) }
     let!(:smith) { Npc.create!(name: "Brann", subrole: "smith", location: shop, coins: 500) }
     let!(:ware) { Item.create!(name: "blade", subrole: "longblade", location: shop, properties: { "tags" => %w[weapon edged], "modifiers" => [], "effects" => [], "for_sale" => true }) }
 
     before { player.update!(location: shop, coins: 200) }
 
-    it "routes buy → buy_item with to_id as merchant" do
-      ctx = context_with { { "action" => "buy", "item_id" => ware.id, "to_id" => smith.id }.to_json }
-      scene = Harness::Tools::QueryScene.build(ctx)
-      outcome = described_class.new.run(context: ctx, scene: scene, input: "buy the blade", step: step)
+    it "buys from the smith" do
+      ctx = Harness::Turn::Context.new(player_location: shop, llm_nuance: StubLLM.new { |full| (full.include?(INV_ACT_MARK) ? act("buy", with_id: smith.id) : bound(ware.id)).to_json }, game_time: 100)
+      outcome = run!(ctx, "buy the blade")
       expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "buy_item" ])
       expect(ware.reload.character_id).to eq(player.id)
     end
 
-    it "routes sell → sell_item with to_id as merchant" do
+    it "a patron cannot sell the shop's stock — the tool's refusal is a clean dead end with its own line" do
+      patron = Npc.create!(name: "Wat", subrole: "labourer", location: shop)
+      ctx = Harness::Turn::Context.new(player_location: shop, llm_nuance: StubLLM.new { |full| (full.include?(INV_ACT_MARK) ? act("buy", with_id: patron.id) : bound(ware.id)).to_json }, game_time: 100)
+      outcome = run!(ctx, "buy the blade from Wat")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("No one here to sell it.")
+      expect(ware.reload.location_id).to eq(shop.id)
+    end
+
+    it "sells to the smith" do
       owned = Item.create!(name: "my axe", subrole: "longblade", character: player, properties: { "tags" => %w[weapon], "modifiers" => [], "effects" => [] })
-      ctx = context_with { { "action" => "sell", "item_id" => owned.id, "to_id" => smith.id }.to_json }
-      scene = Harness::Tools::QueryScene.build(ctx)
-      outcome = described_class.new.run(context: ctx, scene: scene, input: "sell my axe", step: step)
+      ctx = Harness::Turn::Context.new(player_location: shop, llm_nuance: StubLLM.new { |full| (full.include?(INV_ACT_MARK) ? act("sell", with_id: smith.id) : bound(owned.id)).to_json }, game_time: 100)
+      outcome = run!(ctx, "sell my axe")
       expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "sell_item" ])
       expect(owned.reload.location_id).to eq(shop.id)
     end
+  end
 
-    it "skips buy without a merchant" do
-      ctx = context_with { { "action" => "buy", "item_id" => ware.id }.to_json }
-      scene = Harness::Tools::QueryScene.build(ctx)
-      outcome = described_class.new.run(context: ctx, scene: scene, input: "buy it", step: step)
+  describe "open" do
+    let!(:chest) { Harness::Treasure::Chest.place(location: tavern, rarity: "common", rng: Random.new(1)) }
+
+    it "binds among the containers here and opens" do
+      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", roll: 20, against: 10))
+      seen = []
+      outcome = run!(inv_ctx(act: act("open"), bind: bound(chest.id), seen: seen), "open the chest")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "open_container" ])
+      expect(chest.reload.properties["state"]).to eq("open")
+      expect(payload_of(prompts(seen, INV_BIND_MARK).first)["things"].map { |t| t["id"] }).to eq([ chest.id ])
+    end
+
+    it "nothing bound is a clean dead end" do
+      outcome = run!(inv_ctx(act: act("open"), bind: bound(nil)), "open it")
       expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("There's nothing like that here to open.")
     end
   end
 
-  describe "open container dispatch" do
-    let!(:chest) { Harness::Treasure::Chest.place(location: tavern, rarity: "common", rng: Random.new(1)) }
-
-    it "routes open → open_container" do
-      allow(Harness::Dice).to receive(:check).and_return(Harness::Dice::Outcome.new(result: "success", roll: 20, against: 10))
-      ctx = context_with { { "action" => "open", "item_id" => chest.id }.to_json }
-      scene = Harness::Tools::QueryScene.build(ctx)
-      outcome = described_class.new.run(context: ctx, scene: scene, input: "open the chest", step: step)
-      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "open_container" ])
-      expect(chest.reload.properties["state"]).to eq("open")
-    end
-
-    it "skips open without an item_id" do
-      ctx = context_with { { "action" => "open" }.to_json }
-      scene = Harness::Tools::QueryScene.build(ctx)
-      outcome = described_class.new.run(context: ctx, scene: scene, input: "open it", step: step)
-      expect(outcome.status).to eq(:skipped)
-    end
+  it "a give reads from whoever gave in the receipts — the player's own hand-over, or a character's" do
+    ctx  = inv_ctx(act: act("none"))
+    ale  = Item.create!(name: "sour ale", character: barkeep)
+    call = { "name" => "give_item", "args" => { "item_id" => ale.id, "from_id" => barkeep.id, "to_id" => player.id },
+             "result" => { "item_id" => ale.id, "item_name" => "sour ale", "from_id" => barkeep.id, "to_id" => player.id } }
+    expect(Harness::Turn::Parts.render_call(call, ctx, nil)[:text]).to eq("Tomas hands you the sour ale.")
+    call = { "name" => "give_item", "args" => { "item_id" => ale.id, "from_id" => player.id, "to_id" => barkeep.id },
+             "result" => { "item_id" => ale.id, "item_name" => "sour ale", "from_id" => player.id, "to_id" => barkeep.id } }
+    expect(Harness::Turn::Parts.render_call(call, ctx, nil)[:text]).to eq("You hand the sour ale to Tomas.")
   end
 end

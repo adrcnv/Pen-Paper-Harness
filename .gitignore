@@ -49,3 +49,9 @@ tests/test_*
 
 # MCP tester run folders (snapshots, flags, reports — perishable diagnostics)
 /scenario_runs/
+
+# Design documents and diagrams kept local (user ruling 2026-09-17): the
+# decomposition plan, the flow ledger and the judge map stay out of the repo.
+/docs/decomposition.md
+/docs/flows.md
+/docs/runners.html

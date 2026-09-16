@@ -10,7 +10,12 @@ module Harness
         raise NotImplementedError
       end
 
-      def complete(system:, user:, schema: nil, max_tokens: nil)
+      # temperature / thinking: per-call sampling. Judges that answer in ids
+      # and enums run at zero temperature; prose into a buffer (a voice
+      # line, the eyes) runs at the server default. Thinking mode is off
+      # everywhere (ruled 2026-09-16 — a judge that needs to reflect writes
+      # a directed field first). nil = the adapter's configured default.
+      def complete(system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil)
         raise NotImplementedError
       end
 

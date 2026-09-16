@@ -45,7 +45,7 @@ RSpec.describe Harness::Scene::Routine do
 
     it "derives the shift from the venue's hours, not the subrole block" do
       pot_boy = Npc.create!(name: "Pot Boy", subrole: "labourer", location: alehouse, home_location: alehouse)
-      expect(described_class.state(pot_boy, MORNING)).to eq(:off)     # night-shift keeper sleeps through the closed block
+      expect(described_class.state(pot_boy, MORNING)).to eq(:working) # taverns are staffed round the clock (ruling 2026-09-15)
       expect(described_class.state(pot_boy, EVENING)).to eq(:working) # subrole block says :free
       expect(described_class.state(pot_boy, NIGHT)).to eq(:working)   # taverns are staffed at night
     end

@@ -14,7 +14,7 @@ module Harness
     # unknown trigger names + malformed params.
     module Library
       LIBRARY_DIR = Rails.root.join("lib/harness/items/library")
-      CATEGORIES  = %w[weapons armor jewelry magical provisions].freeze
+      CATEGORIES  = %w[weapons armor jewelry magical provisions goods].freeze
 
       class InvalidLibrary < StandardError; end
 
@@ -24,6 +24,28 @@ module Harness
         def for_category(category)
           load!
           @by_category.fetch(category.to_s) { raise InvalidLibrary, "unknown category=#{category.inspect}" }
+        end
+
+        # The template whose kind shares a word with the character's own label
+        # ("a fox pelt" → hide, "small beer" → drink), else a weighted pick from
+        # the category. Lets a person's word for a thing choose its kind.
+        def template_for(category, label:, rng: Random.new)
+          template_matching(category, label) || weighted_pick(category, rng: rng)
+        end
+
+        # The template whose kind shares a word with the text, or nil — no
+        # fallback. Used to read a painted object out of a figure's description.
+        def template_matching(category, text)
+          words = text.to_s.downcase.scan(/[a-z]+/).select { |w| w.length > 3 }
+          return nil if words.empty?
+          for_category(category).find { |e| e["kind_pool"].any? { |k| (k.to_s.downcase.split & words).any? } }
+        end
+
+        # The kind inside a template that the text names ("wheel of cheese"
+        # for "…a wheel of cheese on his knee"), or nil.
+        def kind_matching(template, text)
+          words = text.to_s.downcase.scan(/[a-z]+/).select { |w| w.length > 3 }
+          Array(template && template["kind_pool"]).find { |k| (k.to_s.downcase.split & words).any? }
         end
 
         # Weighted random pick from a category. Returns nil if the category

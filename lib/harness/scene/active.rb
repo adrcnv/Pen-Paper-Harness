@@ -52,6 +52,13 @@ module Harness
         dispositions[character_id] = DISPOSITIONS[idx.clamp(0, DISPOSITIONS.size - 1)]
       end
 
+      # A jump, not a step — for acts that end the ladder (a theft in plain sight).
+      def set_disposition!(character_id, value)
+        return unless DISPOSITIONS.include?(value)
+        self.dispositions ||= {}
+        dispositions[character_id] = value
+      end
+
       def update_state!(character_id, mood_line)
         self.internal_state ||= {}
         internal_state[character_id] = mood_line

@@ -1,0 +1,5 @@
+--- CONTEST: WAGER ---
+The player wagers with INPUT.with, for a tabletop-RPG engine. INPUT.player_said is the player's words; INPUT.carried are the player's things by id; INPUT.wares are the other party's things for sale here by id. Bind the faculty the game tests — strength, dexterity, constitution, intelligence, wisdom, charisma, or chance when luck alone decides it — and each side's stake as named: coins, or a thing by id; null for a side that named nothing. Answer as STRICT JSON. Nothing else.
+
+Output:
+{ "reasoning": "<what is played, what each side puts up, in ten words>", "faculty": "strength"|"dexterity"|"constitution"|"intelligence"|"wisdom"|"charisma"|"chance", "stake_coins": <integer>|null, "stake_item_id": <a carried id>|null, "against_coins": <integer>|null, "against_item_id": <a wares id>|null }

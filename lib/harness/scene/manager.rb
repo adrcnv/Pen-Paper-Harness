@@ -64,7 +64,6 @@ module Harness
         maybe_run_materialize(loc, materialize_target)
         maybe_pull_traveler(loc)
         maybe_draw_local(loc)
-        maybe_seed_location_items(loc)
         maybe_stock_shop(loc)
         maybe_seed_treasure(loc)
 
@@ -377,23 +376,11 @@ module Harness
 
       # Place a treasure chest on first entry to a location that warrants one
       # (bandit hideout, discovery site). Pure mechanical, idempotent via
-      # `treasure_seeded`. Additive to scattered floor-loot. Failure non-fatal.
+      # `treasure_seeded`. Failure non-fatal.
       def maybe_seed_treasure(loc)
         ::Harness::Treasure::Seeder.seed!(loc, rng: rng, logger: logger)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] treasure seeding failed for #{loc.name}: #{e.class}: #{e.message}" }
-      end
-
-      # Seed anchored items at this location on first scene entry.
-      # Pure mechanical roll, no LLM call. Idempotent — LocationSeeder
-      # marks the location with `items_seeded: true` after firing, so
-      # repeat entries (and even fully-looted-out locations) never
-      # re-seed. Failure is non-fatal — same posture as the other
-      # maybe_run_* hooks.
-      def maybe_seed_location_items(loc)
-        ::Harness::Items::LocationSeeder.seed!(loc, rng: rng)
-      rescue StandardError => e
-        logger.warn { "[Scene::Manager] location item seeding failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
 
       def auto_target_for(loc)

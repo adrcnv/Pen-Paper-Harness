@@ -9,13 +9,13 @@ module Harness
     # Unclassified venues have no opinion (always open) so nothing
     # mysteriously empties.
     #
-    # Taverns are the always-open refuge: staffed day/evening/NIGHT (night
-    # arrivals possible and safe), keeper asleep only of a morning — and
-    # they NEVER bar the door (their closure is presence-only; a barred
-    # tavern would lock out the guest who stepped outside at 09:30).
+    # Taverns are the always-open refuge: staffed round the clock (user
+    # ruling 2026-09-15: a keeper's off-hours read as a vendor vacuum and a
+    # bug, not as a life — the demo opens at 10:41 into empty taprooms) —
+    # and they NEVER bar the door.
     module VenueHours
       HOURS = {
-        "tavern" => [ :day, :evening, :night ].freeze,
+        "tavern" => [ :morning, :day, :evening, :night ].freeze,
         "inn"    => [ :morning, :day, :evening ].freeze,
         "shrine" => [ :morning, :evening ].freeze,
         "trade"  => [ :morning, :day ].freeze
@@ -33,10 +33,18 @@ module Harness
       module_function
 
       def kind(location)
-        name = location&.name.to_s.downcase
-        return nil if name.empty?
-        KIND_WORDS.each do |k, words|
-          return k if words.any? { |w| name.match?(/\b#{::Regexp.escape(w)}\b/) }
+        return nil unless location
+        props = location.properties.is_a?(Hash) ? location.properties : {}
+        # A manifest venue says what it is; a minted one may not carry the
+        # word in its name ("the Sunken Cask", described as a tavern — its
+        # keeper drifted to the town and the bar stood empty, items run 7).
+        # Name first, then the manifest key, then the description.
+        [ location.name, props["manifest_key"], props["trade"], location.description.to_s.split(/(?<=[.!?])\s/).first ].each do |text|
+          t = text.to_s.downcase
+          next if t.empty?
+          KIND_WORDS.each do |k, words|
+            return k if words.any? { |w| t.match?(/\b#{::Regexp.escape(w)}\b/) }
+          end
         end
         nil
       end
@@ -61,9 +69,8 @@ module Harness
       end
 
       # Presence rule for a location's OWN residents: classified venues
-      # follow their HOURS (the tavern keeper works nights and sleeps of a
-      # morning); everywhere else follows the day/night rhythm (asleep at
-      # night).
+      # follow their HOURS (the tavern keeper is always at the bar); everywhere
+      # else follows the day/night rhythm (asleep at night).
       def residents_present?(location, phase)
         k = kind(location)
         return HOURS[k].include?(phase) if k

@@ -70,11 +70,13 @@ module Harness
 
       # schema: accepted for interface parity; Anthropic has no
       # response_format — shape discipline stays prompt-side there.
-      def complete(system:, user:, schema: nil, max_tokens: nil)
+      # thinking: accepted, not wired (extended thinking is a budget here).
+      def complete(system:, user:, schema: nil, max_tokens: nil, temperature: nil, thinking: nil)
         response = post_messages(
-          system:   system,
-          messages: [ { "role" => "user", "content" => user } ],
-          tools:    nil
+          system:      system,
+          messages:    [ { "role" => "user", "content" => user } ],
+          tools:       nil,
+          temperature: temperature
         )
         extract_text(response)
       end
@@ -100,12 +102,13 @@ module Harness
       #      that Anthropic was implicitly charging on every inner-loop call.
       # Cached reads cost ~10% of normal input; cache writes cost ~25% extra
       # on the first call.
-      def post_messages(system:, messages:, tools: nil)
+      def post_messages(system:, messages:, tools: nil, temperature: nil)
         payload = {
           "model"      => @model,
           "max_tokens" => @max_tokens,
           "messages"   => mark_last_message_for_cache(messages)
         }
+        payload["temperature"] = temperature unless temperature.nil?
 
         has_system = system.is_a?(String) && !system.empty?
         has_tools  = tools.is_a?(Array)   && !tools.empty?

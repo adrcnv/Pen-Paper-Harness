@@ -149,17 +149,11 @@ RSpec.describe Harness::Scene::Manager do
       end
     end
 
-    it "fires LocationSeeder on enter and marks the location as seeded" do
+    it "scatters no loose items on entry — things live in shops, chests, and hands, or the player makes them" do
       maren
-      expect(Harness::Items::LocationSeeder).to receive(:seed!).with(tavern, rng: anything).and_call_original
       manager.ensure_entered
-      expect(tavern.reload.properties["items_seeded"]).to be(true)
-    end
-
-    it "swallows LocationSeeder errors (logs + scene entry continues)" do
-      maren
-      allow(Harness::Items::LocationSeeder).to receive(:seed!).and_raise(StandardError, "boom")
-      expect { manager.ensure_entered }.not_to raise_error
+      expect(Item.where(location_id: tavern.id)).to be_empty
+      expect(tavern.reload.properties).not_to have_key("items_seeded")
     end
   end
 
