@@ -49,6 +49,14 @@ RSpec.describe Harness::Description::Materializer do
     expect(player.reload.properties).not_to have_key("personality")
   end
 
+  it "hands the rolled inventory to the prompt, so the arms and jewels it paints are the ones the rows hold" do
+    Item.create!(name: "heavy dirk", subrole: "weapon", character: npc, properties: { "tags" => [ "weapon" ] })
+    seen_user = nil
+    llm = StubLLM.new { |prompt| seen_user = prompt; good_output }
+    described_class.new(llm_client: llm, logger: logger).materialize!(npc)
+    expect(seen_user).to include('"carries"', "heavy dirk")
+  end
+
   it "passes prose_context through to the user message" do
     seen_user = nil
     llm = StubLLM.new { |prompt|

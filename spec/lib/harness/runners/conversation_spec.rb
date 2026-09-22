@@ -9,20 +9,26 @@ RSpec.describe Harness::Runners::Conversation do
   # unless a spec routes it itself (see "the hands" below): the rest of the
   # file is about the voice, and its stubs count and inspect prompts.
   ACT_MARK = "DID with their hands"
-  NONE = { "act" => "none", "to_id" => nil, "coins" => nil, "item_id" => nil, "item" => nil, "category" => nil, "place_id" => nil }.freeze
+  NONE = { "act" => "none", "to_id" => nil, "coins" => nil, "item_id" => nil, "things" => [], "place_id" => nil }.freeze
   # The contest judge (kind, party, same ask) answers "none" — plain talk —
   # unless a spec routes it itself (see "the contest" below).
   KIND_MARK = "CONTEST: KIND"
   NO_CONTEST = { "reasoning" => "plain talk", "kind" => "none", "with_id" => nil, "same_as" => nil }.freeze
   # The chime-in gate (a bystander's one question) answers no unless a spec routes it.
   CHIME_MARK = "CHIME IN?"
+  MINT_MARK = "AT HAND?"
+  AT_HAND = { "reasoning" => "such a person keeps one", "has" => true }.freeze
   NO_CHIME = { "reasoning" => "nothing to add", "chime_in" => false }.freeze
+  # The addressee judge answers nothing — the plan's own binding stands —
+  # unless a spec routes it itself (see "whom the words are for" below).
+  ADDRESS_MARK = "SPOKEN TO WHOM?"
 
   def context_with(&block)
     routed = ->(full) {
       if full.include?(ACT_MARK) then NONE.to_json
       elsif full.include?(KIND_MARK) then NO_CONTEST.to_json
       elsif full.include?(CHIME_MARK) then NO_CHIME.to_json
+      elsif full.include?(ADDRESS_MARK) then ""
       else block.call(full)
       end
     }
@@ -33,7 +39,7 @@ RSpec.describe Harness::Runners::Conversation do
   # A step whose words the plan addressed to one present character (by id) or one painted figure (by index).
   def step_to(id, figure: nil) = Harness::Dispatcher::Step.new(runner: "conversation", intent: "talk", args: { "with_id" => id, "figure" => figure }.compact)
   # A voicing prompt, as opposed to any judge's (act, contest, memory, taking stock, recall).
-  def voicing?(p) = !(p.include?("WORLD MEMORY") || p.include?("TAKING STOCK") || p.include?("filter stored facts") || p.include?(ACT_MARK) || p.include?("CONTEST") || p.include?(CHIME_MARK))
+  def voicing?(p) = !(p.include?("WORLD MEMORY") || p.include?("TAKING STOCK") || p.include?("filter stored facts") || p.include?(ACT_MARK) || p.include?("CONTEST") || p.include?(CHIME_MARK) || p.include?(ADDRESS_MARK))
 
   it "stages dialogue for narration WITHOUT persisting it (no soul-pollution)" do
     ctx = context_with do
@@ -262,8 +268,8 @@ RSpec.describe Harness::Runners::Conversation do
     expect(ctx.active_scene.last_speakers).to eq([ ruta.id ])
     seen.clear
     described_class.new.run(context: ctx, scene: scene, input: "any beasts on the ridge?", step: step)      # unnamed follow-up
-    expect(seen.first).to include(%("id": #{ruta.id},)).and match(/^\s+"spoke_last": true/)   # Ruta first, told so (payload line, not the prompt's shape)
-    expect(seen.last).not_to match(/^\s+"spoke_last": true/)                                   # Tomas is not
+    expect(seen.first).to include(%("id": #{ruta.id},)).and match(/^\s+"addressed": true/)   # Ruta first, told so (payload line, not the prompt's shape)
+    expect(seen.last).not_to match(/^\s+"addressed": true/)                                   # Tomas is not
   end
 
   # The first speaker of a turn is judged before the current input joins the
@@ -327,23 +333,6 @@ RSpec.describe Harness::Runners::Conversation do
     polled.clear
     described_class.new.run(context: ctx, scene: scene, input: "who are you all waiting for?", step: step_to(bruna.id))
     expect(polled.first.split('"you"').last).to include(bruna.name)   # the addressee first
-  end
-
-  it "persists a durable event only when the exchange is flagged memorable" do
-    ctx = context_with do
-      { "speak" => true,
-        "dialogue" => { "summary" => "warns", "prose" => "Cross me and you'll regret it." },
-        "memorable" => { "gist" => "Tomas threatened the player over the dock debt" } }.to_json
-    end
-    scene = Harness::Tools::QueryScene.build(ctx)
-
-    expect {
-      described_class.new.run(context: ctx, scene: scene, input: "I'm not paying", step: step)
-    }.to change(Event, :count).by(1)
-
-    ev = Event.last
-    expect(ev.details.to_s).to match(/threatened the player over the dock debt/)
-    expect(ev.event_participants.pluck(:character_id)).to include(barkeep.id, player.id)
   end
 
   # Two judges must agree that a line is a press: the planner (from the
@@ -564,7 +553,7 @@ RSpec.describe Harness::Runners::Conversation do
 
     llm = ctx.llm_nuance
     i = llm.system_calls.index { |sys| sys.include?("TAKING STOCK: INNER") }
-    expect(llm.sampling_calls[i]).to eq(temperature: 0.3, thinking: false, max_tokens: nil)
+    expect(llm.sampling_calls[i]).to eq(temperature: 0.3, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS)
     c = described_class
     { c::STOCK_INNER_PATH => c::STOCK_INNER_SCHEMA, c::STOCK_HANDS_PATH => c::STOCK_HANDS_SCHEMA }.each do |path, schema|
       expect(schema["properties"].keys.first).to eq("reasoning")
@@ -580,7 +569,7 @@ RSpec.describe Harness::Runners::Conversation do
     seen = []
     stub = StubLLM.new do |full|
       seen << full
-      if full.include?(ACT_MARK) then NONE.merge("act" => "give", "to_id" => player.id, "item" => "a belt knife", "category" => "tools").to_json
+      if full.include?(ACT_MARK) then NONE.merge("act" => "give", "to_id" => player.id, "things" => [ { "item" => "a belt knife", "category" => "tools" } ]).to_json
       elsif full.include?(KIND_MARK) then NO_CONTEST.to_json
       elsif full.include?("WORLD MEMORY") || full.include?("TAKING STOCK") then { "facts" => [], "people" => [], "places" => [] }.to_json
       elsif full.include?("filter stored facts") then { "relevant" => [] }.to_json
@@ -593,7 +582,7 @@ RSpec.describe Harness::Runners::Conversation do
     expect(Item.where("name LIKE ?", "%knife%")).to be_empty
     [ "TAKING STOCK: HANDS", "TAKING STOCK: INNER", "BARGAINS: STRUCK" ].each do |mark|
       judged = JSON.parse(seen.find { |p| p.include?(mark) }.split("INPUT:\n", 2).last)
-      expect(judged["this_turn"]).to include(a_string_matching(/\ANothing changed hands: give: Ragnar has nothing to bring out/)), mark
+      expect(judged["this_turn"]).to include(a_string_matching(/\ANothing changed hands: give: "tools" is not a kind of thing/)), mark
     end
   end
 
@@ -749,6 +738,7 @@ RSpec.describe Harness::Runners::Conversation do
         elsif full.include?("filter stored facts") then { "relevant" => [] }.to_json
         elsif full.include?(ACT_MARK) then NONE.to_json
         elsif full.include?(CHIME_MARK) then NO_CHIME.to_json
+        elsif full.include?(ADDRESS_MARK) then ""
         else
           voiced << full
           { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Fine. Ask your questions." } }.to_json
@@ -762,6 +752,28 @@ RSpec.describe Harness::Runners::Conversation do
     def kind(k, with_id, same_as: nil) = { "reasoning" => "judged", "kind" => k, "with_id" => with_id, "same_as" => same_as }
     def run!(ctx, input) = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: input, step: step)
     def prompts(seen, mark) = seen.select { |p| p.include?(mark) }
+
+    it "the router's addressee is the contest's party when the kind judge names someone else (run 7 t29: Bertha's cheese pressed on Herewald)" do
+      other = Npc.create!(name: "Herewald Fennwick", subrole: "trader", location: tavern, character_class: "commoner")
+      seen = []
+      ctx, = contest_ctx(kind: kind("press", other.id), seen: seen)
+      allow(Harness::Dice).to receive(:check).and_return(lost)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "go on, let me taste that cheese, no charge", step: step_to(barkeep.id))
+      kind_payload = JSON.parse(prompts(seen, KIND_MARK).first.split("INPUT:\n", 2).last)
+      expect(kind_payload["addressed"]).to eq("id" => barkeep.id, "name" => barkeep.name)
+      consent = prompts(seen, "CONTEST: CONSENT").first
+      expect(consent).to include(barkeep.name)
+      expect(consent).not_to include(other.name)
+    end
+
+    it "a painted figure has no id to bind: the words for one open no contest this turn (run 7 t17: 'Mara won't play' while the traveler declined)" do
+      seen = []
+      ctx, = contest_ctx(kind: kind("wager", barkeep.id), seen: seen)
+      ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern), extras: [ "a traveler in a mud-stained cloak" ])
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "wager you five coins on a toss", step: step_to(nil, figure: 0))
+      expect(prompts(seen, KIND_MARK)).to be_empty
+      expect(prompts(seen, "CONTEST: CONSENT")).to be_empty
+    end
     def payload_of(prompt)
       body = prompt.split("INPUT:\n", 2).last
       JSON.parse(body[0..body.rindex("}")])
@@ -932,8 +944,10 @@ RSpec.describe Harness::Runners::Conversation do
     end
 
     describe "games and wagers" do
-      def wager(faculty, stake_coins: nil, stake_item_id: nil, against_coins: nil, against_item_id: nil)
-        { "reasoning" => "bound", "faculty" => faculty, "stake_coins" => stake_coins, "stake_item_id" => stake_item_id, "against_coins" => against_coins, "against_item_id" => against_item_id }
+      def wager(faculty, stake_coins: nil, stake_item_id: nil, against_coins: nil, against_item_id: nil, stake_is: nil, against_is: nil)
+        cls = ->(coins, id) { id ? "listed_thing" : (coins ? "coins" : "nothing") }
+        { "reasoning" => "bound", "stake_is" => stake_is || cls.(stake_coins, stake_item_id), "against_is" => against_is || cls.(against_coins, against_item_id),
+          "faculty" => faculty, "stake_coins" => stake_coins, "stake_item_id" => stake_item_id, "against_coins" => against_coins, "against_item_id" => against_item_id }
       end
 
       it "a wager: the binder sees the player's things and the seller's wares, binds the faculty and both stakes; consent, then the roll settles the stakes — nothing owed; the same game again is the standing verdict" do
@@ -975,6 +989,20 @@ RSpec.describe Harness::Runners::Conversation do
         expect(ctx.active_scene.contest_for("#{barkeep.id}:strength")).to include("wager" => true, "player_won" => true)
       end
 
+      it "a wager against a thing the other party carries: the binder is shown it, and a win lands it in the player's hands" do
+        player.update!(coins: 3); barkeep.update!(coins: 0)
+        dirk = Item.create!(name: "heavy dirk", subrole: "weapon", character: barkeep, properties: { "tags" => [ "weapon" ], "modifiers" => [], "effects" => [] })
+        allow(Harness::Dice).to receive(:check).and_return(won)
+        seen = []
+        ctx, = contest_ctx(kind: kind("wager", barkeep.id), bind: wager("strength", stake_coins: 2, against_item_id: dirk.id), seen: seen)
+        outcome = run!(ctx, "Two coins against that dirk of yours — arm-wrestle.")
+        bound = seen.find { |s| s.include?("CONTEST: WAGER") }
+        expect(JSON.parse(bound.split("INPUT:\n", 2).last[0..bound.split("INPUT:\n", 2).last.rindex("}")])["wares"]).to include("id" => dirk.id, "name" => "heavy dirk")
+        expect(outcome.tool_calls.map { |t| t["name"] }).to include("resolve", "wager_stake")
+        expect(dirk.reload.character_id).to eq(player.id)
+        expect(player.reload.coins).to eq(3)
+      end
+
       it "a lost item wager lands the thing on the winner's table, for sale under their name" do
         player.update!(coins: 1); barkeep.update!(coins: 3)
         mead = Item.create!(name: "dark mead", subrole: "drink", character: player, properties: { "tags" => %w[provision drink], "modifiers" => [], "effects" => [] })
@@ -994,9 +1022,14 @@ RSpec.describe Harness::Runners::Conversation do
         expect(Harness::Dice).not_to receive(:check)
         cases = {
           wager("dexterity", stake_coins: 10, against_coins: 2)          => [ "you don't have 10 coins to stake", "Hero doesn't have 10 coins to stake" ],
-          wager("dexterity", stake_coins: 1, against_item_id: 999_999)   => [ "Tomas has no such thing on the table to stake" ] * 2,
+          wager("dexterity", stake_coins: 1, against_item_id: 999_999)   => [ "Tomas has no such thing to stake" ] * 2,
           wager("dexterity", stake_coins: 1)                             => [ "nothing of Tomas's was staked" ] * 2,
-          wager("dexterity", stake_item_id: 999_999, against_coins: 1)   => [ "you carry no such thing to stake", "Hero carries no such thing to stake" ]
+          wager("dexterity", stake_item_id: 999_999, against_coins: 1)   => [ "you carry no such thing to stake", "Hero carries no such thing to stake" ],
+          # The judge says what each side puts up before it binds: a thing
+          # named that is on no list voids, whatever coins it might have
+          # written beside it (hands run 9 t27: "your blade" became 1 coin).
+          wager("chance", stake_coins: 1, against_coins: 1, against_is: "unlisted_thing") => [ "Tomas has no such thing here to stake" ] * 2,
+          wager("chance", stake_coins: 1, against_coins: 1, stake_is: "unlisted_thing")   => [ "you carry no such thing to stake", "Hero carries no such thing to stake" ]
         }
         cases.each do |bound, (reason, told)|
           seen = []
@@ -1106,7 +1139,7 @@ RSpec.describe Harness::Runners::Conversation do
       run!(ctx, "hello")
       llm = ctx.llm_nuance
       i = llm.system_calls.index { |sys| sys.include?(KIND_MARK) }
-      expect(llm.sampling_calls[i]).to eq(temperature: 0, thinking: false, max_tokens: nil)
+      expect(llm.sampling_calls[i]).to eq(temperature: 0, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS)
       c = described_class
       pairs = { c::CONTEST_KIND_PATH => c::CONTEST_KIND_SCHEMA, c::CONTEST_CONSENT_PATH => c::CONTEST_CONSENT_SCHEMA }
       c::CONTEST_BIND_PATHS.each { |k, path| pairs[path] = c::CONTEST_BIND_SCHEMAS[k] }
@@ -1512,7 +1545,7 @@ RSpec.describe Harness::Runners::Conversation do
       ctx = context_with do |full|
         if full.include?("BARGAINS: STRUCK") && full.include?("--- RETRY ---")   # the correction bounce
           expect(full).to include("unparseable")
-          { "reasoning" => "the shed at dusk, taken", "struck" => true, "proposed_by" => "player", "accepted_by" => "you" }.to_json
+          { "reasoning" => "the shed at dusk, taken", "turn_is" => "new_terms", "struck" => true, "proposed_by" => "player", "accepted_by" => "you" }.to_json
         elsif full.include?("BARGAINS: TERMS")
           { "reasoning" => "Tomas to be at the shed at dusk", "due" => "at dusk", "where" => nil,
             "sides" => [ { "who" => "you", "kind" => "meet", "amount" => nil, "terms" => "Meet at the shed at dusk." } ] }.to_json
@@ -1623,15 +1656,16 @@ RSpec.describe Harness::Runners::Conversation do
     end
   end
 
-  it "re-dispatches when no one is present" do
+  it "an empty room is an honest silence, not a re-dispatch: re-planned, the same words draw the same talk step (hands run 8 t19)" do
     empty = Location.create!(name: "Empty Road")
     player.update!(location: empty)
-    ctx = context_with { "{}" }
+    ctx = context_with { raise "no voice should be called" }
     ctx.player_location = empty
     scene = Harness::Tools::QueryScene.build(ctx)
 
     outcome = described_class.new.run(context: ctx, scene: scene, input: "hello?", step: step)
-    expect(outcome.status).to eq(:redispatch)
+    expect(outcome.status).to eq(:ok)
+    expect(outcome.tool_calls.map { |t| [ t["name"], t.dig("result", "nobody_here") ] }).to eq([ [ "conversation_silence", true ] ])
   end
 
   it "re-dispatches (no crash) when every voice emit is unparseable" do
@@ -1799,7 +1833,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "never polls an UNADDRESSED ambient extra (a horse doesn't fill a speaker slot or get minted)" do
       voiced = []
       ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
-        llm_nuance: StubLLM.new { |full| voiced << full; { "speak" => false }.to_json })
+        llm_nuance: StubLLM.new { |full| next "" if full.include?(ADDRESS_MARK); voiced << full; { "speak" => false }.to_json })
       ctx.active_scene = Harness::Scene::Active.new(
         location: tavern,
         snapshot: Harness::Scene::Assembler.for(location: tavern),
@@ -1821,11 +1855,13 @@ RSpec.describe Harness::Runners::Conversation do
     # One stub for the whole turn: the voicing answers with `emit`, the act
     # judge with `act` (or `act_retry` when its bounce fires), the memory
     # judges get empty memory. `seen` collects every prompt.
-    def act_ctx(emit, act: nil, act_retry: nil, seen: [])
+    def act_ctx(emit, act: nil, act_retry: nil, mint: AT_HAND, seen: [])
       stub = StubLLM.new do |full|
         seen << full
         if full.include?("WORLD MEMORY") || full.include?("TAKING STOCK")
           { "facts" => [], "people" => [], "places" => [] }.to_json
+        elsif full.include?(MINT_MARK)
+          mint.to_json
         elsif full.include?(ACT_MARK)
           (full.include?("--- RETRY ---") && act_retry ? act_retry : act).to_json
         elsif full.include?(KIND_MARK)
@@ -1844,7 +1880,12 @@ RSpec.describe Harness::Runners::Conversation do
         "dialogue" => (speak ? { "summary" => "acts", "prose" => prose } : nil) }
     end
 
-    def act(kind, **f) = NONE.merge("act" => kind).merge(f.transform_keys(&:to_s))
+    # `item:`/`category:` name one thing brought out; the grammar carries them as `things`.
+    def act(kind, **f)
+      f = f.transform_keys(&:to_s)
+      f["things"] = [ { "item" => f.delete("item"), "category" => f.delete("category") } ] if f.key?("item") || f.key?("category")
+      NONE.merge("act" => kind).merge(f)
+    end
 
     def payload_of(prompt)
       body = prompt.split("INPUT:\n", 2).last
@@ -1878,7 +1919,9 @@ RSpec.describe Harness::Runners::Conversation do
       output = prompt.split("Output:", 2).last
       named  = output.scan(/"(\w+)":/).flatten.uniq
       schema = Harness::Runners::Conversation::ACT_SCHEMA
-      expect(named.sort).to eq(schema["properties"].keys.sort)
+      thing  = schema["properties"]["things"]["items"]
+      expect((named - thing["properties"].keys).sort).to eq(schema["properties"].keys.sort)
+      expect(thing["properties"].keys.sort).to eq(%w[category item])
       expect(schema["required"].sort).to eq(schema["properties"].keys.sort)
       expect(output.scan(/"act": ((?:"\w+"\|?)+)/).flatten.first.scan(/\w+/).sort).to eq(Harness::Runners::Conversation::ACT_KINDS.sort)
     end
@@ -1907,7 +1950,7 @@ RSpec.describe Harness::Runners::Conversation do
       described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "hello", step: step)
       llm = ctx.llm_nuance
       act_i = llm.system_calls.index { |sys| sys.include?(ACT_MARK) }
-      expect(llm.sampling_calls[act_i]).to eq(temperature: 0, thinking: false, max_tokens: nil)
+      expect(llm.sampling_calls[act_i]).to eq(temperature: 0, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS)
       voice_i = llm.system_calls.index { |sys| !sys.include?(ACT_MARK) && !sys.include?("CONTEST") && !sys.include?("WORLD MEMORY") && !sys.include?("TAKING STOCK") }
       expect(llm.sampling_calls[voice_i]).to eq(temperature: nil, thinking: nil, max_tokens: Harness::Runners::Conversation::VOICING_MAX_TOKENS)
       schema = Harness::Runners::Conversation::ACT_SCHEMA
@@ -1923,16 +1966,124 @@ RSpec.describe Harness::Runners::Conversation do
       expect(Item.find_by(name: "fine sword")).to be_nil
     end
 
-    it "someone with no trade has an empty can_offer, in the voice's payload and the judge's, and brings nothing out — refused, not bounced" do
+    it "someone with no trade has an empty can_offer, in the voice's payload and the judge's; an everyday thing they name goes to the at-hand judge, and a no is a refusal, not a bounce" do
       barkeep.update!(subrole: "labourer")
       jug = act("table", item: "a jug of cider", category: "provisions")
       seen = []
-      ctx = act_ctx(line, act: jug, act_retry: jug, seen: seen)
+      ctx = act_ctx(line, act: jug, act_retry: jug, mint: { "reasoning" => "a labourer keeps no cider by", "has" => false }, seen: seen)
       described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "anything to drink?", step: step)
       expect(you_payload(seen)["can_offer"]).to eq([])
       expect(payload_of(act_prompts(seen).first)["you"]["can_offer"]).to eq([])
       expect(act_prompts(seen).size).to eq(1)
+      asked = seen.select { |s| s.include?(MINT_MARK) }
+      expect(asked.size).to eq(1)
+      expect(payload_of(asked.first)).to include("thing" => "a jug of cider", "kind" => "provisions", "act" => "table")
+      expect(payload_of(asked.first)["you"]).to include("name" => "Tomas", "trade" => "labourer", "trade_brings_out" => [])
       expect(Item.where(location_id: tavern.id)).to be_empty
+    end
+
+    it "an everyday thing outside the trade is minted when the at-hand judge says such a person has it (the labourer's bucket, hands run 6 t3)" do
+      barkeep.update!(subrole: "labourer", properties: { "appearance" => "hauling a brine-heavy bucket toward the drying beds" })
+      seen = []
+      ctx = act_ctx(line("Wulfwyn holds the bucket out. \"Mind the spill.\""), act: act("give", to_id: player.id, item: "a brine bucket", category: "goods"), seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "hand it here a moment", step: step)
+      expect(seen.count { |s| s.include?(MINT_MARK) }).to eq(1)
+      expect(payload_of(seen.find { |s| s.include?(MINT_MARK) })["you"]["looks"]).to include("brine-heavy bucket")
+      expect(Item.find_by(name: "brine bucket")&.character_id).to eq(player.id)
+    end
+
+    it "a weapon, armour, jewel or magical thing outside the trade is refused without asking anyone — those come from the roll or the trade" do
+      barkeep.update!(subrole: "labourer")
+      seen = []
+      ctx = act_ctx(line("Ragnar draws a sword."), act: act("give", to_id: player.id, item: "a sword", category: "weapons"), seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "lend me a blade", step: step)
+      expect(seen.none? { |s| s.include?(MINT_MARK) }).to be(true)
+      expect(Item.find_by(name: "sword")).to be_nil
+      expect(act_prompts(seen).size).to eq(1)
+    end
+
+    it "the at-hand judge's prompt names every field of its grammar and nothing else; reasoning first" do
+      c = Harness::Runners::Conversation
+      named = File.read(c::MINT_PROMPT_PATH).scan(/"(\w+)":/).flatten.uniq.sort
+      expect(named).to eq(c::MINT_SCHEMA["properties"].keys.sort)
+      expect(c::MINT_SCHEMA["properties"].keys.first).to eq("reasoning")
+      expect(c::MINT_SCHEMA["required"]).to eq(c::MINT_SCHEMA["properties"].keys)
+    end
+
+    it "staff at their own stocked venue see the shelf as their table — those rows carry no seller id (run 7 t4: a second copper band)" do
+      tavern.update!(properties: { "shop" => [ "provisions" ] })
+      barkeep.update!(home_location_id: tavern.id)
+      ale = Item.create!(name: "dark ale", subrole: "drink", location: tavern, properties: { "for_sale" => true, "tags" => [ "provision" ] })
+      seen = []
+      ctx = act_ctx(line("Tomas slides the wares forward."), act: NONE, seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "what have you got?", step: step)
+      expect(payload_of(act_prompts(seen).first)["you"]["on_table"].map { |w| w["id"] }).to include(ale.id)
+    end
+
+    it "the voice is shown what the engine already did this turn — the receipts and the refusals (run 7 t5: coins taken that the player did not have)" do
+      seen = []
+      ctx = act_ctx(line, act: NONE, seen: seen)
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "I'll take it, here's the coin")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "buy_item", "args" => {}, "result" => { "item_name" => "jar of honey", "price" => 1, "buyer_id" => player.id, "merchant_id" => barkeep.id } } ])
+      ctx.turn_transcript.null_lines << "You can't afford it."
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "I'll take it, here's the coin", step: step)
+      expect(payload_of(seen.find { |p| voicing?(p) })["just_now"]).to eq([ "You buy the jar of honey for 1 coin.", "You can't afford it." ])
+    end
+
+    it "taking is not giving: a thing the player handed over this turn, or coins the player paid, cannot be given back by the act judge (run 7 t11, the mace)" do
+      mace = Item.create!(name: "polished mace", subrole: "weapon", character: barkeep, properties: { "tags" => [ "weapon" ] })
+      seen = []
+      ctx = act_ctx(line("Tomas takes the mace from Hero's hand."), act: act("give", to_id: player.id, item_id: mace.id), seen: seen)
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "pass it back")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "give_item", "args" => { "item_id" => mace.id, "from_id" => player.id, "to_id" => barkeep.id }, "result" => { "item_id" => mace.id } } ])
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "pass it back", step: step)
+      expect(mace.reload.character_id).to eq(barkeep.id)
+      expect(act_prompts(seen).size).to eq(1)
+
+      barkeep.update!(coins: 5)
+      Obligation.create!(debtor_id: barkeep.id, creditor_id: player.id, kind: "coins", amount: 3, terms: "the bet", status: "open", game_time: 0)
+      ctx = act_ctx(line("Tomas takes the three coins."), act: act("give", to_id: player.id, coins: 3))
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "here's three")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "transfer_coins", "args" => { "from_id" => player.id, "to_id" => barkeep.id, "amount" => 3 }, "result" => { "from_id" => player.id, "to_id" => barkeep.id, "amount" => 3 } } ])
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "here's three", step: step)
+      expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("transfer_coins")
+      expect(barkeep.reload.coins).to eq(5)
+    end
+
+    it "the act judge's kind is an enum of the library's kinds in the grammar — a blank cannot be emitted (run 7 t25: a waterskin with no kind)" do
+      cat = Harness::Runners::Conversation::ACT_SCHEMA["properties"]["things"]["items"]["properties"]["category"]
+      expect(cat["enum"]).to eq(Harness::Items::Library::CATEGORIES)
+    end
+
+    it "two things set out in one line both land on the table (hands run 9 t4: a sword and a coif in one slot, neither minted)" do
+      seen = []
+      both = act("table").merge("things" => [ { "item" => "a jug of cider", "category" => "provisions" }, { "item" => "a heel of bread", "category" => "provisions" } ])
+      ctx  = act_ctx(line("Tomas sets a jug and a heel of bread on the bar."), act: both, seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "what have you got?", step: step)
+      names = Item.where(location_id: tavern.id).select { |i| i.properties["seller_id"] == barkeep.id }.map(&:name)
+      expect(names.size).to eq(2)
+      expect(names.join(" ")).to match(/cider/).and match(/bread/)
+    end
+
+    it "a line that receives is none for the hands: the player's coins counted into her palm move nothing of hers (hands run 9 t5)" do
+      barkeep.update!(coins: 1)
+      seen = []
+      ctx = act_ctx(line("Tomas nods as Hero counts the coins into his palm. 'Yours.'"), act: act("receive"), seen: seen)
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "here's the coin", step: step)
+      expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("transfer_coins", "give_item")
+      expect(barkeep.reload.coins).to eq(1)
+      expect(act_prompts(seen).size).to eq(1)
+    end
+
+    it "the voice and the act judge are told what the character carries, and a give by a carried id hands over that very thing" do
+      dirk = Item.create!(name: "heavy dirk", subrole: "weapon", character: barkeep, properties: { "tags" => [ "weapon" ] })
+      seen = []
+      ctx = act_ctx(line("Tomas unhooks the dirk from his belt and passes it over."), act: act("give", to_id: player.id, item_id: dirk.id), seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "lend me your knife", step: step)
+      expect(you_payload(seen)["carry"]).to eq([ "heavy dirk" ])
+      expect(payload_of(act_prompts(seen).first)["you"]["carried"]).to eq([ { "id" => dirk.id, "name" => "heavy dirk" } ])
+      expect(dirk.reload.character_id).to eq(player.id)
+      expect(Item.where(name: "heavy dirk").count).to eq(1)
     end
 
     it "the table has a cap: one more thing from a seller whose table is full drops" do
@@ -2058,15 +2209,17 @@ RSpec.describe Harness::Runners::Conversation do
       expect(barkeep.reload.coins).to eq(10)
     end
 
-    it "an unaffordable give bounces once with the purse named, then the corrected act executes" do
+    it "an unaffordable give is refused, not bounced: told the purse, the judge gave the one coin it had to the player who had just paid (hands run 9 t5)" do
       barkeep.update!(coins: 3)
+      player_coins = player.reload.coins
       Obligation.create!(debtor_id: barkeep.id, creditor_id: player.id, kind: "coins", amount: 5, terms: "for the fish", status: "open", game_time: 0)
       seen = []
       ctx = act_ctx(line, act: act("give", to_id: player.id, coins: 5), act_retry: act("give", to_id: player.id, coins: 3), seen: seen)
       described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "pay up", step: step)
-      expect(act_prompts(seen).last).to include("--- RETRY ---", "Tomas has 3 coins, not 5")
-      expect(barkeep.reload.coins).to eq(0)
-      expect(player.reload.coins).to eq(3)
+      expect(act_prompts(seen).size).to eq(1)
+      expect(act_prompts(seen).last).not_to include("--- RETRY ---")
+      expect(barkeep.reload.coins).to eq(3)
+      expect(player.reload.coins).to eq(player_coins)
     end
 
     it "drops an act that is still wrong after the bounce and lets the line stand" do
@@ -2077,6 +2230,19 @@ RSpec.describe Harness::Runners::Conversation do
       expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("transfer_coins")
       expect(outcome.tool_calls.find { |t| t["name"] == "propose_event" }.dig("args", "details")).to eq("Take it.")
       expect(barkeep.reload.coins).to eq(3)
+    end
+
+    it "a runaway answer is echoed back to the retry cut short — 8k blanks re-sent ran the retry away too (run 6 t18)" do
+      barkeep.update!(coins: 3)
+      Obligation.create!(debtor_id: barkeep.id, creditor_id: player.id, kind: "coins", amount: 3, terms: "the bet", game_time: 0)
+      seen = []
+      runaway = act("give", to_id: 999_999, coins: 3).merge("reasoning" => "Player said: 'pay up" + " \n" * 4000)
+      ctx = act_ctx(line, act: runaway, act_retry: act("give", to_id: player.id, coins: 3), seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "pay up", step: step)
+      retry_prompt = act_prompts(seen).last
+      expect(retry_prompt).to include("--- RETRY ---", "more characters cut]")
+      expect(retry_prompt.split("Previous output:", 2).last.length).to be < 1000
+      expect(player.reload.coins).to eq(3)
     end
 
     it "a recipient id that is not here is refused, not guessed" do
@@ -2090,14 +2256,24 @@ RSpec.describe Harness::Runners::Conversation do
       expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("transfer_coins")
     end
 
-    it "a thing brought out with the category left blank bounces once with the trade's kinds named, then the corrected act lands it" do
+    it "a description where a name was asked for bounces once; the shortened name is minted and handed over (hands run 6 t5)" do
       seen = []
-      ctx = act_ctx(line("First one's on the house."),
-                    act:       act("give", to_id: player.id, item: "a tankard of ale", category: ""),
-                    act_retry: act("give", to_id: player.id, item: "a tankard of ale", category: "provisions"), seen: seen)
-      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "what can I get?", step: step)
-      expect(act_prompts(seen).last).to include("--- RETRY ---", "`category` is empty — one of provisions")
-      expect(Item.find_by(name: "tankard of ale")&.character_id).to eq(player.id)
+      ctx = act_ctx(line("Egbert fills a sack and passes it over."),
+                    act:       act("give", to_id: player.id, item: "a coarse wool sack filled to the brim with pale salt crystals", category: "provisions"),
+                    act_retry: act("give", to_id: player.id, item: "a sack of salt", category: "provisions"), seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "I'll take a stone of salt", step: step)
+      expect(act_prompts(seen).last).to include("--- RETRY ---", "`item` must be a name of a few words, not a description")
+      expect(Item.find_by(name: "sack of salt")&.character_id).to eq(player.id)
+    end
+
+    it "a thing brought out with no category is refused outright, never bounced — told to pick a kind, the judge relabels a lantern as a provision (probe 2026-09-17)" do
+      seen = []
+      ctx = act_ctx(line("Mind the stairs."),
+                    act:       act("give", to_id: player.id, item: "a lantern", category: ""),
+                    act_retry: act("give", to_id: player.id, item: "a lantern", category: "provisions"), seen: seen)
+      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "it's dark down there", step: step)
+      expect(act_prompts(seen).size).to eq(1)   # refused, not bounced
+      expect(Item.find_by(name: "lantern")).to be_nil
     end
 
     it "leave relocates to the nearby place by id, pins them there, records the departure, and renders a line" do
@@ -2149,21 +2325,23 @@ RSpec.describe Harness::Runners::Conversation do
   end
 
   describe "the ledger: four narrow judges (struck? → terms → delivered → discharged)" do
-    NOT_STRUCK = { "reasoning" => "a quote, nothing taken", "struck" => false, "proposed_by" => "none", "accepted_by" => "none" }.freeze
+    NOT_STRUCK = { "reasoning" => "a quote, nothing taken", "turn_is" => "talk", "struck" => false, "proposed_by" => "none", "accepted_by" => "none" }.freeze
     NOTHING_DISCHARGED = { "reasoning" => "nothing closed", "discharged" => [] }.freeze
 
     # One stub for the turn: the voice says `prose`, the act judge answers
     # `act`, the four ledger judges answer their fixtures, the claims judge
     # and taking stock get empty memory. `seen` collects every prompt.
-    def ledger_ctx(prose, struck: NOT_STRUCK, terms: nil, delivered: nil, discharged: NOTHING_DISCHARGED, act: NONE, seen: [])
+    def ledger_ctx(prose, struck: NOT_STRUCK, terms: nil, delivered: nil, discharged: NOTHING_DISCHARGED, release: { "reasoning" => "…", "lets_go" => true }, act: NONE, seen: [])
       stub = StubLLM.new do |full|
         seen << full
-        if    full.include?("BARGAINS: STRUCK")     then struck.to_json
+        if    full.include?("BARGAINS: RELEASE?")   then release.to_json
+        elsif full.include?("BARGAINS: STRUCK")     then struck.to_json
         elsif full.include?("BARGAINS: TERMS")      then terms.to_json
         elsif full.include?("BARGAINS: DELIVERED")  then delivered.to_json
         elsif full.include?("BARGAINS: DISCHARGED") then discharged.to_json
         elsif full.include?("WORLD MEMORY") || full.include?("TAKING STOCK") then { "facts" => [], "people" => [], "places" => [] }.to_json
         elsif full.include?("filter stored facts")  then { "relevant" => [] }.to_json
+        elsif full.include?(MINT_MARK)              then AT_HAND.to_json
         elsif full.include?(ACT_MARK)               then act.to_json
         elsif full.include?(KIND_MARK)              then NO_CONTEST.to_json
         elsif full.include?(CHIME_MARK)             then NO_CHIME.to_json
@@ -2179,7 +2357,7 @@ RSpec.describe Harness::Runners::Conversation do
       body = prompt.split("INPUT:\n", 2).last
       JSON.parse(body[0..body.rindex("}")])
     end
-    def struck(prop, acc) = { "reasoning" => "terms taken", "struck" => true, "proposed_by" => prop, "accepted_by" => acc }
+    def struck(prop, acc) = { "reasoning" => "terms taken", "turn_is" => "new_terms", "struck" => true, "proposed_by" => prop, "accepted_by" => acc }
     def side(who, kind, terms, amount: nil) = { "who" => who, "kind" => kind, "amount" => amount, "terms" => terms }
     def terms(*sides, due: nil, where: nil) = { "reasoning" => "sides", "sides" => sides, "due" => due, "where" => where }
 
@@ -2200,6 +2378,15 @@ RSpec.describe Harness::Runners::Conversation do
       expect(prompts(seen, "BARGAINS: DISCHARGED")).to be_empty   # no debts stand, no call
     end
 
+    it "a turn classed as carrying out, talk or a wager strikes nothing, whatever `struck` says: no terms call, no rows (hands run 8: a loaf handed over, 'are we square?')" do
+      %w[carrying_out talk wager].each do |kind|
+        seen = []
+        ctx = ledger_ctx("Here is your loaf, as agreed.", seen: seen, struck: struck("player", "you").merge("turn_is" => kind))
+        expect { run!(ctx, "the loaf, cook — you've had my two coppers") }.not_to change(Obligation, :count)
+        expect(prompts(seen, "BARGAINS: TERMS")).to be_empty
+      end
+    end
+
     it "a bargain struck with nothing carried out books every side, names bound by the runner from player|you, due and where carried" do
       seen = []
       ctx = ledger_ctx("Done. Five coppers, and the ale is yours at dusk.", seen: seen,
@@ -2218,7 +2405,7 @@ RSpec.describe Harness::Runners::Conversation do
     it "a swap accepted and half carried out by the hands: the side the receipts show is history, the other side is the debt (hands run 4, t9)" do
       seen = []
       ctx = ledger_ctx("Aye, straight trade — your cider for my stew.", seen: seen,
-                       act: NONE.merge("act" => "give", "to_id" => player.id, "item" => "a bowl of stew", "category" => "provisions"),
+                       act: NONE.merge("act" => "give", "to_id" => player.id, "things" => [ { "item" => "a bowl of stew", "category" => "provisions" } ]),
                        struck: struck("player", "you"),
                        terms: terms(side("player", "deed", "Hand Tomas the sour cider"), side("you", "deed", "Hand Hero the bowl of stew")),
                        delivered: { "reasoning" => "the stew went over", "delivered" => [ 2 ] })
@@ -2227,6 +2414,53 @@ RSpec.describe Harness::Runners::Conversation do
       expect(judged["sides"].map { |x| x["n"] }).to eq([ 1, 2 ])
       expect(judged["this_turn"]).to include(a_string_matching(/\ATomas hands you the bowl of stew\.\z/))
       expect(Obligation.last).to have_attributes(debtor_id: player.id, creditor_id: barkeep.id, kind: "deed", terms: "Hand Tomas the sour cider")
+    end
+
+    it "the tails read the engine's refusals of the player's acts this turn as facts, beside the receipts" do
+      seen = []
+      ctx = ledger_ctx("Forty-seven, and it's yours.", seen: seen)
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "I'll take it, here's 47")
+      ctx.turn_transcript.null_lines << "You can't afford it."
+      run!(ctx, "I'll take it, here's 47")
+      expect(payload_of(prompts(seen, "BARGAINS: STRUCK").first)["this_turn"]).to include("You can't afford it.")
+    end
+
+    it "a thing set down for someone is a move the delivered judge reads (run 7 t20: the bundle on the bar, written as still owed)" do
+      seen = []
+      ctx = ledger_ctx("Aye, three coins when you're next through.", seen: seen,
+                       struck: struck("player", "you"),
+                       terms: terms(side("player", "deed", "hand over the bundle of provisions"), side("you", "coins", "pay three coins", amount: 3)),
+                       delivered: { "reasoning" => "the bundle is on the bar", "delivered" => [ 1 ] })
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "set the bundle on the bar")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "drop", "args" => { "item_id" => 1, "by_character_id" => player.id }, "result" => { "item_name" => "bundle of provisions" } } ])
+      expect { run!(ctx, "set the bundle on the bar. 'Take these off my hands, three coins.'") }.to change(Obligation, :count).by(1)
+      expect(payload_of(prompts(seen, "BARGAINS: DELIVERED").first)["this_turn"]).to include("You set down the bundle of provisions.")
+      expect(Obligation.last).to have_attributes(debtor_id: barkeep.id, kind: "coins", amount: 3)
+    end
+
+    it "a paid wager restated as a debt is refused: 'you owe me from the wager' / 'Paid, matter closed' writes no row (hands run 6 t13, the double payout)" do
+      seen = []
+      ctx = ledger_ctx("Paid. Two coins, wager lost — matter closed.", seen: seen,
+                       struck: struck("player", "you"),
+                       terms: terms(side("you", "coins", "pay two coins for the lost wager", amount: 2), due: "now"))
+      ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern))
+      ctx.active_scene.record_contest!("#{barkeep.id}:strength", { "kind" => "wager", "wager" => true, "player_won" => true, "paid_coins" => 2, "verdict" => "Tomas lost the wager — 2 coins went to the player" })
+      expect { run!(ctx, "Settle up then — you owe me from the wager, don't you?") }.not_to change(Obligation, :count)
+      expect(prompts(seen, "BARGAINS: DELIVERED")).to be_empty
+    end
+
+    it "the delivered judge reads the engine's receipts only — a refused act's 'Nothing changed hands' fact is not a receipt (hands run 6 t11: it read as the blanket not delivered)" do
+      seen = []
+      ctx = ledger_ctx("Mildryth takes the four coins and folds the blanket.", seen: seen,
+                       act: NONE.merge("act" => "give", "to_id" => player.id, "coins" => 4),   # her taking coins misread as giving them — refused, no debt
+                       struck: struck("player", "you"),
+                       terms: terms(side("player", "coins", "pays four coins"), side("you", "deed", "gives the woven blanket")),
+                       delivered: { "reasoning" => "the buy carried both", "delivered" => [ 1, 2 ] })
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "I'll take the blanket, four coins")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "buy_item", "args" => {}, "result" => { "item_name" => "woven blanket", "price" => 4, "buyer_id" => player.id, "merchant_id" => barkeep.id } } ])
+      expect { run!(ctx, "I'll take the blanket, four coins") }.not_to change(Obligation, :count)
+      judged = payload_of(prompts(seen, "BARGAINS: DELIVERED").first)
+      expect(judged["this_turn"]).to eq([ "You buy the woven blanket for 4 coins." ])
     end
 
     it "a one-word bystander line with a standing swap on the books strikes nothing (hands run 5, t8): the debt is shown as standing, the discharge judge runs and closes nothing, no second row" do
@@ -2267,23 +2501,71 @@ RSpec.describe Harness::Runners::Conversation do
     it "a standing deed settles as delivered when the hands carried it out this turn (the receipt is the proof)" do
       deed = Obligation.create!(debtor: barkeep, creditor: player, kind: "deed", terms: "Hand over the bowl of stew", game_time: 90)
       ctx = ledger_ctx("Here's your stew, as promised.",
-                       act: NONE.merge("act" => "give", "to_id" => player.id, "item" => "a bowl of stew", "category" => "provisions"),
+                       act: NONE.merge("act" => "give", "to_id" => player.id, "things" => [ { "item" => "a bowl of stew", "category" => "provisions" } ]),
                        discharged: { "reasoning" => "the stew went over", "discharged" => [ { "id" => deed.id, "how" => "delivered" } ] })
       run!(ctx, "where's my stew?")
       expect(Item.find_by(name: "bowl of stew").character_id).to eq(player.id)
       expect(deed.reload.status).to eq("settled")
     end
 
-    it "the four ledger judges run at zero temperature with thinking off, reasoning first in each grammar, every field the prompts name in the grammar" do
+    it "a debt the speaker owes is released only when the player's own words let it go: one confirm question on those words (run 7 t21: 'I'll take those three coins' read as a release)" do
+      coins = Obligation.create!(debtor: barkeep, creditor: player, kind: "coins", amount: 3, terms: "pay three coins", game_time: 90)
+      seen = []
+      ctx = ledger_ctx("Aye, three coins as agreed. I'll mark it settled.", seen: seen,
+                       discharged: { "reasoning" => "settled", "discharged" => [ { "id" => coins.id, "how" => "released" } ] },
+                       release: { "reasoning" => "the player wants them", "lets_go" => false })
+      run!(ctx, "Actually, I'm through now — I'll take those three coins.")
+      asked = payload_of(prompts(seen, "BARGAINS: RELEASE?").first)
+      expect(asked).to eq("debt" => coins.line_for(barkeep.id, now: 100, name: barkeep.name), "player_said" => "Actually, I'm through now — I'll take those three coins.")
+      expect(coins.reload.status).to eq("open")
+
+      ctx = ledger_ctx("Aye. Square, then.", discharged: { "reasoning" => "forgiven", "discharged" => [ { "id" => coins.id, "how" => "released" } ] },
+                       release: { "reasoning" => "keep them", "lets_go" => true })
+      run!(ctx, "Keep your three coins, Tomas. Call us square.")
+      expect(coins.reload.status).to eq("settled")
+    end
+
+    it "a debt owed to the speaker needs no confirm to be released — their own words are the release" do
+      owed = Obligation.create!(debtor: player, creditor: barkeep, kind: "deed", terms: "hand over the bundle", game_time: 90)
+      seen = []
+      ctx = ledger_ctx("Consider the provision debt cleared — you're square with me.", seen: seen,
+                       discharged: { "reasoning" => "let go", "discharged" => [ { "id" => owed.id, "how" => "released" } ] })
+      run!(ctx, "I'm through now.")
+      expect(prompts(seen, "BARGAINS: RELEASE?")).to be_empty
+      expect(owed.reload.status).to eq("settled")
+    end
+
+    it "delivered needs a receipt of the debtor's own hands this turn — the other party's coins moving does not deliver the player's bundle (run 7 t21 retry)" do
+      bundle = Obligation.create!(debtor: player, creditor: barkeep, kind: "deed", terms: "hand over the bundle of provisions", game_time: 90)
+      ctx = ledger_ctx("Here — three coins, as agreed.", act: NONE.merge("act" => "give", "to_id" => player.id, "coins" => 3),
+                       discharged: { "reasoning" => "paid", "discharged" => [ { "id" => bundle.id, "how" => "delivered" } ] })
+      barkeep.update!(coins: 5)
+      Obligation.create!(debtor: barkeep, creditor: player, kind: "coins", amount: 3, terms: "pay three coins", game_time: 90)
+      expect { run!(ctx, "I'll take those three coins.") }.to change { player.reload.coins }.by(3)   # Tomas's coins moved
+      expect(bundle.reload.status).to eq("open")   # the player's bundle did not
+    end
+
+    it "a receipt delivers only a debt of its own kind: the player's buy does not deliver the player's day of hauling (hands run 10 t3, against the judge's own reasoning)" do
+      haul = Obligation.create!(debtor: player, creditor: barkeep, kind: "deed", terms: "hauls logs to the pond for one day", game_time: 90)
+      ctx = ledger_ctx("Sawblade's yours — four coins taken.",
+                       discharged: { "reasoning" => "the haul is not yet done", "discharged" => [ { "id" => haul.id, "how" => "delivered" } ] })
+      ctx.turn_transcript = Harness::Turn::Transcript.new(input: "Four coins for the sawblade — done.")
+      ctx.turn_transcript.record_tool_calls([ { "name" => "buy_item", "args" => {}, "result" => { "item_name" => "sawblade", "price" => 4, "buyer_id" => player.id, "merchant_id" => barkeep.id } } ])
+      run!(ctx, "Four coins for the sawblade — done.")
+      expect(haul.reload.status).to eq("open")
+    end
+
+    it "the five ledger judges run at zero temperature with thinking off, reasoning first in each grammar, every field the prompts name in the grammar" do
       seen = []
       ctx = ledger_ctx("Two coppers.", seen: seen)
       run!(ctx, "how much?")
       llm = ctx.llm_nuance
       i = llm.system_calls.index { |sys| sys.include?("BARGAINS: STRUCK") }
-      expect(llm.sampling_calls[i]).to eq(temperature: 0, thinking: false, max_tokens: nil)
+      expect(llm.sampling_calls[i]).to eq(temperature: 0, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS)
       c = Harness::Runners::Conversation
       { c::LEDGER_STRUCK_PATH => c::LEDGER_STRUCK_SCHEMA, c::LEDGER_TERMS_PATH => c::LEDGER_TERMS_SCHEMA,
-        c::LEDGER_DELIVERED_PATH => c::LEDGER_DELIVERED_SCHEMA, c::LEDGER_DISCHARGED_PATH => c::LEDGER_DISCHARGED_SCHEMA }.each do |path, schema|
+        c::LEDGER_DELIVERED_PATH => c::LEDGER_DELIVERED_SCHEMA, c::LEDGER_DISCHARGED_PATH => c::LEDGER_DISCHARGED_SCHEMA,
+        c::LEDGER_RELEASE_PATH => c::LEDGER_RELEASE_SCHEMA }.each do |path, schema|
         expect(schema["properties"].keys.first).to eq("reasoning")
         expect(schema["required"]).to eq(schema["properties"].keys)
         named = File.read(path).split("Output:", 2).last.scan(/"(\w+)":/).flatten.uniq
@@ -2328,7 +2610,7 @@ RSpec.describe Harness::Runners::Conversation do
       expect(gate).to include("player_said" => "Tomas, how much for an ale?", "addressed" => "Tomas", "said_this_turn" => [ "Tomas shrugs. \"Two coppers.\"" ], "you_said_last" => "Maud said her piece earlier.")
       expect(voicings(seen).size).to eq(1)   # Tomas only
       expect(outcome.tool_calls.count { |t| t["name"] == "propose_event" && t.dig("result", "staged") }).to eq(1)
-      expect(ctx.llm_nuance.sampling_calls[seen.index { |p| p.include?(CHIME_MARK) }]).to eq(temperature: 0, thinking: false, max_tokens: nil)
+      expect(ctx.llm_nuance.sampling_calls[seen.index { |p| p.include?(CHIME_MARK) }]).to eq(temperature: 0, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS)
     end
 
     it "a yes voices the bystander (without recall, as before) and their line lands" do
@@ -2354,6 +2636,99 @@ RSpec.describe Harness::Runners::Conversation do
       expect(schema["required"]).to eq(schema["properties"].keys)
       named = File.read(described_class::CHIME_PROMPT_PATH).split("Output:", 2).last.scan(/"(\w+)":/).flatten.uniq
       expect(named.sort).to eq(schema["properties"].keys.sort)
+    end
+  end
+
+  describe "whom the words are for: the addressee judge, on the room as it stands" do
+    let!(:maud) { Npc.create!(name: "Maud", subrole: "fishwife", location: tavern) }
+
+    def address_ctx(answer, seen: [], extras: [])
+      stub = StubLLM.new do |full|
+        seen << full
+        if full.include?(ADDRESS_MARK) then answer.is_a?(::String) ? answer : answer.to_json
+        elsif full.include?(CHIME_MARK) then NO_CHIME.to_json
+        elsif full.include?(KIND_MARK) then NO_CONTEST.to_json
+        elsif full.include?(ACT_MARK) then NONE.to_json
+        elsif full.include?("WORLD MEMORY") || full.include?("TAKING STOCK") then { "facts" => [], "people" => [], "places" => [] }.to_json
+        elsif full.include?("filter stored facts") then { "relevant" => [] }.to_json
+        else { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "Aye." } }.to_json
+        end
+      end
+      ctx = Harness::Turn::Context.new(player_location: tavern, llm_nuance: stub, game_time: 100)
+      ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern), narrations: [], extras: extras)
+      ctx
+    end
+    def talk!(ctx, input, plan_step) = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: input, step: plan_step)
+    def voiced_ids(seen) = seen.select { |p| voicing?(p) }.map { |p| JSON.parse(p.split("INPUT:\n", 2).last).dig("you", "id") }
+    def to(id, figure = nil) = { "reasoning" => "their exchange goes on", "with_id" => id, "figure" => figure }
+
+    it "is asked on the player's words, who is here, the figures and the last exchanges; capped, cold, thinking off" do
+      seen = []
+      maud.update!(properties: { "physical" => "an old woman gutting herring" })
+      ctx = address_ctx(to(maud.id), seen: seen, extras: [ "a drover nursing a cup" ])
+      5.times { |i| ctx.active_scene.narrations << { "input" => "said #{i}", "narration" => "answer #{i}" } }
+      talk!(ctx, "\"And the herring?\"", step)
+      asked = JSON.parse(seen.find { |p| p.include?(ADDRESS_MARK) }.split("INPUT:\n", 2).last)
+      expect(asked["player_said"]).to eq("\"And the herring?\"")
+      expect(asked["present"]).to include({ "id" => barkeep.id, "name" => barkeep.name, "trade" => barkeep.subrole }, { "id" => maud.id, "name" => "Maud", "trade" => "fishwife", "looks" => "an old woman gutting herring" })
+      expect(asked["figures"]).to eq([ { "index" => 0, "looks" => "a drover nursing a cup" } ])
+      expect(asked["exchange"]).to eq((1..4).map { |i| { "player" => "said #{i}", "scene" => "answer #{i}" } })
+      expect(ctx.llm_nuance.sampling_calls[seen.index { |p| p.include?(ADDRESS_MARK) }]).to eq(temperature: 0, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS)
+    end
+
+    it "binds an unnamed continuation the plan left to the room: that one answers first, the other is asked the chime-in question" do
+      seen = []
+      talk!(address_ctx(to(maud.id), seen: seen), "\"And the herring?\"", step)
+      expect(voiced_ids(seen)).to eq([ maud.id ])
+      expect(seen.find { |p| voicing?(p) }).to match(/^\s+"addressed": true/)   # told the words are hers
+      expect(seen.count { |p| p.include?(CHIME_MARK) }).to eq(1)
+    end
+
+    it "replaces the plan's binding when the two differ, and the contest judge is told the judge's party" do
+      seen = []
+      talk!(address_ctx(to(maud.id), seen: seen), "\"What else have you got?\"", step_to(barkeep.id))
+      expect(voiced_ids(seen)).to eq([ maud.id ])
+      kind = JSON.parse(seen.find { |p| p.include?(KIND_MARK) }.split("INPUT:\n", 2).last)
+      expect(kind["addressed"]).to eq("id" => maud.id, "name" => "Maud")
+    end
+
+    it "words for the room unbind the plan: everyone is polled, no chime-in question" do
+      seen = []
+      talk!(address_ctx(to(nil), seen: seen), "\"Anyone here know the road north?\"", step_to(barkeep.id))
+      expect(voiced_ids(seen)).to contain_exactly(barkeep.id, maud.id)
+      expect(seen.none? { |p| p.include?(CHIME_MARK) }).to be(true)
+    end
+
+    it "binds a painted figure by index" do
+      seen = []
+      talk!(address_ctx(to(nil, 0), seen: seen, extras: [ "a drover nursing a cup" ]), "\"You there, with the cup.\"", step)
+      first = JSON.parse(seen.find { |p| voicing?(p) }.split("INPUT:\n", 2).last)
+      expect(first.dig("you", "id")).to be_nil
+      expect(first.to_json).to include("a drover nursing a cup")
+    end
+
+    it "leaves the plan's binding when the judge fails or names no one here" do
+      [ "", to(999_999), to(nil, 7) ].each do |answer|
+        seen = []
+        talk!(address_ctx(answer, seen: seen), "\"Tomas, an ale.\"", step_to(barkeep.id))
+        expect(voiced_ids(seen)).to eq([ barkeep.id ])
+      end
+    end
+
+    it "is not asked when one person is the only candidate" do
+      maud.update!(location: Location.create!(name: "Elsewhere"))
+      seen = []
+      talk!(address_ctx(to(nil), seen: seen), "\"An ale.\"", step)
+      expect(seen.none? { |p| p.include?(ADDRESS_MARK) }).to be(true)
+    end
+
+    it "the judge's grammar: reasoning first, all required, the prompt's fields in it" do
+      schema = described_class::ADDRESSEE_SCHEMA
+      expect(schema["properties"].keys).to eq(%w[reasoning with_id figure])
+      expect(schema["required"]).to eq(schema["properties"].keys)
+      named = File.read(described_class::ADDRESSEE_PROMPT_PATH).split("Output:", 2).last.scan(/"(\w+)":/).flatten.uniq
+      expect(named.sort).to eq(schema["properties"].keys.sort)
+      expect(File.read(described_class::ADDRESSEE_PROMPT_PATH)).to include(ADDRESS_MARK)
     end
   end
 

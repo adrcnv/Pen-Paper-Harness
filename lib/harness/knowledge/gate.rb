@@ -17,6 +17,8 @@ module Harness
     # gracefully (the NPC re-invents, capture catches it); leaked noise does not.
     class Gate
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/knowledge_gate.txt")
+      SCHEMA = { "type" => "object", "properties" => { "relevant" => { "type" => "array", "items" => { "type" => "integer" } } },
+                 "required" => %w[relevant], "additionalProperties" => false }.freeze
 
       def self.run(**kwargs) = new(**kwargs).run
 
@@ -33,7 +35,7 @@ module Harness
         return [] if @facts.empty?
 
         raw = ::Harness::CostTracker.in_subsystem(:knowledge_gate) do
-          @llm.complete(system: preamble, user: user_message)
+          @llm.complete(system: preamble, user: user_message, schema: SCHEMA, max_tokens: 256, temperature: 0, thinking: false)   # ids back; a runaway stops here
         end
         ids = relevant_ids(raw)
         approved = @facts.select { |f| ids.include?(f.id) }

@@ -23,15 +23,36 @@ RSpec.describe Harness::Dispatcher do
       plan = dispatcher.plan("go to the docks and ask the barkeep")
 
       expect(plan.failed?).to be(false)
-      expect(plan.steps.map(&:runner)).to eq(%w[movement conversation])
+      expect(plan.steps.map(&:runner)).to eq(%w[movement inventory conversation])   # the hands step is implicit, see below
       expect(plan.steps.first.intent).to eq("go to the docks")
       expect(plan.steps.first.args).to eq("dest" => "docks")
+    end
+
+    it "puts an implicit hands step before a conversation the planner wrote no inventory step beside — whether the hands move is the inventory judge's question (hands run 9 t18)" do
+      stub_planner(plan: [ { "runner" => "movement", "reason" => "go" }, { "runner" => "conversation", "reason" => "say it" } ])
+      steps = dispatcher.plan("go and say it").steps
+      expect(steps.map(&:runner)).to eq(%w[movement inventory conversation])
+      expect(steps[1].args).to eq("implicit" => true)
+      expect(steps[1].intent).to be_nil
+      stub_planner(plan: [ { "runner" => "conversation", "reason" => "say it" }, { "runner" => "inventory", "reason" => "hand it over" } ])
+      expect(dispatcher.plan("say it, hand it over").steps.map { |s| [ s.runner, s.args["implicit"] ] }).to eq([ [ "inventory", nil ], [ "conversation", nil ] ])
+      stub_planner(plan: [ { "runner" => "inspection", "reason" => "look" } ])
+      expect(dispatcher.plan("look").steps.map(&:runner)).to eq(%w[inspection])
     end
 
     # Retired labels (dice/agentic) are gone from the grammar enum — the
     # sampler cannot emit them. A stray label (unconstrained-fallback path
     # only) passes through untouched; the EXECUTOR degrades unbuilt labels
     # to inspection (see executor_spec).
+    it "runs the player's own hands before the room answers: an inventory step written after a conversation step moves ahead of it; a movement between keeps its place" do
+      stub_planner(plan: [ { "runner" => "conversation", "reason" => "say it" }, { "runner" => "inventory", "reason" => "pay" } ])
+      expect(dispatcher.plan("'I'll take it.' Hand over 47 coins.").steps.map(&:runner)).to eq(%w[inventory conversation])
+      stub_planner(plan: [ { "runner" => "movement", "reason" => "go" }, { "runner" => "conversation", "reason" => "say it" }, { "runner" => "inventory", "reason" => "pay" } ])
+      expect(dispatcher.plan("go, say, pay").steps.map(&:runner)).to eq(%w[movement inventory conversation])
+      stub_planner(plan: [ { "runner" => "conversation", "reason" => "ask" }, { "runner" => "movement", "reason" => "walk" }, { "runner" => "inventory", "reason" => "buy" } ])
+      expect(dispatcher.plan("ask, walk, buy").steps.map(&:runner)).to eq(%w[conversation movement inventory])
+    end
+
     it "passes an unknown label through for the executor to degrade" do
       stub_planner(plan: [ { "runner" => "dice", "reason" => "climb the wall", "args" => {} } ])
       plan = dispatcher.plan("climb the wall")

@@ -32,6 +32,8 @@ RSpec.describe Harness::Items::Offers do
       expect(described_class.clean_label("  the  length of rope ")).to eq("length of rope")
       expect(described_class.clean_label("")).to be_nil
       expect(described_class.clean_label("x" * 41)).to be_nil
+      expect(described_class.clean_label("provisions")).to be_nil   # a kind word is not a name (run 7 t6)
+      expect(described_class.clean_label("a wedge of cheese")).to eq("wedge of cheese")
     end
   end
 

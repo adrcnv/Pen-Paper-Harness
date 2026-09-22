@@ -165,8 +165,6 @@ module Harness
             mech_name = ::Harness::Naming.unique_for(location: location, rng: @rng)
             ctx_parts = []
             ctx_parts << "Spawned at #{location.name} (#{location.description.to_s.slice(0, 200)})" if location.description.present?
-            ctx_parts << "Subrole: #{e['subrole']}" if e["subrole"]
-            ctx_parts << "Properties: #{props.to_json}" if props.any?
             spawned << ::Harness::Character::Hatchery.spawn(
               llm_grunt:     @llm,
               name:          mech_name,

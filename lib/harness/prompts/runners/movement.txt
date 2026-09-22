@@ -6,7 +6,7 @@ You route a player's MOVEMENT for a tabletop-RPG engine. The player wants to go 
 
 - transition — the destination is one of INPUT.nearby (a parent / sibling / child of where the player is now). Set target_id to that entry's id. place_name null.
 - travel — the destination is a separate, far place the player NAMES that is NOT in INPUT.nearby (another town, a named site out in the world). Set place_name to the place's name as best you can resolve it. target_id null. The engine looks the name up (and decides whether it exists).
-- none — the player is NOT changing which location they are in. This covers approaching or turning to someone/something already in the room ("walk up to Marnie", "step closer to the fire", "face the guard"), a vague non-directional move, or you genuinely cannot tell. target_id and place_name null. This is a fine, common answer — positioning inside a room is narration, not a move.
+- none — the player is NOT changing which location they are in — INPUT.here is where they already stand; a destination that is `here` is none. This covers approaching or turning to someone/something already in the room ("walk up to Marnie", "step closer to the fire", "face the guard"), a vague non-directional move, or you genuinely cannot tell. target_id and place_name null. This is a fine, common answer — positioning inside a room is narration, not a move.
 
 Movement means changing LOCATION (which room/place the player is in). Closing distance to a person who is already present is NOT movement — answer "none".
 
@@ -18,5 +18,5 @@ Rules:
 - No prose. Just the JSON object.
 
 INPUT shape:
-{ "player_input": "...", "intent": "<the planner's read of this step>",
+{ "player_input": "...", "intent": "<the planner's read of this step>", "here": "<where the player already is>",
   "nearby": [ { "id": N, "name": "...", "rel": "parent|sibling|child" }, ... ] }

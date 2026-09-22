@@ -62,7 +62,13 @@ module Harness
       def run(context:, scene:, input:, step:)
         present = Array(scene["present_characters"])
         extras  = Array(scene["present_extras"])
-        return redispatch("no one present to converse with") if present.empty? && extras.empty?
+        # An empty room is an honest silence, not a stale plan: re-planned, the
+        # same words drew the same talk step, the cap was spent and the wait
+        # behind it never ran (hands run 8 t19, the Granary after Yngvar left).
+        if present.empty? && extras.empty?
+          @logger.info { "[Runner conversation] no one here at all — silence" }
+          return Outcome.new(tool_calls: [ tool_call("conversation_silence", {}, { "nobody_spoke" => true, "nobody_here" => true }) ], scene_dirty: false, status: :ok)
+        end
 
         player = ::Player.first
         return redispatch("no player row") unless player
@@ -75,10 +81,20 @@ module Harness
         roster   = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
         nearby   = nearby_places(context)
         wares    = wares_here(context)
+        step     = addressed_step(context, input, step, present, extras, thread)
         # The contest, judged before anyone is voiced: kind and party, the
         # binding, the target's consent, then the dice or a standing verdict
         # re-served (open_contest). nil is plain talk.
-        contest = open_contest(context, input, player, present, active, resolver, tcs)
+        # A painted figure has no id until it speaks: a contest cannot bind
+        # it, and the kind judge picked a named bystander instead (run 7
+        # t17: "No wager — Mara won't play" while the traveler declined).
+        # The figure answers in words; press again once it has a name.
+        contest = if step.args["figure"].is_a?(::Integer)
+                    @logger.info { "[Runner conversation] the words are for a painted figure — no contest this turn" }
+                    nil
+                  else
+                    open_contest(context, input, player, present, active, resolver, tcs, addressed_id: step.args["with_id"])
+                  end
 
         spoken     = 0
         parsed_any = false
@@ -210,7 +226,7 @@ module Harness
           "you_said_last"  => (active&.last_lines || {})[id]
         }.compact
         raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
-          llm(context).complete(system: (@chime_prompt ||= File.read(CHIME_PROMPT_PATH)), user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: CHIME_SCHEMA, temperature: 0, thinking: false)
+          llm(context).complete(system: (@chime_prompt ||= File.read(CHIME_PROMPT_PATH)), user: "INPUT:\n#{JSON.pretty_generate(payload)}", max_tokens: JUDGE_MAX_TOKENS, schema: CHIME_SCHEMA, temperature: 0, thinking: false)
         end
         out = parse_emit(raw)
         yes = out.is_a?(::Hash) && out["chime_in"] == true
@@ -221,11 +237,52 @@ module Harness
         false
       end
 
+      # WHOM THE WORDS ARE FOR — one narrow judge on the room as it stands
+      # (after any movement step) and the last exchanges; its answer replaces
+      # the plan's binding for this step. The planner, routing and decomposing
+      # in the same call, bound the right person on 6 of 13 unnamed
+      # continuations in hands runs 6–7 ("Fair enough on the locket. What
+      # about that mace" bound no one and nobody answered; "What else have
+      # you got" went to the other trader); this judge, 12 of 13 on the same
+      # turns, 61 of 62 over all, and no one on 10 of 10 lines for the room.
+      # One candidate is no question; a failed call leaves the plan's binding.
+      ADDRESSEE_PROMPT_PATH = Rails.root.join("lib/harness/prompts/addressee.txt")
+      ADDRESSEE_SCHEMA = {
+        "type" => "object",
+        "properties" => { "reasoning" => { "type" => "string" }, "with_id" => { "type" => %w[integer null] }, "figure" => { "type" => %w[integer null] } },
+        "required" => %w[reasoning with_id figure],
+        "additionalProperties" => false
+      }.freeze
+      ADDRESSEE_THREAD = 4
+
+      def addressed_step(context, input, step, present, extras, thread)
+        return step if present.size + extras.size < 2
+        # How each one looks rides along: a figure just given a name is still
+        # "grandmother" to the player, and with name and trade alone the judge
+        # knew whom the words were for and had no id to answer with (run 8 t25).
+        looks = looks_for(present.map { |c| c["id"] })
+        payload = {
+          "player_said" => input,
+          "present"     => present.map { |c| { "id" => c["id"], "name" => c["name"], "trade" => c["subrole"], "looks" => looks[c["id"]] }.compact },
+          "figures"     => extras.each_with_index.map { |d, i| { "index" => i, "looks" => d } },
+          "exchange"    => thread.last(ADDRESSEE_THREAD)
+        }
+        out = contest_judge(context, ADDRESSEE_PROMPT_PATH, ADDRESSEE_SCHEMA, payload) or return step
+        with_id, figure = out["with_id"], out["figure"]
+        if (with_id && present.none? { |c| c["id"] == with_id }) || (figure && !extras[figure].is_a?(::String))
+          @logger.warn { "[Runner conversation] addressee judge named no one here (#{out.slice('with_id', 'figure').inspect}) — the plan's binding stands" }
+          return step
+        end
+        figure = nil if with_id
+        @logger.info { "[Runner conversation] addressee: #{with_id ? "id #{with_id}" : (figure ? "figure #{figure}" : 'the room')} (plan had #{step.args.slice('with_id', 'figure').inspect}) — #{out['reasoning']}" }
+        step.dup.tap { |s| s.args = step.args.except("with_id", "figure").merge({ "with_id" => with_id, "figure" => figure }.compact) }
+      end
+
       # Poll order: the character the plan ADDRESSED (A1's with_id, or a
       # painted figure by index) goes FIRST and is marked addressed — so an
       # addressee is always asked before the two-speaker cap can be filled
       # by chime-ins. Nobody addressed is the room: whoever spoke last turn
-      # is polled first and carries `spoke_last` (a follow-up question in an
+      # is polled first and carries `addressed` (a follow-up question in an
       # exchange one person was carrying went unanswered because both
       # present NPCs read "no name" as "not addressed", 2026-09-12). Extras
       # are ambient flavour, not filler speakers: one is polled ONLY when the
@@ -269,6 +326,7 @@ module Harness
       SOCIAL_ABILITY_KINDS = %w[control utility].freeze
       BOUND_STATS   = %w[strength dexterity constitution intelligence wisdom charisma].freeze
       FACULTIES     = (BOUND_STATS + %w[chance]).freeze
+      STAKE_IS  = %w[coins listed_thing unlisted_thing nothing].freeze
       CONTEST_KINDS = %w[none press haggle game wager].freeze
       CONTEST_KIND_PATH    = Rails.root.join("lib/harness/prompts/contest_kind.txt")
       CONTEST_CONSENT_PATH = Rails.root.join("lib/harness/prompts/contest_consent.txt")
@@ -298,11 +356,17 @@ module Harness
         "game"   => { "type" => "object",
                       "properties" => { "reasoning" => { "type" => "string" }, "faculty" => { "type" => "string", "enum" => FACULTIES } },
                       "required" => %w[reasoning faculty], "additionalProperties" => false },
+        # What each side puts up is classed BEFORE it is bound: "four coins
+        # against your blade", the blade on no list, came back as a coin
+        # counter-stake the judge invented (hands run 9 t27). A thing named
+        # that is not listed voids the wager instead.
         "wager"  => { "type" => "object",
-                      "properties" => { "reasoning" => { "type" => "string" }, "faculty" => { "type" => "string", "enum" => FACULTIES },
+                      "properties" => { "reasoning" => { "type" => "string" },
+                                        "stake_is" => { "type" => "string", "enum" => STAKE_IS }, "against_is" => { "type" => "string", "enum" => STAKE_IS },
+                                        "faculty" => { "type" => "string", "enum" => FACULTIES },
                                         "stake_coins" => { "type" => %w[integer null] }, "stake_item_id" => { "type" => %w[integer null] },
                                         "against_coins" => { "type" => %w[integer null] }, "against_item_id" => { "type" => %w[integer null] } },
-                      "required" => %w[reasoning faculty stake_coins stake_item_id against_coins against_item_id], "additionalProperties" => false }
+                      "required" => %w[reasoning stake_is against_is faculty stake_coins stake_item_id against_coins against_item_id], "additionalProperties" => false }
       }.freeze
       CONTEST_CONSENT_SCHEMA = {
         "type" => "object",
@@ -312,14 +376,26 @@ module Harness
       }.freeze
       CONTEST_SAMPLING = { temperature: 0, thinking: false }.freeze
 
-      def open_contest(context, input, player, present, active, resolver, tcs)
-        standing = standing_entries(active, present)
-        kind = contest_judge(context, CONTEST_KIND_PATH, CONTEST_KIND_SCHEMA,
-                             { "player_said" => input,
-                               "present"     => present.map { |c| { "id" => c["id"], "name" => c["name"], "trade" => c["subrole"] }.compact },
-                               "standing"    => standing.map { |e| e.slice("n", "with", "action", "verdict") } })
+      def open_contest(context, input, player, present, active, resolver, tcs, addressed_id: nil)
+        standing  = standing_entries(active, present)
+        addressed = present.find { |c| c["id"] == addressed_id }
+        looks     = looks_for(present.map { |c| c["id"] })
+        payload   = { "player_said" => input,
+                      "present"     => present.map { |c| { "id" => c["id"], "name" => c["name"], "trade" => c["subrole"], "looks" => looks[c["id"]] }.compact },
+                      "standing"    => standing.map { |e| e.slice("n", "with", "action", "verdict") } }
+        # Whom the router said the words are for. The kind judge, shown only
+        # the words, pressed Bertha's cheese on Herewald, whose agenda was
+        # cheese (run 7 t29); the router owns the addressee (A1), and when
+        # the two disagree the router's choice is the contest's party.
+        payload["addressed"] = addressed.slice("id", "name") if addressed
+        kind = contest_judge(context, CONTEST_KIND_PATH, CONTEST_KIND_SCHEMA, payload)
         return nil unless kind && CONTEST_KINDS.include?(kind["kind"]) && kind["kind"] != "none"
         target = present.find { |c| c["id"] == kind["with_id"] }
+        if addressed && target && target["id"] != addressed["id"]
+          @logger.info { "[Runner conversation] contest judge chose #{target['name']} but the words are for #{addressed['name']} — the addressee is the party" }
+          target = addressed
+        end
+        target ||= addressed
         unless target
           @logger.info { "[Runner conversation] contest #{kind['kind']} with no one present (with_id=#{kind['with_id'].inspect}) — plain talk" }
           return nil
@@ -340,7 +416,7 @@ module Harness
         @contest_prompts ||= {}
         system = (@contest_prompts[path] ||= File.read(path))
         raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
-          llm(context).complete(system: system, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: schema, **CONTEST_SAMPLING)
+          llm(context).complete(system: system, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: schema, max_tokens: JUDGE_MAX_TOKENS, **CONTEST_SAMPLING)
         end
         out = parse_emit(raw)
         return out if out.is_a?(::Hash) && (schema["properties"].keys - %w[reasoning]).any? { |k| out.key?(k) }
@@ -427,7 +503,7 @@ module Harness
           payload = { "player_said" => input, "with" => target["name"] }
           if kind == "wager"
             payload["carried"] = player.items.map { |i| { "id" => i.id, "name" => i.name } }
-            payload["wares"]   = target_wares(target, player).map { |i| { "id" => i.id, "name" => i.name } }
+            payload["wares"]   = (target_wares(target, player) + target_carried(target)).map { |i| { "id" => i.id, "name" => i.name } }
           end
           b = contest_judge(context, CONTEST_BIND_PATHS[kind], CONTEST_BIND_SCHEMAS[kind], payload)
           faculty = b && FACULTIES.include?(b["faculty"]) ? b["faculty"] : nil
@@ -495,6 +571,11 @@ module Harness
 
       # Wares for sale here under this seller's name, plus the house's own
       # stock (no seller recorded), which its staff sell.
+      # What the other party has on them, by row — a stake as good as a ware.
+      def target_carried(target)
+        ::Item.where(character_id: target["id"]).order(:id).to_a
+      end
+
       def target_wares(target, player)
         loc = player.location
         return [] unless loc
@@ -521,7 +602,9 @@ module Harness
         # by name in the target's payload — fed "you don't have 50 coins",
         # Dunstan answered that his till was short (items run 9, t31).
         me    = player.name.to_s.split.first
-        stake = if w["stake_item_id"].is_a?(::Integer)
+        stake = if w["stake_is"] == "unlisted_thing"
+                  { void: "you carry no such thing to stake", told: "#{me} carries no such thing to stake" }
+                elsif w["stake_item_id"].is_a?(::Integer)
                   item = ::Item.find_by(id: w["stake_item_id"], character_id: player.id)
                   item ? { item: item } : { void: "you carry no such thing to stake", told: "#{me} carries no such thing to stake" }
                 elsif w["stake_coins"].is_a?(::Integer) && w["stake_coins"] > 0
@@ -534,10 +617,13 @@ module Harness
                   { void: "nothing of yours was staked", told: "nothing of #{me}'s was staked" }
                 end
         npc = ::Character.find_by(id: target["id"])
-        against = if w["against_item_id"].is_a?(::Integer) && loc
-                    item = ::Item.find_by(id: w["against_item_id"], location_id: loc.id)
+        against = if w["against_is"] == "unlisted_thing"
+                    { void: "#{first} has no such thing here to stake" }
+                  elsif w["against_item_id"].is_a?(::Integer) && loc
+                    item  = ::Item.find_by(id: w["against_item_id"])
                     props = item&.properties.is_a?(::Hash) ? item.properties : {}
-                    (item && props["for_sale"] && props["seller_id"] == target["id"]) ? { item: item } : { void: "#{first} has no such thing on the table to stake" }
+                    theirs = item && ((item.location_id == loc.id && props["for_sale"] && props["seller_id"] == target["id"]) || item.character_id == target["id"])
+                    theirs ? { item: item } : { void: "#{first} has no such thing to stake" }
                   elsif w["against_coins"].is_a?(::Integer) && w["against_coins"] > 0 && npc
                     # A stake is what they can put up: Miron had one coin against two (items run 8, t28).
                     have = [ w["against_coins"], npc.coins.to_i ].min
@@ -654,6 +740,10 @@ module Harness
           moved = settle_wager!(w, player_won, player, target, resolver, tcs)
           payload["kind"]    = "wager"
           payload["wager"]   = true
+          # The coins the verdict moved, as a number: the ledger refuses a
+          # debt that restates them (see struck_deals).
+          paid = player_won ? w[:against] : w[:stake]
+          payload["paid_coins"] = paid[:coins] if paid.is_a?(::Hash) && paid[:coins].is_a?(::Integer)
           payload["action"]  = contest[:args]["action"]   # the standing bracket names the bet, not a press
           payload["verdict"] = if player_won
                                  "#{first_name(target)} lost the wager#{moved ? " — #{moved} went to the player" : ''}"
@@ -695,6 +785,12 @@ module Harness
       def recall(context, char, topic)
         ranker = ::Harness::Knowledge::CosineRanker.new(embedder: llm(context), logger: @logger)
         pool = ::Harness::Knowledge::Query.candidates_for(char) + event_pool(char)
+        # Genesis mirrors each founding event into a knowledge row with the
+        # same sentence; a participant's pool held both and the gate handed
+        # the voice the fact twice (23 twins in 33 pools, run 8). The event,
+        # dated and cast, stands for both.
+        told = pool.grep(::Event).map { |e| e.details.is_a?(::Hash) ? e.details["summary"].to_s.strip : "" }.reject(&:empty?)
+        pool = pool.reject { |r| r.is_a?(::Knowledge) && told.include?(r.content.to_s.strip) } if told.any?
         return { "knowledge" => [], "events" => [], "fed" => { "facts" => [], "events" => [] } } if pool.empty?
 
         ranked = ranker.call(pool, topic: topic).first(RECALL_CAP)
@@ -873,7 +969,11 @@ module Harness
           else
             npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP, now: context.game_time)
           end
-        you["spoke_last"] = true if v[:continuing]
+        # The judged addressee is TOLD the words are theirs — the judge's
+        # ruling is a fact of the turn, and left to work it out again the
+        # voice read "that mace" as the trader's and held its tongue (run 7
+        # t9). The last speaker on an unbound turn rides the same flag.
+        you["addressed"] = true if v[:addressed] || v[:continuing]
         fed = { "events" => fed_events, "facts" => [] }
         # The contest verdict rides in the TARGET's you-block — the dice have
         # ruled; the voicing renders the consequence, it does not re-judge.
@@ -915,6 +1015,12 @@ module Harness
         # smith could not see her own racks and denied weapons standing next
         # to eight for-sale wares — the context-exposure class again.
         invariant["wares_here"] = wares unless wares.nil?
+        # What the engine already did this turn, as the player saw it: the
+        # buy that went through, the coins refused ("You can't afford it").
+        # Never shown it, the voice took coins the player did not have and
+        # the ledger struck a sale on credit nobody meant (run 7 t5).
+        just_now = receipts_this_turn(context, tcs) + Array(context.turn_transcript&.null_lines)
+        invariant["just_now"] = just_now unless just_now.empty?
         user = JSON.pretty_generate(invariant.merge(
           "exchange_so_far" => thread,
           "others_present"  => others,
@@ -958,7 +1064,7 @@ module Harness
         return "not valid JSON" unless emit.is_a?(::Hash)
         dlg   = emit["dialogue"]
         prose = dlg.is_a?(::Hash) ? dlg["prose"].to_s.strip : ""
-        if emit["speak"] && prose.empty? && !emit["memorable"]
+        if emit["speak"] && prose.empty?
           # Explicit prose: "" is the grammar's escape hatch — a break-off,
           # handled (and logged) by apply_emit. Absent/null dialogue is
           # format loss of a line that likely existed — worth one bounce.
@@ -970,7 +1076,7 @@ module Harness
 
       def retry_tail(defect, raw)
         "--- RETRY ---\nYour previous output was rejected: #{defect}.\n" \
-        "Previous output:\n#{raw}\n\nRe-emit the ENTIRE corrected JSON object now."
+        "Previous output:\n#{echo_for_retry(raw)}\n\nRe-emit the ENTIRE corrected JSON object now."
       end
 
       # WHERE the conversation is happening. Without this the voicing model
@@ -985,20 +1091,19 @@ module Harness
 
       # Commit one character's emit. Returns true if the character SPOKE (so the
       # caller counts it toward the two-speaker cap). Raw dialogue is STAGED for
-      # narration only; resolve / memorable / claims persist on their
+      # narration only; the hands and the reflection judges persist on their
       # own consequential paths.
       def apply_emit(resolver, context, scene, emit, v, player, promo, tcs, input: nil, contest: nil)
         dlg     = emit["dialogue"]
         prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
-        engaged = emit["speak"] || prose != "" || emit["memorable"]
+        engaged = emit["speak"] || prose != ""
         @logger.debug do
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           "[Runner conversation] #{who} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
-          "memorable=#{emit['memorable'].is_a?(Hash)} " \
           "thought=#{emit['thought'].to_s[0, 120].inspect}"
         end
         return false unless engaged
-        if emit["speak"] && dlg.is_a?(Hash) && prose == "" && !emit["memorable"]
+        if emit["speak"] && dlg.is_a?(Hash) && prose == ""
           who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
           @logger.info { "[Runner conversation] #{who} spoke-empty (in-grammar break-off) — treated as silence" }
           return false
@@ -1028,7 +1133,6 @@ module Harness
           active&.record_line!(actor_id, prose)
           spoke = true
         end
-        commit_memorable(resolver, emit["memorable"], player, actor_id, tcs)
         # THE HANDS: what the line did, judged by its own call and performed
         # (act_on_line); the reflection judges read `did` as what happened.
         emit["did"], emit["not_done"] = spoke ? act_on_line(resolver, context, actor_id, prose, input, player, contest, tcs) : [ [], nil ]
@@ -1136,6 +1240,11 @@ module Harness
           # not an absent key: with the key absent a labourer drew a belt
           # knife he did not have and the judge had to refuse it (hands run 1).
           "coins"       => row&.coins.to_i,
+          # What they have on them, by name: the inventory the hatchery rolls
+          # for every NPC and nobody was told about — a hand went to a dagger
+          # the row never had, and the heavy dirk it did have was never drawn
+          # (hands run 6).
+          "carry"       => (row.is_a?(::Npc) ? row.items.map(&:name).sort.presence : nil),
           "can_offer"   => (row.is_a?(::Npc) ? ::Harness::Items::Offers.categories_for(row, active&.location) : nil),
           "events"      => events
         }.compact
@@ -1295,8 +1404,8 @@ module Harness
       # Stage a line for NARRATION without PERSISTING it. Committing every "she
       # slams her mug" as a durable event is what fills a thin character's soul
       # with atmosphere and feeds it back as knowledge next turn. Intra-scene
-      # memory comes from exchange_so_far; durable memory comes only from
-      # memorable (+ resolve / claims, consequential by nature).
+      # memory comes from exchange_so_far; durable memory comes only from the
+      # hands and the reflection judges (consequential by nature).
       #
       # NOTE: a `[Name] ` speaker-label prefix was tried here (attribution for
       # the thread — the Vaela role-swap) and RETIRED same day: the weak model
@@ -1324,25 +1433,6 @@ module Harness
         v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
       end
 
-      # The ONE durable event a character's turn can earn — ONLY when the emit
-      # flags the exchange as consequential. The conservative default: commit
-      # nothing unless it mattered.
-      def commit_memorable(resolver, memorable, player, actor_id, tcs)
-        return unless memorable.is_a?(Hash)
-        gist = memorable["gist"].to_s.strip
-        return if gist.empty?
-        execute_tool(resolver, "propose_event", {
-          "scope"        => "local",
-          "participants" => [
-            { "character_id" => actor_id,  "role" => "actor" },
-            { "character_id" => player.id, "role" => "participant" }
-          ],
-          "trigger"      => gist[0, 60],
-          "details"      => gist,
-          "time_minutes" => 5
-        }, into: tcs)
-      end
-
       # THE HANDS — the act judge. What a speaker did with their hands is read
       # off the line they spoke, by its own call: one act, bound as ids from
       # its payload, at zero temperature, a directed `reasoning` clause before
@@ -1360,7 +1450,24 @@ module Harness
       # a bowl of stew handed to the player became a row for sale (hands
       # run 3, t1). The act is what the engine does: a thing put on the
       # table for sale.
-      ACT_KINDS = %w[none give table leave attack].freeze
+      # `receive` is the run-9 slot: on "counts out the coins and places them in
+      # her palm" the judge reasoned "Edith receives coins" and, with nowhere to
+      # file that, answered give — coins to the player; "fingers close around
+      # the hilt" minted a second knife the same way (hands run 9 t5, t18).
+      ACT_KINDS = %w[none receive give table leave attack].freeze
+
+      # AT HAND — the judge behind the trade gate. Provisions and goods a
+      # person of this trade and station would have about them (a labourer
+      # her bucket, a farmer a horseshoe) can be brought out on their word
+      # even when the trade map lists nothing; weapons, armour, jewels and
+      # magical things never can — those come from the roll or the trade.
+      MINT_PROMPT_PATH  = Rails.root.join("lib/harness/prompts/mint.txt")
+      MINT_SCHEMA = {
+        "type" => "object",
+        "properties" => { "reasoning" => { "type" => "string" }, "has" => { "type" => "boolean" } },
+        "required" => %w[reasoning has], "additionalProperties" => false
+      }.freeze
+      SIGNIFICANT_KINDS = %w[weapons armor jewelry magical].freeze
 
       # Returns [what was done, what the engine refused]: the refusal is a
       # fact the speaker's later judges read ("Nothing changed hands: …"),
@@ -1369,7 +1476,7 @@ module Harness
         npc = ::Npc.find_by(id: actor_id)
         return [ [], nil ] unless npc
         act, refused = judge_act(context, npc, prose, input, player, contest, tcs)
-        return [ [], refused ] unless act && act["act"] != "none"
+        return [ [], refused ] unless act && !%w[none receive].include?(act["act"])
         did = perform_act!(resolver, context, act, npc, player, tcs)
         @logger.info { "[Runner conversation] #{npc.name} act #{act['act']} → #{did.any? ? did.join('; ') : 'nothing moved'}" }
         [ did, nil ]
@@ -1379,16 +1486,16 @@ module Harness
         system = (@act_prompt ||= File.read(ACT_PROMPT_PATH))
         user   = "INPUT:\n#{JSON.pretty_generate(act_payload(context, npc, prose, input, player, contest, tcs))}"
         ::Harness::CostTracker.in_subsystem(:runner_conversation) do
-          raw = llm(context).complete(system: system, user: user, schema: ACT_SCHEMA, temperature: 0, thinking: false)
+          raw = llm(context).complete(system: system, user: user, schema: ACT_SCHEMA, max_tokens: JUDGE_MAX_TOKENS, temperature: 0, thinking: false)
           act = parse_emit(raw)
-          kind, defect = act_defect(act, npc, context, player)
+          kind, defect = act_defect(act, npc, context, player, tcs)
           if kind == :bounce
             # A defect of form — an id not in the payload, a shape the
             # grammar allowed but the act needs — goes back once, named.
             @logger.info { "[Runner conversation] #{npc.name} act rejected (#{defect}) — retrying once" }
-            raw = llm(context).complete(system: system, user: "#{user}\n\n#{retry_tail(defect, raw)}", schema: ACT_SCHEMA, temperature: 0, thinking: false)
+            raw = llm(context).complete(system: system, user: "#{user}\n\n#{retry_tail(defect, raw)}", schema: ACT_SCHEMA, max_tokens: JUDGE_MAX_TOKENS, temperature: 0, thinking: false)
             act = parse_emit(raw)
-            kind, defect = act_defect(act, npc, context, player)
+            kind, defect = act_defect(act, npc, context, player, tcs)
           end
           if kind
             # A refusal is final: told "category must be one of provisions",
@@ -1424,6 +1531,7 @@ module Harness
           "coins"     => npc.coins.to_i,
           "can_offer" => ::Harness::Items::Offers.categories_for(npc, loc),
           "on_table"  => own_wares(npc, context).map { |i| { "id" => i.id, "name" => i.name, "price" => ::Harness::Tools::QueryScene.shop_price(i, loc) } }.presence,
+          "carried"   => npc.items.order(:id).map { |i| { "id" => i.id, "name" => i.name } }.presence,
           "debts"     => debts_for(npc.id, context.game_time)
         }.compact
         # Things lying loose here, by id: a smith lifting the bow off her
@@ -1457,17 +1565,18 @@ module Harness
           if a["item_id"]
             # A thing already here changes hands as it is: off sale if it was
             # for sale, into the giver's hands, then across like any carried thing.
-            item  = (own_wares(npc, context) + loose_here(context)).find { |i| i.id == a["item_id"] }
+            item  = (own_wares(npc, context) + loose_here(context) + npc.items.to_a).find { |i| i.id == a["item_id"] }
             props = item.properties.is_a?(::Hash) ? item.properties.dup : {}
             %w[for_sale seller_id haggled_price].each { |k| props.delete(k) }
             item.update!(character_id: npc.id, location_id: nil, properties: props)
             _, ok = execute_tool(resolver, "give_item", { "item_id" => item.id, "from_id" => npc.id, "to_id" => target.id }, into: tcs)
             did << "handed #{target.name} #{item.name}" if ok
-          elsif a["item"].to_s.strip != ""
-            # A thing brought out exists from this moment: minted in the
+          elsif things(a).any?
+            # Things brought out exist from this moment: minted in the
             # giver's hands, then moved like any other item.
-            item = ::Harness::Items::Offers.materialize!(npc, category: a["category"], label: a["item"], game_time: context.game_time, to: npc)
-            if item
+            things(a).each do |t|
+              item = ::Harness::Items::Offers.materialize!(npc, category: t["category"], label: t["item"], game_time: context.game_time, to: npc)
+              next unless item
               _, ok = execute_tool(resolver, "give_item", { "item_id" => item.id, "from_id" => npc.id, "to_id" => target.id }, into: tcs)
               did << "handed #{target.name} #{item.name}" if ok
             end
@@ -1485,9 +1594,10 @@ module Harness
           # On the table: a for-sale row here with the seller recorded, at the
           # engine's price. The player's next line binds to it (buy, take,
           # walk away); wares_here quotes it back to every voice.
-          loc  = context.player_location
-          item = ::Harness::Items::Offers.materialize!(npc, category: a["category"], label: a["item"], game_time: context.game_time, at: loc)
-          if item
+          loc = context.player_location
+          things(a).each do |t|
+            item = ::Harness::Items::Offers.materialize!(npc, category: t["category"], label: t["item"], game_time: context.game_time, at: loc)
+            next unless item
             price = ::Harness::Tools::QueryScene.shop_price(item, loc)
             tcs << tool_call("offer_item", { "seller_id" => npc.id, "item_id" => item.id },
                              { "item_id" => item.id, "item_name" => item.name, "seller_id" => npc.id, "price" => price })
@@ -1522,7 +1632,7 @@ module Harness
       # honour whatever the answer (nothing to bring out, a kind outside the
       # trade, the table or the day full, coins with no debt, steel from a
       # peaceable trade). A refusal never goes back for a second answer.
-      def act_defect(a, npc, context, player)
+      def act_defect(a, npc, context, player, tcs = [])
         return [ :bounce, "not valid JSON" ] unless a.is_a?(::Hash)
         return [ :bounce, "act must be one of #{ACT_KINDS.join(', ')}" ] unless ACT_KINDS.include?(a["act"])
         offers = ::Harness::Items::Offers
@@ -1532,26 +1642,37 @@ module Harness
           return [ :bounce, "give: to_id #{a['to_id'].inspect} is not a present id" ] unless target
           return [ :bounce, "give: #{npc.name} cannot give to themselves" ] if target.id == npc.id
           if a["item_id"]
-            return [ :bounce, "give: item_id #{a['item_id']} is not on #{npc.name}'s table and not lying here" ] unless (own_wares(npc, context) + loose_here(context)).any? { |i| i.id == a["item_id"] }
-          elsif a["item"].to_s.strip != ""
-            if (d = thing_defect(a, npc, context))
-              return [ d[0], "give: #{d[1]}" ]
+            return [ :bounce, "give: item_id #{a['item_id']} is not carried by #{npc.name}, on their table or lying here" ] unless (own_wares(npc, context) + loose_here(context) + npc.items.to_a).any? { |i| i.id == a["item_id"] }
+            # Taking is not giving: the mace the player handed back went
+            # straight back to the player (run 7 t11, both attempts).
+            return [ :refuse, "give: item #{a['item_id']} came into #{npc.name}'s hands this turn — taking it is not giving it" ] if received_this_turn?(npc, context, tcs, item_id: a["item_id"])
+          elsif things(a).any?
+            things(a).each do |t|
+              if (d = thing_defect(t, a["act"], npc, context))
+                return [ d[0], "give: #{d[1]}" ]
+              end
             end
           else
             amount = a["coins"]
             return [ :bounce, "give needs coins, an item_id from on_table, or an item brought out" ] unless amount.is_a?(::Integer) && amount > 0
-            return [ :bounce, "give: #{npc.name} has #{npc.coins.to_i} coins, not #{amount}" ] if amount > npc.coins.to_i
+            # Coins they do not have is a misread of the line, not a sum to
+            # correct: bounced with the purse named, the judge gave the one
+            # coin it had — to the player who had just paid (hands run 9 t5).
+            return [ :refuse, "give: #{npc.name} has not got that many coins" ] if amount > npc.coins.to_i
+            return [ :refuse, "give: #{amount} coins came into #{npc.name}'s hands this turn — taking them is not giving them" ] if received_this_turn?(npc, context, tcs, coins: amount)
             # Coins leave a character for a debt they owe or a press they
             # lost — handed two coppers for barley, a seller "paid the player
             # two coins" back (items run 6, t4 and t5, both first attempts).
             return [ :refuse, "give: #{npc.name} owes #{target.name} nothing and lost no press to them — coins do not flow that way" ] unless coins_due?(npc, target, context)
           end
         when "table"
-          return [ :bounce, "table needs `item` — what #{npc.name} calls the thing" ] if a["item"].to_s.strip.empty?
-          if (d = thing_defect(a, npc, context))
-            return [ d[0], "table: #{d[1]}" ]
+          return [ :bounce, "table needs `things` — what #{npc.name} calls each thing set out" ] if things(a).empty?
+          things(a).each do |t|
+            if (d = thing_defect(t, a["act"], npc, context))
+              return [ d[0], "table: #{d[1]}" ]
+            end
           end
-          if offers.on_table(npc, context.player_location) >= offers::TABLE_CAP
+          if offers.on_table(npc, context.player_location) + things(a).size > offers::TABLE_CAP
             return [ :refuse, "table: #{npc.name} already has #{offers::TABLE_CAP} things on the table" ]
           end
         when "leave"
@@ -1566,6 +1687,22 @@ module Harness
         nil
       end
 
+      # Did this thing, or this sum, come INTO the character's hands this turn
+      # — the player's give, payment or purchase? The judge reads a character
+      # taking coins or a thing as giving them, three times of three on the
+      # probes; the receipts know which way it went.
+      def received_this_turn?(npc, context, tcs, item_id: nil, coins: nil)
+        (Array(context.turn_transcript&.tool_calls) + Array(tcs)).any? do |tc|
+          next false if tc["result"].is_a?(::Hash) && tc["result"]["error"]
+          case tc["name"]
+          when "give_item"      then item_id && tc.dig("args", "to_id") == npc.id && tc.dig("args", "item_id") == item_id
+          when "transfer_coins" then coins && tc.dig("args", "to_id") == npc.id && tc.dig("args", "amount") == coins
+          when "buy_item"       then coins && tc.dig("result", "merchant_id") == npc.id && tc.dig("result", "price") == coins
+          else false
+          end
+        end
+      end
+
       # A reason for coins to leave this character toward the target: an open
       # coins debt to them, or a contest the target won against them in this
       # scene (the wager's payout).
@@ -1578,19 +1715,54 @@ module Harness
       # The three gates on a thing brought out on the character's word
       # (Items::Offers): the trade allows the category, the label is a name,
       # the phase budget has room. Nil when it can be minted, else [kind,
-      # message]. Refusals are final — a second answer cannot make a hoe a
-      # provision — but a category left blank is a defect of form (qwen: the
-      # on-the-house tankard, category "") and goes back once, choices named.
-      def thing_defect(a, npc, context)
+      # message]. All final: a second answer cannot make a hoe a provision,
+      # and a blank category is not a defect of form to bounce — it is the
+      # judge's honest "not of my trade" (a lantern, a belt knife). Bounced
+      # with the kinds named, the model relabels the thing to fit (probe
+      # 2026-09-17: lantern and knife both became provisions; hands run 1
+      # t17: a hoe became food). The line stands as a lapse.
+      def things(a)
+        Array(a["things"]).select { |t| t.is_a?(::Hash) && t["item"].to_s.strip != "" }
+      end
+
+      def thing_defect(t, act, npc, context)
         offers = ::Harness::Items::Offers
         cats   = offers.categories_for(npc, context.player_location)
-        return [ :refuse, "#{npc.name} has nothing to bring out — no offer or hand-over of a thing" ] if cats.empty?
-        cat = a["category"].to_s.strip
-        return [ :bounce, "`category` is empty — one of #{cats.join(', ')}" ] if cat.empty?
-        return [ :refuse, "#{cat.inspect} is not a kind #{npc.name}'s trade brings out (#{cats.join(', ')})" ] unless cats.include?(cat)
-        return [ :refuse, "#{a['item'].inspect} is not a name for a thing" ] unless offers.clean_label(a["item"])
+        cat    = t["category"].to_s.strip
+        return [ :refuse, "#{cat.inspect} is not a kind of thing" ] unless ::Harness::Items::Library::CATEGORIES.include?(cat)
+        if SIGNIFICANT_KINDS.include?(cat)
+          return [ :refuse, "#{npc.name}'s trade brings out no #{cat}#{cats.any? ? " (#{cats.join(', ')})" : ''}" ] unless cats.include?(cat)
+        elsif !cats.include?(cat)
+          return [ :refuse, "#{npc.name} would not have #{t['item'].inspect} at hand" ] unless at_hand?(context, npc, t, act)
+        end
+        # A description where a name was asked for is a defect of form, not
+        # a judgement: "a coarse wool sack filled to the brim with pale salt
+        # crystals" (hands run 6, t5) is a sack of salt the engine can mint.
+        return [ :bounce, "`item` must be a name of a few words, not a description — #{t['item'].inspect}" ] unless offers.clean_label(t["item"])
         return [ :refuse, "#{npc.name} has brought out all they can this #{::Harness::Clock.phase(context.game_time)}" ] unless offers.budget_left?(npc, context.game_time)
         nil
+      end
+
+      # Would a person like this have this everyday thing about them? Asked
+      # only for provisions and goods outside the trade's own kinds; a
+      # sword outside the trade is refused before this is reached.
+      def at_hand?(context, npc, t, act)
+        props   = npc.properties.is_a?(::Hash) ? npc.properties : {}
+        payload = {
+          "you"   => { "name" => npc.name, "trade" => npc.subrole, "looks" => (props["appearance"] || props["physical"]).presence,
+                       "carry" => npc.items.map(&:name).sort.presence,
+                       "trade_brings_out" => ::Harness::Items::Offers.categories_for(npc, context.player_location) }.compact,
+          "thing" => t["item"], "kind" => t["category"], "act" => act
+        }
+        raw = llm(context).complete(system: (@mint_prompt ||= File.read(MINT_PROMPT_PATH)), user: "INPUT:\n#{JSON.pretty_generate(payload)}",
+                                    schema: MINT_SCHEMA, max_tokens: JUDGE_MAX_TOKENS, temperature: 0, thinking: false)
+        out = parse_emit(raw)
+        has = out.is_a?(::Hash) && out["has"] == true
+        @logger.info { "[Runner conversation] #{npc.name} #{has ? 'has' : 'would not have'} #{t['item'].inspect} at hand (#{out.is_a?(::Hash) ? out['reasoning'] : 'unparseable'})" }
+        has
+      rescue StandardError => e
+        @logger.warn { "[Runner conversation] at-hand judge failed for #{npc.name}: #{e.class}: #{e.message}" }
+        false
       end
 
       # A give/attack target by id: the player or an NPC standing here.
@@ -1601,11 +1773,18 @@ module Harness
         loc && ::Npc.find_by(id: id, location_id: loc.id)
       end
 
-      # This seller's unsold things on the table here.
+      # This seller's unsold things on the table here — and, for staff at
+      # their own stocked venue, the shelf: those rows carry no seller id,
+      # and shown an empty table Herewald "slid the wares forward" and the
+      # act judge minted a second copper band beside the first (run 7 t4).
       def own_wares(npc, context)
         loc = context.player_location
         return [] unless loc
-        ::Item.where(location_id: loc.id).select { |i| i.properties.is_a?(::Hash) && i.properties["for_sale"] && i.properties["seller_id"] == npc.id }
+        at_post = npc.home_location_id == loc.id && loc.properties.is_a?(::Hash) && loc.properties["shop"].present?
+        ::Item.where(location_id: loc.id).select { |i|
+          props = i.properties.is_a?(::Hash) ? i.properties : {}
+          props["for_sale"] && (props["seller_id"] == npc.id || (at_post && props["seller_id"].nil?))
+        }
       end
 
       # Things lying here that are nobody's wares.
@@ -1685,10 +1864,6 @@ module Harness
             "properties" => { "summary" => { "type" => "string" }, "prose" => { "type" => "string" } },
             "required" => %w[summary prose], "additionalProperties" => false
           } ] },
-          "memorable" => { "anyOf" => [ { "type" => "null" }, {
-            "type" => "object", "properties" => { "gist" => { "type" => "string" } },
-            "required" => %w[gist], "additionalProperties" => false
-          } ] },
           # The silent snub: a DECLINER may still visibly shift what they're
           # doing ("turns back to his ropes"). Optional — null/absent is the
           # normal answer; honored only on the decline path (speakers' doing
@@ -1714,11 +1889,19 @@ module Harness
           "to_id"    => { "type" => %w[integer null] },
           "coins"    => { "type" => %w[integer null] },
           "item_id"  => { "type" => %w[integer null] },
-          "item"     => { "type" => %w[string null] },
-          "category" => { "type" => %w[string null] },
+          # A list: "a short sword and a mail coif" set out in one line filled
+          # one slot with both names and no kind, and the coif never had a row
+          # (hands run 9 t4). The kind is an enum, not a string: offered the
+          # kinds the judge picks one; asked to name one it left the field
+          # blank for a waterskin (run 7 t25).
+          "things"   => { "type" => "array", "items" => {
+            "type" => "object",
+            "properties" => { "item" => { "type" => "string" }, "category" => { "enum" => ::Harness::Items::Library::CATEGORIES } },
+            "required" => %w[item category], "additionalProperties" => false
+          } },
           "place_id" => { "type" => %w[integer null] }
         },
-        "required" => %w[reasoning act to_id coins item_id item category place_id],
+        "required" => %w[reasoning act to_id coins item_id things place_id],
         "additionalProperties" => false
       }.freeze
 
@@ -1728,6 +1911,7 @@ module Harness
       # becomes a dead backstop instead of a 3-second tax. Shapes mirror
       # knowledge_reflection.txt (claims) and knowledge_ledger.txt (bargains).
       NULLABLE_STR = { "type" => %w[string null] }.freeze
+      FACT_ABOUT   = %w[the_world a_price_or_stock a_debt_or_purse this_moment the_player].freeze
       ADDITION_SCHEMA = lambda { |id_key|
         { "type" => "array", "items" => {
           "type" => "object",
@@ -1742,16 +1926,22 @@ module Harness
           "facts" => { "type" => "array", "items" => {
             "type" => "object",
             "properties" => {
+              # What the fact is ABOUT comes first: of 23 facts filed over
+              # runs 6–8, 8 were prices or stock, 6 debts or purses, 7 the
+              # moment or the player — state the till and the ledger own,
+              # returned to the voice as TRUE knowledge while the world moved
+              # on (context audit 2026-09-20). Only the world is written.
+              # Scope is not asked (a spoken claim is at most what this town
+              # believes). min_int stays: Knowledge::Query gates recall on it
+              # (the wit it takes to know a piece of lore) — a feature not yet
+              # exercised, kept by ruling 2026-09-22.
+              "about"    => { "type" => "string", "enum" => FACT_ABOUT },
               "content"  => { "type" => "string" },
               "concerns" => { "type" => "array", "items" => { "type" => "string" } },
-              # A spoken claim is at most what this town believes — never
-              # universal doctrine (a fishing-spot sighting went out as
-              # "world" on a clean context). The choice is removed, not asked.
-              "scope"    => { "type" => "string", "enum" => %w[local] },
               "min_int"  => { "type" => %w[integer null] },
               "when"     => NULLABLE_STR
             },
-            "required" => %w[content concerns scope min_int when],
+            "required" => %w[about content concerns min_int when],
             "additionalProperties" => false
           } },
           "event_additions" => ADDITION_SCHEMA.call("event_id"),
@@ -1782,11 +1972,17 @@ module Harness
         "type" => "object",
         "properties" => {
           "reasoning"   => { "type" => "string" },
+          # What the turn IS, before whether it struck: asked struck-or-not
+          # alone the judge called a loaf handed over, "are we square?", a
+          # look around and a wager's payout bargains — 13 false of 28 on
+          # hands run 8, and every phantom debt of that run; classing the
+          # turn first, 3 of 28, and 8 of 10 disagreements on runs 6–7.
+          "turn_is"     => { "type" => "string", "enum" => %w[new_terms carrying_out talk wager] },
           "struck"      => { "type" => "boolean" },
           "proposed_by" => { "type" => "string", "enum" => %w[player you none] },
           "accepted_by" => { "type" => "string", "enum" => %w[player you none] }
         },
-        "required" => %w[reasoning struck proposed_by accepted_by],
+        "required" => %w[reasoning turn_is struck proposed_by accepted_by],
         "additionalProperties" => false
       }.freeze
       LEDGER_TERMS_SCHEMA = {
@@ -1841,6 +2037,15 @@ module Harness
       LEDGER_STRUCK     = { path: LEDGER_STRUCK_PATH,     schema: LEDGER_STRUCK_SCHEMA,     keys: %w[struck],     sampling: LEDGER_SAMPLING }.freeze
       LEDGER_TERMS      = { path: LEDGER_TERMS_PATH,      schema: LEDGER_TERMS_SCHEMA,      keys: %w[sides],      sampling: LEDGER_SAMPLING }.freeze
       LEDGER_DELIVERED  = { path: LEDGER_DELIVERED_PATH,  schema: LEDGER_DELIVERED_SCHEMA,  keys: %w[delivered],  sampling: LEDGER_SAMPLING }.freeze
+      # RELEASE? — the one confirm question behind a "released" the discharge
+      # judge answers for a debt the speaker owes: the player's words alone.
+      # "I'll take those three coins" was read as letting the debt go, six
+      # times of six under every framing tried (run 7 t21), and a debt the
+      # player wanted collected vanished.
+      LEDGER_RELEASE_PATH   = Rails.root.join("lib/harness/prompts/ledger_release.txt")
+      LEDGER_RELEASE_SCHEMA = { "type" => "object", "properties" => { "reasoning" => { "type" => "string" }, "lets_go" => { "type" => "boolean" } },
+                                "required" => %w[reasoning lets_go], "additionalProperties" => false }.freeze
+      LEDGER_RELEASE = { path: LEDGER_RELEASE_PATH, schema: LEDGER_RELEASE_SCHEMA, keys: %w[lets_go], sampling: { temperature: 0, thinking: false } }.freeze
       LEDGER_DISCHARGED = { path: LEDGER_DISCHARGED_PATH, schema: LEDGER_DISCHARGED_SCHEMA, keys: %w[discharged], sampling: LEDGER_SAMPLING }.freeze
 
       # REFLECTION — two judges, each on a CLEAN context. The old single pass
@@ -1891,13 +2096,13 @@ module Harness
         system = judge_prompt(spec)
         user   = "INPUT:\n#{JSON.pretty_generate(payload)}"
         raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
-          llm(context).complete(system: system, user: user, schema: spec[:schema], **spec.fetch(:sampling, {}))
+          llm(context).complete(system: system, user: user, schema: spec[:schema], max_tokens: JUDGE_MAX_TOKENS, **spec.fetch(:sampling, {}))
         end
         parsed = parse_reflection(raw)
         if (defect = judge_defect(parsed, spec[:keys]))
           @logger.warn { "[Runner conversation] #{spec[:keys].first} judge for #{speaker} #{defect} — retrying once" }
           raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do
-            llm(context).complete(system: system, user: "#{user}\n\n#{judge_retry_tail(defect, raw, spec[:schema]['properties'].keys.first)}", schema: spec[:schema], **spec.fetch(:sampling, {}))
+            llm(context).complete(system: system, user: "#{user}\n\n#{judge_retry_tail(defect, raw, spec[:schema]['properties'].keys.first)}", schema: spec[:schema], max_tokens: JUDGE_MAX_TOKENS, **spec.fetch(:sampling, {}))
           end
           parsed = parse_reflection(raw)
           if (still = judge_defect(parsed, spec[:keys]))
@@ -1958,24 +2163,32 @@ module Harness
           "this_turn"       => outcome_this_turn(context, tcs, emit)
         }
         moved      = moved_this_turn?(context, tcs)
-        deals      = struck_deals(context, name, player, base, debts, moved)
-        discharged = debts.empty? ? [] : discharged_debts(context, name, base, debts, moved)
+        deals      = struck_deals(context, name, player, base, debts, moved, receipts_this_turn(context, tcs), wager_coins_paid(context.active_scene, v[:char]["id"]))
+        discharged = debts.empty? ? [] : discharged_debts(context, name, base, debts, moved, tcs, v[:char]["id"], player)
         return nil if deals.empty? && discharged.empty?
         { "deals" => deals, "discharged" => discharged }
       end
 
+      # Coin stakes a wager already moved between this character and the
+      # player this scene.
+      def wager_coins_paid(active, id)
+        (active&.contest_ledger || {}).filter_map do |key, p|
+          p["paid_coins"] if p.is_a?(::Hash) && p["wager"] && key.to_s.start_with?("#{id}:") && p["paid_coins"].is_a?(::Integer)
+        end
+      end
+
       # Only a transfer can carry a side out: a table laid or a wager voided
       # is a receipt, not a delivery, and asks the delivered judge nothing.
-      DELIVERY_CALLS = %w[give_item trade_items transfer_coins buy_item sell_item].freeze
+      DELIVERY_CALLS = %w[give_item trade_items transfer_coins buy_item sell_item drop].freeze
       def moved_this_turn?(context, tcs)
         (Array(context.turn_transcript&.tool_calls) + Array(tcs)).any? { |tc| DELIVERY_CALLS.include?(tc["name"]) }
       end
 
-      def struck_deals(context, name, player, base, debts, moved)
+      def struck_deals(context, name, player, base, debts, moved, receipts, wager_coins = [])
         gate = judge(context, name, LEDGER_STRUCK, base.merge("open_debts" => debts.map { |d| d["line"] }))
         return [] unless gate
         prop, acc = gate["proposed_by"].to_s, gate["accepted_by"].to_s
-        unless gate["struck"] == true && %w[player you].include?(prop) && %w[player you].include?(acc) && prop != acc
+        unless gate["struck"] == true && gate["turn_is"] == "new_terms" && %w[player you].include?(prop) && %w[player you].include?(acc) && prop != acc
           @logger.info { "[Runner conversation] #{name} ledger: nothing struck (#{gate['reasoning']})" }
           return []
         end
@@ -1984,11 +2197,27 @@ module Harness
         sides = Array(terms && terms["sides"]).select do |x|
           x.is_a?(::Hash) && %w[player you].include?(x["who"]) && %w[coins deed meet].include?(x["kind"].to_s) && x["terms"].to_s.strip != ""
         end
+        # A paid wager restated as a debt. "You owe me from the wager" / "Paid
+        # — matter closed" struck a fresh two-coin debt three times of three
+        # under every prompt tried, and the next turn's initiative paid the
+        # wager out a second time (hands run 6, t13–t16). The dice settled
+        # it: a coins side matching what a wager already moved between the
+        # pair this scene is that wager, not a bargain.
+        sides = sides.reject do |x|
+          next false unless x["kind"] == "coins" && wager_coins.include?(x["amount"])
+          @logger.info { "[Runner conversation] #{name} ledger: coins side of #{x['amount']} is the wager the dice already paid — refused" }
+          true
+        end
         return [] if sides.empty?
         done = []
         if moved
           numbered = sides.each_with_index.map { |x, i| { "n" => i + 1, "who" => x["who"], "kind" => x["kind"], "amount" => x["amount"], "terms" => x["terms"] } }
-          d = judge(context, name, LEDGER_DELIVERED, { "you" => base["you"], "sides" => numbered, "this_turn" => base["this_turn"] })
+          # Receipts only — not the refusal facts. Beside "You buy the woven
+          # blanket for 4 coins." sat "Nothing changed hands: give: Mildryth
+          # owes Wyot nothing…" (the act judge had read her taking coins as
+          # giving them), and the delivered judge took the refusal as the
+          # blanket not delivered, three times of three (hands run 6, t11).
+          d = judge(context, name, LEDGER_DELIVERED, { "you" => base["you"], "sides" => numbered, "this_turn" => receipts })
           done = Array(d && d["delivered"]).select { |n| n.is_a?(::Integer) }
         end
         sides.each_with_index.filter_map do |x, i|
@@ -2005,15 +2234,67 @@ module Harness
       # "delivered" is a claim about the receipts: on a turn where nothing
       # changed hands it is refused (probe on hands run 4 t18: the debtor's
       # own narration of an errand, no receipt, judged delivered).
-      def discharged_debts(context, name, base, debts, moved)
+      def discharged_debts(context, name, base, debts, moved, tcs = [], speaker_id = nil, player = nil)
         d = judge(context, name, LEDGER_DISCHARGED, base.except("exchange").merge("open_debts" => debts))
         Array(d && d["discharged"]).filter_map do |x|
-          next unless x.is_a?(::Hash) && debts.any? { |o| o["id"] == x["id"] }
-          if x["how"] == "delivered" && !moved
-            @logger.info { "[Runner conversation] #{name} ledger: debt ##{x['id']} judged delivered with no receipt this turn — refused" }
-            next
+          next unless x.is_a?(::Hash) && (debt = debts.find { |o| o["id"] == x["id"] })
+          row = ::Obligation.find_by(id: x["id"])
+          case x["how"]
+          when "delivered"
+            # A receipt of the debtor's own hands this turn, not any receipt:
+            # "Mara pays you 3 coins" was taken as the player's bundle
+            # delivered (run 7 t21 retry).
+            unless moved && row && delivered_by?(row, context, tcs)
+              @logger.info { "[Runner conversation] #{name} ledger: debt ##{x['id']} judged delivered with no receipt of the debtor's this turn — refused" }
+              next
+            end
+          when "released"
+            # A debt the speaker owes is released only by the player's words —
+            # one confirm question on those words alone.
+            if row && speaker_id && row.debtor_id == speaker_id && !release_confirmed?(context, name, debt["line"], base["player_said_now"])
+              @logger.info { "[Runner conversation] #{name} ledger: debt ##{x['id']} judged released, but the player's words do not let it go — refused" }
+              next
+            end
           end
           { "id" => x["id"], "how" => x["how"].to_s }
+        end
+      end
+
+      def release_confirmed?(context, name, line, player_said)
+        return false if player_said.to_s.strip.empty?
+        r = judge(context, name, LEDGER_RELEASE, { "debt" => line, "player_said" => player_said })
+        r.is_a?(::Hash) && r["lets_go"] == true
+      end
+
+      # Did the debtor's own hands move something this turn: a give, a drop, a
+      # coin transfer, a purchase or a trade of theirs among the receipts.
+      # A receipt of the debtor's own hands, of the debt's own kind: a deed
+      # (work, goods, a thing to hand over) is delivered by a thing leaving
+      # the debtor's hands, never by their coins — "You buy the sawblade for
+      # 4 coins" was taken as the buyer's day of hauling delivered, against
+      # the judge's own reasoning (hands run 10 t3). Coins settle by the
+      # transfer itself; a meeting is the schedule's to settle, not a receipt's.
+      def delivered_by?(row, context, tcs)
+        debtor_id = row.debtor_id
+        (Array(context.turn_transcript&.tool_calls) + Array(tcs)).any? do |tc|
+          next false if tc["result"].is_a?(::Hash) && tc["result"]["error"]
+          case row.kind
+          when "deed"
+            case tc["name"]
+            when "give_item"   then tc.dig("args", "from_id") == debtor_id
+            when "drop"        then tc.dig("args", "by_character_id") == debtor_id
+            when "trade_items" then (tc.dig("args", "trader_id") || ::Player.first&.id) == debtor_id
+            when "sell_item"   then tc.dig("result", "seller_id") == debtor_id
+            else false
+            end
+          when "coins"
+            case tc["name"]
+            when "transfer_coins" then tc.dig("args", "from_id") == debtor_id
+            when "buy_item"       then tc.dig("result", "buyer_id") == debtor_id
+            else false
+            end
+          else false
+          end
         end
       end
 
@@ -2044,7 +2325,7 @@ module Harness
       end
 
       def judge_retry_tail(defect, raw, first_key)
-        "--- RETRY ---\nYour previous output was rejected: #{defect}.\nPrevious output:\n#{raw}\n\n" \
+        "--- RETRY ---\nYour previous output was rejected: #{defect}.\nPrevious output:\n#{echo_for_retry(raw)}\n\n" \
         "The dialogue turn is OVER. Output ONLY the JSON described above — no \"thought\", no \"speak\" — beginning with {\"#{first_key}\":"
       end
 
@@ -2128,7 +2409,7 @@ module Harness
       # said too little (probe: a refused knife still "handed over" in the
       # taking-stock's doing and mood).
       def outcome_this_turn(context, tcs, emit)
-        lines = receipts_this_turn(context, tcs)
+        lines = receipts_this_turn(context, tcs) + Array(context.turn_transcript&.null_lines)
         lines += [ "Nothing changed hands: #{emit['not_done']}." ] if emit.is_a?(::Hash) && emit["not_done"].to_s.strip != ""
         lines
       end
@@ -2137,7 +2418,7 @@ module Harness
         @stock_prompts ||= {}
         system = (@stock_prompts[path] ||= File.read(path))
         raw = ::Harness::CostTracker.in_subsystem(:mood_reevaluation) do
-          llm(context).complete(system: system, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: schema, **STOCK_SAMPLING)
+          llm(context).complete(system: system, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: schema, max_tokens: JUDGE_MAX_TOKENS, **STOCK_SAMPLING)
         end
         out = ::Harness::LLM::JsonResponse.parse(raw)
         return out if out.is_a?(::Hash) && (schema["properties"].keys - %w[reasoning]).any? { |k| out.key?(k) }

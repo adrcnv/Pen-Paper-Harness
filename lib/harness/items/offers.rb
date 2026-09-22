@@ -79,9 +79,12 @@ module Harness
 
       # The character's word for the thing, fit to be a row name; nil when it
       # isn't one.
+      # A kind word is not a name: "provisions" was presented as a thing
+      # (run 7 t6).
+      KIND_WORDS = %w[provisions provision goods good weapons weapon armor armour jewelry jewellery magical].freeze
       def clean_label(label)
         l = label.to_s.strip.gsub(/\s+/, " ").delete('"').sub(/\A(an?|the|some|this|that|my)\s+/i, "")
-        l.empty? || l.length > LABEL_MAX ? nil : l
+        l.empty? || l.length > LABEL_MAX || KIND_WORDS.include?(l.downcase) ? nil : l
       end
 
       # Mint on the character's word. `at:` puts it on the table for sale;

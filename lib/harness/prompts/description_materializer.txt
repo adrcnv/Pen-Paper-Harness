@@ -28,6 +28,7 @@ INPUT format
   "level":         <int>,
   "stats":         { "strength": <int>, "dexterity": <int>, "constitution": <int>, "intelligence": <int>, "wisdom": <int>, "charisma": <int> },
   "properties":    <object: existing properties; may include faction_id, personality (existing), etc>,
+  "carries":       [ "<things of note they own — absent when they own nothing of note>" ],
   "context":       "<optional prose that established this character — event narratives, materializer reasoning, etc>"
 }
 
@@ -43,6 +44,7 @@ HARD RULES
 - Output VALID JSON. No leading/trailing prose.
 - Both keys present. No extra fields.
 - "personality" is a comma-separated trait list, 10–80 characters, no full sentences. "appearance" is prose, 30–400 characters.
+- Arms, armour and jewels on their person are the ones in INPUT.carries, worn or borne as such a person would; with no list, they bear none.
 - Use pronouns that MATCH INPUT.gender: male → he/him/his, female → she/her/hers. This is a fixed fact about the character, decided upstream — never contradict it, and stay consistent within both fields. (Their NAME may read either way to you; the gender field is authoritative, not your read of the name.)
 - Do NOT use the character's name in either field — the prose describes them in third-person attributes only (using the gendered pronoun above — name-less).
 - Do NOT contradict the input. If subrole is "barkeep" and scenario is absent, do NOT make them a soldier in disguise. The scenario is what creates legitimate hidden depths; without one, the character is what they appear to be.

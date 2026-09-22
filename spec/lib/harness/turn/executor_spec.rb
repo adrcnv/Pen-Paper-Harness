@@ -129,6 +129,20 @@ RSpec.describe "Harness::Turn::Loop state machine" do
     expect(transcript.narration).to eq("[charms the timberwright — Charm Word 19 vs 7: success, decisive]")
   end
 
+  it "a re-plan runs only the remainder: steps that already ran this turn are cut from its head (hands run 8 t19: a look ran three times, the wait never came)" do
+    look  = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :ok))
+    talk  = StubRunner.new(outcomes: [ Harness::Runners::Outcome.new(status: :redispatch), Harness::Runners::Outcome.new(status: :ok) ])
+    wait  = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :ok))
+    stub_plan("look", "talk", "wait")                      # every re-plan returns the same three
+    loop_obj, = build_loop(registry: { "look" => look, "talk" => talk, "wait" => wait })
+
+    loop_obj.run_turn(input: "look around, ask who's here, then wait")
+
+    expect(look.calls).to eq(1)                            # not run again by the re-plan
+    expect(talk.calls).to eq(2)
+    expect(wait.calls).to eq(1)
+  end
+
   it "bounds re-dispatch and hard-stops after REDISPATCH_CAP" do
     stale = StubRunner.new(outcomes: Harness::Runners::Outcome.new(status: :redispatch))
     stub_plan("stale")                                     # every re-plan returns [stale]

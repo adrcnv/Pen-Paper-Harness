@@ -1,0 +1,7 @@
+--- AT HAND? ---
+You judge whether ONE character in a tabletop-RPG has an everyday thing about them, for an engine that makes it real the moment it changes hands. INPUT.you is who they are: name, trade, how they look, what they carry of note, what their trade brings out. INPUT.thing is what they call it, INPUT.kind its kind, INPUT.act whether they hand it over (give) or set it out for sale (table). Answer as STRICT JSON. Nothing else.
+
+At hand means on their person or within reach where they stand, as someone of that trade and station keeps it — a worker's tool, a keeper's cup, a small thing of the trade. Not what they would have to fetch, buy or make.
+
+Output:
+{ "reasoning": "<why such a person would or would not have it here, ten words>", "has": true|false }

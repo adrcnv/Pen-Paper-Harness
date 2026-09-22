@@ -211,7 +211,15 @@ module Harness
 
       def extract_facts(parsed)
         Array(parsed.is_a?(::Hash) ? parsed["facts"] : nil).select do |f|
-          f.is_a?(::Hash) && f["content"].is_a?(String) && !f["content"].strip.empty?
+          next false unless f.is_a?(::Hash) && f["content"].is_a?(String) && !f["content"].strip.empty?
+          # The judge says what a fact is about before it is written; prices,
+          # debts, the moment and the player belong to the till, the ledger
+          # and the turn, not to standing knowledge.
+          if f["about"] && f["about"] != "the_world"
+            @logger.info { "[Knowledge::Capture] dropped fact about #{f['about']} :: #{f['content']}" }
+            next false
+          end
+          true
         end
       end
 

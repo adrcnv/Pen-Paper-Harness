@@ -38,6 +38,7 @@ module Harness
       def observable_view(context)
         snap  = ::Harness::Tools::QueryScene.build(context)
         looks = appearance_by_id(snap)
+        borne = borne_by_id(snap)
         # The taking-stock pass's activity microbeats live on the active
         # scene; a mid-turn move leaves the cached scene pointing at the old
         # place, so drop it then (same guard QueryScene applies).
@@ -62,6 +63,7 @@ module Harness
               "role"        => c["subrole"],
               "gender"      => c["gender"],
               "appearance"  => looks[c["id"]],
+              "carries"     => borne[c["id"]],
               "doing"       => active&.doing_for(c["id"]),
               "disposition" => active&.disposition_for(c["id"]) }.compact
           },
@@ -69,6 +71,21 @@ module Harness
           "figures" => Array(snap["present_extras"]),
           "fallen"  => Array(snap["present_corpses"]).map { |c| c["name"] }.compact
         }.reject { |_, v| v.nil? || (v.respond_to?(:empty?) && v.empty?) }
+      end
+
+      # What of note is on a person, from their rows: a weapon, armour, a
+      # jewel. The eyes painted a sword the row never had and never saw the
+      # heavy dirk it did (hands run 6); a change here is a visible shift
+      # like any other field. Everyday things stay unpainted.
+      SIGNIFICANT_TAGS = %w[weapon armor jewelry magical].freeze
+      def borne_by_id(snap)
+        ids = Array(snap["present_characters"]).map { |c| c["id"] }.compact
+        return {} if ids.empty?
+        ::Item.where(character_id: ids).order(:id).each_with_object({}) do |i, h|
+          tags = Array(i.properties.is_a?(::Hash) ? i.properties["tags"] : nil)
+          next if (tags & SIGNIFICANT_TAGS).empty?
+          (h[i.character_id] ||= []) << i.name
+        end
       end
 
       # Mechanical diff between the last-rendered view and the current one:

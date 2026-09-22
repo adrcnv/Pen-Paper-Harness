@@ -28,6 +28,9 @@ module Harness
           "gender"     => props["gender"],
           "level"      => character.level,
           "stats"      => ::Character::STATS.each_with_object({}) { |s, acc| acc[s] = character.read_attribute(s) },
+          # The rolled inventory, so the arms and jewels the prose paints are
+          # the ones the rows hold (the eyes and the voice read the rows).
+          "carries"    => character.items.map(&:name).sort.presence,
           "properties" => props
         }
         h["context"] = prose_context if prose_context.is_a?(String) && !prose_context.strip.empty?

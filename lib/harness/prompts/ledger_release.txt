@@ -1,0 +1,5 @@
+--- BARGAINS: RELEASE? ---
+A debt is owed to the player. INPUT.debt is the debt; INPUT.player_said is what the player said this turn. Judge ONE thing: do the player's words let this debt go — forgive it, waive it, call it square — or do they ask for it, accept it, or leave it standing? Answer as STRICT JSON. Nothing else.
+
+Output:
+{ "reasoning": "<the player's words that let it go, or none — ten words>", "lets_go": true|false }

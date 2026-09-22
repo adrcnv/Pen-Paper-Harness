@@ -9,6 +9,9 @@ module Harness
   class Planner
     PROMPT_PATH = Rails.root.join("lib/harness/prompts/planner.txt")
     RECENT_HISTORY_CAP = 4
+    # Sanity ceiling: a plan is ten words of reasoning and a few steps (run 6
+    # median 113 tokens); a grammar runaway stops here, not at 8192.
+    PLAN_MAX_TOKENS = 512
 
     # The grammar's label alphabet — the sampler can ONLY emit these. Retired
     # labels (dice, agentic) are deliberately ABSENT: pre-grammar they stayed
@@ -76,7 +79,7 @@ module Harness
     def call_one(adapter, user)
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       raw = ::Harness::CostTracker.in_subsystem(:planner) do
-        adapter.complete(system: preamble, user: user, schema: PLAN_SCHEMA)
+        adapter.complete(system: preamble, user: user, schema: PLAN_SCHEMA, max_tokens: PLAN_MAX_TOKENS)
       end
       elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
 

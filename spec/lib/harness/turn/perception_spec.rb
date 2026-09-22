@@ -35,6 +35,19 @@ RSpec.describe Harness::Turn::Perception do
     expect(input).to include('"Hero"')
   end
 
+  it "shows what of note a person bears — a weapon, armour, a jewel — from their rows, never their everyday things" do
+    bess = Npc.create!(name: "Bess", subrole: "barkeep", location: tavern, properties: { "appearance" => "a squint" })
+    Item.create!(name: "heavy dirk", subrole: "weapon", character: bess, properties: { "tags" => [ "weapon" ] })
+    Item.create!(name: "copper loop", subrole: "ring", character: bess, properties: { "tags" => %w[jewelry ring] })
+    Item.create!(name: "heel of bread", subrole: "meal", character: bess, properties: { "tags" => [ "provision" ] })
+    person = described_class.observable_view(ctx)["people"].find { |p| p["name"] == "Bess" }
+    expect(person["carries"]).to eq([ "heavy dirk", "copper loop" ])
+    llm = StubLLM.new { "Bess rests a hand on the dirk at her belt." }
+    described_class.render(context: ctx(llm: llm), parts: [ { kind: :line, text: "You look around." } ])
+    expect(llm.user_calls.last).to include('"carries"', "heavy dirk")
+    expect(llm.user_calls.last).not_to include("heel of bread")
+  end
+
   it "surfaces the taking-stock activity microbeat as the person's `doing`" do
     bess = Npc.create!(name: "Bess", subrole: "barkeep", location: tavern)
     active = Harness::Scene::Active.new(location: tavern, snapshot: nil, narrations: [])

@@ -29,6 +29,7 @@ RSpec.describe Harness::Runners::Inventory do
 
   def act(kind, with_id: nil, figure: nil, amount: nil) = { "reasoning" => "judged", "act" => kind, "with_id" => with_id, "figure" => figure, "amount" => amount }
   def bound(id, *for_ids) = { "reasoning" => "bound", "item_id" => id, "for_item_ids" => for_ids }
+  let(:implicit_step) { Harness::Dispatcher::Step.new(runner: "inventory", intent: nil, args: { "implicit" => true }) }
   def run!(ctx, input) = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: input, step: step)
   def payload_of(prompt)
     body = prompt.split("INPUT:\n", 2).last
@@ -55,7 +56,7 @@ RSpec.describe Harness::Runners::Inventory do
       expect(judged["here"].find { |h| h["name"] == "dark ale" }["price"]).to be_a(Integer)
       expect(judged["present"]).to eq([ { "id" => barkeep.id, "name" => "Tomas", "trade" => "barkeep" } ])
       expect(judged["figures"]).to eq([ { "index" => 0, "looks" => "a boy by the hearth" } ])
-      expect(judged["talking_to"]).to eq([ "Tomas" ])
+      expect(judged["spoke_last_turn"]).to eq([ "Tomas" ])
       expect(judged["this_turn"]).to eq([ "Tomas hands you the smooth locket." ])
     end
 
@@ -75,7 +76,7 @@ RSpec.describe Harness::Runners::Inventory do
       ctx = inv_ctx(act: act("pickup"), bind: bound(locket.id), seen: seen)
       run!(ctx, "take the locket")
       llm = ctx.llm_nuance
-      expect(llm.sampling_calls).to all(eq(temperature: 0, thinking: false, max_tokens: nil))
+      expect(llm.sampling_calls).to all(eq(temperature: 0, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS))
       expect(llm.sampling_calls.size).to eq(2)
       { described_class::ACT_PROMPT_PATH => described_class::ACT_SCHEMA, described_class::BIND_PROMPT_PATH => described_class::BIND_SCHEMA }.each do |path, schema|
         expect(schema["properties"].keys.first).to eq("reasoning")
@@ -188,10 +189,26 @@ RSpec.describe Harness::Runners::Inventory do
 
   describe "pay" do
     it "moves coins to the person the act judge named" do
-      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 3)), "tip the barkeep 3 coins")
+      barkeep.update!(subrole: "porter")   # no trade: coins to them are a gift, not a purchase
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 3)), "tip the porter 3 coins")
       expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transfer_coins" ])
       expect(player.reload.coins).to eq(17)
       expect(barkeep.reload.coins).to eq(8)
+    end
+
+    it "receive — taking what someone holds out — is that person's act: skipped with no line and no call (hands run 8: 'take the coins from her palm' had come back as a pay to her)" do
+      outcome = run!(inv_ctx(act: act("receive", with_id: barkeep.id, amount: 4)), "Take the coins from the barkeep's outstretched palm.")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to be_nil
+      expect(outcome.tool_calls).to be_empty
+      expect(player.reload.coins).to eq(20)
+    end
+
+    it "a stake is coin set out in the open, whoever the judge named: an event, no transfer — the dice move it" do
+      outcome = run!(inv_ctx(act: act("stake", with_id: barkeep.id, amount: 2)), "Set two coins on the wall stone.")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "propose_event" ])
+      expect(player.reload.coins).to eq(20)
+      expect(barkeep.reload.coins).to eq(5)
     end
 
     it "without a sum, nothing changes hands" do
@@ -221,6 +238,41 @@ RSpec.describe Harness::Runners::Inventory do
       expect(payload_of(prompts(seen, INV_BIND_MARK).first)["things"].map { |t| t["id"] }).to eq([ mead.id ])
     end
 
+    it "to a seller with nothing out at all, coins are refused unless owed or a thing was handed over — the gate is the trade, not a table (hands run 6 t5–t6)" do
+      outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 5), bind: bound(nil)), "Here, take this. Now, what will you give me for it?")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("Nothing was handed over — you keep your coin.")
+      expect(player.reload.coins).to eq(20)
+
+      guard = Npc.create!(name: "Ysme", subrole: "guard", location: tavern, character_class: "commoner")
+      outcome = run!(inv_ctx(act: act("pay", with_id: guard.id, amount: 1), bind: bound(nil)), "a coin for your trouble")   # no trade: a gift, not a purchase
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transfer_coins" ])
+      expect(player.reload.coins).to eq(19)
+    end
+
+    it "a give judged with a coin amount is a pay: the coin moves and settles the debt, the carried thing the coin was for stays (hands run 6 t18)" do
+      edith = Npc.create!(name: "Edith Marston", subrole: "commoner", location: tavern, character_class: "commoner", coins: 0)
+      fish  = Item.create!(name: "salt fish", subrole: "meal", character: player, properties: { "tags" => %w[provision] })
+      Obligation.create!(debtor: player, creditor: edith, kind: "coins", amount: 1, terms: "took salt fish from Edith Marston's table without paying", game_time: 90)
+      seen = []
+      outcome = run!(inv_ctx(act: act("give", with_id: edith.id, amount: 1), bind: bound(fish.id), seen: seen), "Hand Edith one coin. \"There — for the fish. We're square.\"")
+      expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transfer_coins" ])
+      expect(player.reload.coins).to eq(19)
+      expect(fish.reload.character_id).to eq(player.id)
+      expect(Obligation.last.status).to eq("settled")
+    end
+
+    it "a buy from a seller with nothing out yet names them and binds nothing; from someone with no trade it is not for sale" do
+      outcome = run!(inv_ctx(act: act("buy", with_id: barkeep.id), bind: bound(nil)), "I'll buy a portion of salt, whatever the going rate is")
+      expect(outcome.status).to eq(:skipped)
+      expect(outcome.null_line).to eq("Tomas has nothing out.")
+      expect(outcome.tool_calls).to be_empty
+
+      guard = Npc.create!(name: "Ysme", subrole: "guard", location: tavern, character_class: "commoner")
+      outcome = run!(inv_ctx(act: act("buy", with_id: guard.id), bind: bound(nil)), "sell me your spear")
+      expect(outcome.null_line).to eq("That isn't for sale here.")
+    end
+
     it "to a seller with a laid table and nothing bound, their coin moves only for a debt or a thing they handed over this turn" do
       Item.create!(name: "honeyed mead", subrole: "drink", location: tavern, properties: { "tags" => %w[provision drink], "modifiers" => [], "effects" => [], "for_sale" => true, "seller_id" => barkeep.id })
       outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 2), bind: bound(nil)), "Tomas, two coppers for a handful of barley")
@@ -245,6 +297,7 @@ RSpec.describe Harness::Runners::Inventory do
 
     it "a refused transfer says so" do
       player.update!(coins: 2)
+      Obligation.create!(debtor: player, creditor: barkeep, kind: "coins", amount: 10, terms: "for the room", game_time: 90)
       outcome = run!(inv_ctx(act: act("pay", with_id: barkeep.id, amount: 10)), "pay Tomas 10 coins")
       expect(outcome.status).to eq(:skipped)
       expect(outcome.null_line).to eq("You don't have that much coin.")
@@ -268,7 +321,7 @@ RSpec.describe Harness::Runners::Inventory do
       expect(run!(inv_ctx(act: act("buy"), bind: bound(ale.id)), "buy it").null_line).to eq("That isn't for sale here.")
       outcome = run!(inv_ctx(act: act("buy", with_id: barkeep.id), bind: bound(nil)), "buy the honey")
       expect(outcome.status).to eq(:skipped)
-      expect(outcome.null_line).to eq("That isn't for sale here.")
+      expect(outcome.null_line).to eq("That isn't for sale here.")   # he has wares out, not that one
       expect(run!(inv_ctx(act: act("buy", with_id: barkeep.id), bind: bound(locket.id)), "buy the locket").null_line).to eq("That isn't for sale here.")   # loose, not a ware
     end
 
@@ -373,5 +426,51 @@ RSpec.describe Harness::Runners::Inventory do
     call = { "name" => "give_item", "args" => { "item_id" => ale.id, "from_id" => player.id, "to_id" => barkeep.id },
              "result" => { "item_id" => ale.id, "item_name" => "sour ale", "from_id" => player.id, "to_id" => barkeep.id } }
     expect(Harness::Turn::Parts.render_call(call, ctx, nil)[:text]).to eq("You hand the sour ale to Tomas.")
+  end
+
+  it "the same sum does not leave twice in one turn: after a buy receipt of 3 coins to Tomas, a second step judged 'pay Tomas 3' moves nothing (hands run 10 t22: six coins for a three-coin cloak)" do
+    ctx = inv_ctx(act: act("pay", with_id: barkeep.id, amount: 3))
+    ctx.turn_transcript = Harness::Turn::Transcript.new(input: "Count out three coins and hand them to Tomas, taking the cloak.")
+    ctx.turn_transcript.record_tool_calls([ { "name" => "buy_item", "args" => { "item_id" => 99, "merchant_id" => barkeep.id, "buyer_id" => player.id },
+                                             "result" => { "item_id" => 99, "item_name" => "wool cloak", "buyer_id" => player.id, "merchant_id" => barkeep.id, "price" => 3 } } ])
+    outcome = run!(ctx, "Count out three coins and hand them to Tomas, taking the cloak.")
+    expect(outcome.status).to eq(:skipped)
+    expect(outcome.tool_calls.map { |t| t["name"] }).not_to include("transfer_coins")
+    expect(player.reload.coins).to eq(20)
+  end
+
+  describe "the implicit hands step (a talk turn the planner wrote no inventory step for)" do
+    it "is an ordinary ok when the hands are still — no stall, no null line, nothing unresolved" do
+      ctx = inv_ctx(act: act("none"))
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "'Fine weather.'", step: implicit_step)
+      expect(outcome.status).to eq(:ok)
+      expect(outcome.null_line).to be_nil
+      expect(outcome.tool_calls).to eq([])
+    end
+
+    it "still hands things over when the words did (hands run 9 t18: 'Take it now' with no hand verb)" do
+      knife = Item.create!(name: "small carving knife", character: player)
+      ctx = inv_ctx(act: act("give", with_id: barkeep.id), bind: bound(knife.id))
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "'Take it now, owe me two coins.'", step: implicit_step)
+      expect(outcome.status).to eq(:ok)
+      expect(knife.reload.character_id).to eq(barkeep.id)
+    end
+
+    it "is silent when its act binds nothing: 'I'll take the rope' before the rope is set out says nothing to the player (hands run 10 t11)" do
+      ctx = inv_ctx(act: act("buy", with_id: barkeep.id))
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "'I'll take the rope. What's your price?'", step: implicit_step)
+      expect(outcome.status).to eq(:ok)
+      expect(outcome.null_line).to be_nil
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "'I'll take the rope. What's your price?'", step: step)
+      expect(outcome.status).to eq(:skipped)   # the planner's own step still says so
+    end
+
+    it "fails open on an unreadable judge instead of re-dispatching the turn" do
+      ctx = inv_ctx(act: { "garbage" => true })
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "'Hm.'", step: implicit_step)
+      expect(outcome.status).to eq(:ok)
+      outcome = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "'Hm.'", step: step)
+      expect(outcome.status).to eq(:redispatch)
+    end
   end
 end

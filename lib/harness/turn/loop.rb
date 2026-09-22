@@ -411,6 +411,7 @@ module Harness
         pending      = steps.dup
         redispatches = 0
         step_no      = 0
+        ran          = []   # runners that completed this turn, in order
         # Locations created EARLIER in this chain (by a worldbuilding step). The
         # create-then-enter handoff: worldbuilding gives the new place an
         # invented NAME ("The Blackwood"), but the player asked for a generic
@@ -428,6 +429,10 @@ module Harness
           step = pending.shift
           step_no += 1
           runner = @dispatcher.runner_for(step.runner)
+          if !runner && step.args.is_a?(::Hash) && step.args["implicit"]
+            logger.debug { "[Executor] step #{step_no}: no runner for the implicit #{step.runner} step; skipped" }
+            next
+          end
           unless runner
             logger.warn { "[Executor] step #{step_no}: no runner for #{step.runner.inspect} → unresolved: #{step.intent}" }
             transcript.unresolved = step.intent
@@ -452,6 +457,7 @@ module Harness
             chain_created_locations << { "id" => r["location_id"], "type" => r["type"], "name" => r["name"] } if r.is_a?(Hash) && r["location_id"]
           end
           logger.info { "[Executor] step #{step_no} #{step.runner} → #{outcome.status} (#{outcome.tool_calls.size} tool call(s))#{outcome.note ? " #{outcome.note}" : ''}" }
+          ran << step.runner unless outcome.redispatch?
 
           # A deterministically-dead step (referent doesn't exist) stalls
           # alone; the chain continues. The intent (not the mechanical note)
@@ -500,7 +506,13 @@ module Harness
               transcript.unresolved = step.intent
               break
             end
-            pending = replan.steps
+            # The re-plan reads the same input and writes the same plan: what
+            # already ran this turn is cut from its head, so only the remainder
+            # runs. Without the cut a look ran three times and the wait behind
+            # a stale talk step never came (hands run 8 t19), and a paid or
+            # handed-over step ahead of a stale one would have run twice.
+            pending = replan.steps.dup
+            ran.each { |r| pending.shift if pending.first&.runner == r }
             next
           end
 

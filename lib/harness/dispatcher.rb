@@ -29,6 +29,34 @@ module Harness
       @logger        = logger
     end
 
+    # The player's own hands before the room answers: an inventory step the
+    # router wrote right after a conversation step runs before it (adjacent
+    # pairs only — a movement between them keeps its place). Run 7 t5: the
+    # voice took coins the player did not have and a sale was struck on
+    # credit, because the buy that would have said "you can't afford it"
+    # ran second.
+    def hands_first(steps)
+      steps = steps.dup
+      loop do
+        i = (0...(steps.size - 1)).find { |k| steps[k].runner == "conversation" && steps[k + 1].runner == "inventory" }
+        break unless i
+        steps[i], steps[i + 1] = steps[i + 1], steps[i]
+      end
+      steps
+    end
+
+    # Whether the player's hands move on a talk turn is the inventory judge's
+    # question, not the planner's: "Take it now, owe me two coins" was planned
+    # as talk alone and the knife never left the player (hands run 9 t18).
+    # The planner still orders the acts it names; where it named no hands
+    # step beside a conversation, one runs before the room answers and says
+    # nothing when the hands are still.
+    def with_hands(steps)
+      return steps if steps.none? { |s| s.runner == "conversation" } || steps.any? { |s| s.runner == "inventory" }
+      i = steps.index { |s| s.runner == "conversation" }
+      steps.dup.insert(i, Step.new(runner: "inventory", intent: nil, args: { "implicit" => true }))
+    end
+
     def plan(input)
       res = ::Harness::CostTracker.in_subsystem(:dispatcher) do
         ::Harness::Planner.plan_for(
@@ -42,6 +70,7 @@ module Harness
         # to inspection in the executor via built?.
         Step.new(runner: s["runner"], intent: s["reason"], args: s["args"] || {})
       }
+      steps = with_hands(hands_first(steps))
       plan = Plan.new(
         steps:       steps,
         reasoning:   res["reasoning"],

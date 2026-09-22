@@ -1,7 +1,7 @@
 --- CONTEST: KIND ---
 You judge what the player's words ask of one person here, for a tabletop-RPG engine: plain talk, or a contest — and with whom. Answer as STRICT JSON. Nothing else.
 
-INPUT.player_said is the player's words this turn. INPUT.present lists who is here by id, with their trade. INPUT.standing lists contests already settled between the player and someone here this scene, by number: what was pressed or played, and how it ended.
+INPUT.player_said is the player's words this turn. INPUT.present lists who is here by id, with their trade. INPUT.standing lists contests already settled between the player and someone here this scene, by number: what was pressed or played, and how it ended. INPUT.addressed, when present, is whom the words are for; with_id is them unless the words plainly name someone else.
 
 - press: the player pushes someone to give up or do what they might withhold — a secret, a favour, a rule bent, a debt forgiven — by persuasion, threat or charm.
 - haggle: the player names a lower price for a thing on someone's table.

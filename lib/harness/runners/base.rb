@@ -79,6 +79,30 @@ module Harness
       # order, and /debug shows exactly what was rendered. Failure-isolated:
       # a flaked call adds nothing and the mechanical parts carry the turn.
       FRAGMENT_MAX_TOKENS = 160
+      # SANITY CEILING on every judge answer (ids, enums, ten words of
+      # reasoning): the largest honest answer in run 6 was 145 tokens. Under
+      # a grammar, a stray quote inside the reasoning string leaves whitespace
+      # as the only legal token, and the answer runs to the adapter's 8192
+      # (the struck judge, run 6 t18: two answers of 8192 blanks, ~100 s).
+      # A capped runaway is a three-second miss instead.
+      JUDGE_MAX_TOKENS = 384
+
+      # How each of these characters looks, by id — the painted words first
+      # (a figure just given a name is still "the old woman" to the player),
+      # else the appearance the materializer wrote.
+      def looks_for(ids)
+        ::Npc.where(id: ids).index_by(&:id).transform_values do |n|
+          pr = n.properties
+          pr.is_a?(::Hash) ? (pr["physical"].presence || pr["appearance"].presence) : nil
+        end
+      end
+      # A retry echoes the rejected answer back once; a runaway must not ride
+      # along whole (the same t18: 8k blanks re-sent, and the retry ran again).
+      RETRY_ECHO_MAX = 600
+      def echo_for_retry(raw)
+        s = raw.to_s
+        s.length > RETRY_ECHO_MAX ? "#{s[0, RETRY_ECHO_MAX]}\n… [#{s.length - RETRY_ECHO_MAX} more characters cut]" : s
+      end
 
       def emit_fragment(context, prompt_path, payload, tcs, subsystem:)
         text = ::Harness::CostTracker.in_subsystem(subsystem) do
@@ -180,7 +204,7 @@ module Harness
         payload = { "looks" => desc, "trades" => ::Harness::Vocations.all + %w[commoner] }
         raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
           llm(context).complete(system: (@promotion_prompt ||= File.read(PROMOTION_PATH)), user: "INPUT:\n#{JSON.pretty_generate(payload)}",
-                                schema: promotion_schema, temperature: 0, thinking: false)
+                                schema: promotion_schema, max_tokens: JUDGE_MAX_TOKENS, temperature: 0, thinking: false)
         end
         out = parse_emit(raw)
         return nil unless out.is_a?(::Hash) && out.key?("trade")

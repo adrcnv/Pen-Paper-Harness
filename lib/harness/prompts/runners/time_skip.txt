@@ -9,8 +9,8 @@ You map a player's request to let TIME PASS into a structured time-skip for a ta
 - practice — deliberate training at something the player can already do (spell practice, sword drills, studying a craft or text). ~120-300.
 
 Rules:
-- duration_minutes must be > 0. Read it from the player's words ("an hour" = 60, "until morning" = until ~dawn, "a few minutes" = ~5-10). When unsure, pick a sensible value for the intent.
+- duration_minutes must be > 0. Read it from the player's words and the hour it is now (INPUT.now): "an hour" = 60, "until morning" = the minutes from now until ~06:00, "a few minutes" = ~5-10. When unsure, pick a sensible value for the intent.
 - No prose outside the JSON.
 
 INPUT shape:
-{ "player_input": "...", "intent": "<planner's read>" }
+{ "player_input": "...", "intent": "<planner's read>", "now": "<the day and hour it is>" }

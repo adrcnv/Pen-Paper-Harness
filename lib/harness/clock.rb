@@ -45,6 +45,12 @@ module Harness
       end
     end
 
+    # The hour as the room card prints it: "day 3, 07:15 (morning)".
+    def self.label(game_time)
+      t = game_time.to_i
+      format("day %d, %02d:%02d (%s)", t / MINUTES_PER_DAY, (t % MINUTES_PER_DAY) / 60, t % 60, phase(t))
+    end
+
     def self.advance(context, minutes:, reason:, logger: Rails.logger)
       raise ArgumentError, "minutes must be a non-negative integer (got #{minutes.inspect})" unless minutes.is_a?(Integer) && minutes >= 0
       return context.game_time if minutes.zero?

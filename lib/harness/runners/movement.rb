@@ -10,6 +10,11 @@ module Harness
     # (that runner lands later; until then the executor logs `unresolved:`).
     class Movement < Base
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/movement.txt")
+      SCHEMA = {
+        "type" => "object",
+        "properties" => { "action" => { "type" => "string", "enum" => %w[transition travel none] }, "target_id" => { "type" => %w[integer null] }, "place_name" => { "type" => %w[string null] } },
+        "required" => %w[action target_id place_name], "additionalProperties" => false
+      }.freeze
 
       def run(context:, scene:, input:, step:)
         # Create-then-enter handoff: when an earlier worldbuilding step in this
@@ -126,13 +131,17 @@ module Harness
       end
 
       def decide(context, input, step, nearby)
+        # Where the player already stands: "walk back to the well in Storm
+        # Strand", from Storm Strand, routed as a journey to Storm Strand
+        # (hands run 8 t9).
         user = JSON.pretty_generate(
           "player_input" => input,
           "intent"       => step&.intent,
+          "here"         => context.player_location&.name,
           "nearby"       => nearby
         )
         raw = ::Harness::CostTracker.in_subsystem(:runner_movement) do
-          llm(context).complete(system: preamble, user: "INPUT:\n#{user}")
+          llm(context).complete(system: preamble, user: "INPUT:\n#{user}", schema: SCHEMA, max_tokens: JUDGE_MAX_TOKENS, temperature: 0, thinking: false)
         end
         parse_emit(raw)   # nil on parse failure → run() re-dispatches
       rescue StandardError => e

@@ -8,6 +8,11 @@ module Harness
       PROMPT_PATH          = Rails.root.join("lib/harness/prompts/runners/time_skip.txt")
       FRAGMENT_PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/time_skip_fragment.txt")
       VALID_INTENTS = %w[rest wait sleep linger practice].freeze
+      SCHEMA = {
+        "type" => "object",
+        "properties" => { "intent" => { "type" => "string", "enum" => VALID_INTENTS }, "duration_minutes" => { "type" => "integer" } },
+        "required" => %w[intent duration_minutes], "additionalProperties" => false
+      }.freeze
 
       def run(context:, scene:, input:, step:)
         spec = decide(context, input, step)
@@ -36,9 +41,11 @@ module Harness
       private
 
       def decide(context, input, step)
-        user = JSON.pretty_generate("player_input" => input, "intent" => step&.intent)
+        # "until dawn" is minutes only from the hour it is now: without the
+        # clock the judge answered 120 for a night's rest (Sonnet run 2026-09-09).
+        user = JSON.pretty_generate("player_input" => input, "intent" => step&.intent, "now" => ::Harness::Clock.label(context.game_time))
         raw = ::Harness::CostTracker.in_subsystem(:runner_time_skip) do
-          llm(context).complete(system: preamble, user: "INPUT:\n#{user}")
+          llm(context).complete(system: preamble, user: "INPUT:\n#{user}", schema: SCHEMA, max_tokens: JUDGE_MAX_TOKENS, temperature: 0, thinking: false)
         end
         parse_emit(raw)
       rescue StandardError => e

@@ -76,14 +76,8 @@ module Harness
             .order("events.game_time DESC, events.id DESC")
             .limit(RECENT_EVENT_LIMIT)
             .includes(:event)
-            .map { |ep|
-              ev = ep.event
-              {
-                "role"      => ep.role,
-                "scope"     => ev.scope,
-                "details"   => ev.details
-              }
-            }
+            .map { |ep| { "role" => ep.role, "text" => ep.event.embed_text } }
+            .reject { |e| e["text"].to_s.strip.empty? }
         end
 
         def self.preamble

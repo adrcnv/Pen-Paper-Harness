@@ -14,7 +14,14 @@ module Harness
       ACT_PROMPT_PATH  = Rails.root.join("lib/harness/prompts/runners/inventory.txt")
       BIND_PROMPT_PATH = Rails.root.join("lib/harness/prompts/runners/inventory_bind.txt")
 
-      ACTS = %w[pickup drop give pay buy sell trade consume open none].freeze
+      # `stake` and `receive` are in the list so the judge has a place to put
+      # what it sees: asked "take the coins from her outstretched palm" it
+      # wrote "Birger takes 4 coins from Gunnhild's hand" and answered pay
+      # (9 of 9 on replay, whatever the debts said), "take the knife from
+      # Olaf's hand" came back pickup, and coins set out for a wager came
+      # back as a pay to the other player — it read each rightly and had no
+      # act to file it under (hands run 8). Neither moves anything here.
+      ACTS = %w[pickup drop give pay buy stake sell trade consume open receive none].freeze
       # Property order is grammar on the hosted sampler: `reasoning` first,
       # every field required.
       ACT_SCHEMA = {
@@ -41,7 +48,20 @@ module Harness
       }.freeze
       SAMPLING = { temperature: 0, thinking: false }.freeze
 
+      # The implicit hands step (a talk turn the planner wrote no inventory
+      # step for) acts when it can and says nothing when it cannot: no null
+      # line, nothing unresolved, no re-dispatch. "I'll take the rope — what's
+      # your price?" judged a buy before the rope was set out in the same
+      # turn's talk, and the stall notice reached the player (hands run 10
+      # t11). The notices belong to steps the player's words planned.
       def run(context:, scene:, input:, step:)
+        outcome = perform(context: context, scene: scene, input: input, step: step)
+        return outcome unless step&.args&.dig("implicit") && (outcome.skipped? || outcome.redispatch?)
+        @logger.info { "[Runner inventory] implicit step: #{outcome.note} — silent" }
+        Outcome.new(tool_calls: outcome.tool_calls, scene_dirty: false, status: :ok, note: "implicit hands step: #{outcome.note}")
+      end
+
+      def perform(context:, scene:, input:, step:)
         player = ::Player.first
         return redispatch("no player row") unless player
 
@@ -49,13 +69,20 @@ module Harness
         return redispatch("inventory act unparseable") if act.nil?
         kind = act["act"].to_s
         return redispatch("unknown inventory act #{kind.inspect}") unless ACTS.include?(kind)
+        # A give with a sum is coins: "Hand Edith one coin" was judged give,
+        # amount 1, three times of three (hands run 6, t18), and the binder
+        # then handed over the fish the coin was for. Amount belongs to pay.
+        kind = "pay" if kind == "give" && act["amount"].is_a?(::Integer) && act["amount"].positive?
 
         resolver = resolver_for(context)
         tcs = []
         @logger.info { "[Runner inventory] #{kind}#{act['with_id'] ? " with ##{act['with_id']}" : ''}#{act['figure'] ? " figure #{act['figure']}" : ''}#{act['amount'] ? " #{act['amount']} coins" : ''} (#{act['reasoning']})" }
         # The player's hands do nothing here: what they said asks someone
         # else to act, and that person's own line and hands answer it.
-        return skip("the player's hands do nothing: #{act['reasoning']}", tcs) if kind == "none"
+        return skip("the player's hands do nothing: #{act['reasoning']}", tcs) if %w[none receive].include?(kind)
+        # A stake names no recipient: the dice move it (the wager's verdict),
+        # and until then it is coin set out in the open.
+        act = act.merge("with_id" => nil, "figure" => nil) and kind = "pay" if kind == "stake"
 
         with = counterparty(act, resolver, context, scene, player, tcs)
 
@@ -115,10 +142,22 @@ module Harness
               return skip("buy refused: #{res['error']}", tcs, null_line: buy_null_line(res["error"])) unless ok
               return Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
             end
-            return skip("#{kind}: nothing bound on their table", tcs, null_line: "That isn't for sale here.") if kind == "buy" && amount.nil?
+            if kind == "buy" && amount.nil?
+              # A seller with nothing out yet: their own line is the answer
+              # (a quote, a "what portion?"); the thing lands when they hand
+              # it over. Only someone with no trade has nothing to sell.
+              bare = table.empty? && seller?(with, context, table)
+              return skip("buy: nothing bound on their table", tcs, null_line: bare ? "#{seller_name(with)} has nothing out." : "That isn't for sale here.")
+            end
             return skip("pay without amount", tcs, null_line: "No sum was settled — nothing changes hands.") unless amount
-            if table.any? && !owes?(player, with) && !handed_this_turn?(with, player, context)
-              return skip("pay to a seller with nothing owed and nothing handed over", tcs, null_line: "Their goods are on the table — buy, or keep your coin.")
+            return skip("already paid #{amount} to ##{with} this turn", tcs, null_line: "Those coins already went over.") if paid_this_turn?(with, amount, player, context)
+            # Coins to a seller are for goods: refused when none were handed
+            # over this turn and none are owed. Keyed on the trade, not on a
+            # table — the laid table is gone, and keyed on it three coins went
+            # for salt that never landed and five to a salt worker who said
+            # no (hands run 6, t5–t6).
+            if seller?(with, context, table) && !owes?(player, with) && !handed_this_turn?(with, player, context)
+              return skip("pay to a seller with nothing owed and nothing handed over", tcs, null_line: table.any? ? "Their goods are on the table — buy, or keep your coin." : "Nothing was handed over — you keep your coin.")
             end
             res, ok = execute_tool(resolver, "transfer_coins", { "from_id" => player.id, "to_id" => with, "amount" => amount, "reason" => act["reasoning"] }, into: tcs)
             # A refused payment says so (items run 8 t25: 17 coins against 41
@@ -154,13 +193,13 @@ module Harness
           "carried"     => player.items.map(&:name),
           "debts"       => ::Obligation.outstanding.involving(player.id).order(id: :desc).limit(4).map { |o| o.line_for(player.id, now: context.game_time) }.reverse,
           "here"        => things_here(scene, player).map { |i| here_entry(i, scene) } + containers_here(scene, player).map { |i| { "name" => i.name, "container" => true } },
-          "present"     => Array(scene && scene["present_characters"]).map { |c| { "id" => c["id"], "name" => c["name"], "trade" => c["subrole"] }.compact },
+          "present"     => present_rows(scene),
           "figures"     => Array(scene && scene["present_extras"]).each_with_index.map { |d, i| { "index" => i, "looks" => d } },
-          "talking_to"  => talking_to(context, scene),
+          "spoke_last_turn" => talking_to(context, scene),
           "this_turn"   => receipts_this_turn(context, [])
         }.compact
         raw = ::Harness::CostTracker.in_subsystem(:runner_inventory) do
-          llm(context).complete(system: act_prompt, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: ACT_SCHEMA, **SAMPLING)
+          llm(context).complete(system: act_prompt, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: ACT_SCHEMA, max_tokens: JUDGE_MAX_TOKENS, **SAMPLING)
         end
         parse_emit(raw)
       rescue StandardError => e
@@ -176,7 +215,7 @@ module Harness
         payload = { "player_said" => input, "act" => kind, "things" => things.map { |i| bind_entry(i) } }
         payload["theirs"] = theirs.map { |i| bind_entry(i) } if theirs
         raw = ::Harness::CostTracker.in_subsystem(:runner_inventory) do
-          llm(context).complete(system: bind_prompt, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: BIND_SCHEMA, **SAMPLING)
+          llm(context).complete(system: bind_prompt, user: "INPUT:\n#{JSON.pretty_generate(payload)}", schema: BIND_SCHEMA, max_tokens: JUDGE_MAX_TOKENS, **SAMPLING)
         end
         ans = parse_emit(raw) || {}
         thing = things.find { |i| i.id == ans["item_id"] }
@@ -242,6 +281,22 @@ module Harness
         ::Obligation.open_now.exists?(kind: "coins", debtor_id: player.id, creditor_id: to_id.to_i)
       end
 
+      # The same sum does not leave the player twice in one turn: the planner
+      # cut "count out three coins … taking the cloak" into two hands steps,
+      # the buy took the three, and the take step — judged a payment again,
+      # the buy receipt in view — took three more (hands run 10 t22). A
+      # receipt of this sum to this person this turn ends it.
+      def paid_this_turn?(to_id, amount, player, context)
+        Array(context.turn_transcript&.tool_calls).any? do |tc|
+          next false if tc["result"].is_a?(::Hash) && tc["result"]["error"]
+          case tc["name"]
+          when "buy_item"       then tc.dig("result", "merchant_id") == to_id.to_i && tc.dig("result", "buyer_id") == player.id && tc.dig("result", "price") == amount
+          when "transfer_coins" then tc.dig("args", "from_id") == player.id && tc.dig("args", "to_id") == to_id.to_i && tc.dig("args", "amount") == amount
+          else false
+          end
+        end
+      end
+
       # They put something into the player's hands this turn (the act judge
       # on their own line): coin for it is a plain payment.
       def handed_this_turn?(from_id, player, context)
@@ -251,11 +306,31 @@ module Harness
         end
       end
 
+      # Someone with wares out, or a trade that brings things out.
+      def seller?(id, context, table)
+        return true if table.any?
+        npc = ::Npc.find_by(id: id)
+        npc.present? && ::Harness::Items::Offers.categories_for(npc, context.player_location).any?
+      end
+
+      def seller_name(id)
+        ::Npc.find_by(id: id)&.name.to_s.split.first
+      end
+
       def buy_null_line(error)
         e = error.to_s
         return "No one here to sell it." if e.include?("does not keep this stall")
         return "You can't afford it." if e.include?("costs")
         "That isn't for sale here."
+      end
+
+      # Who is here, with how they look: "grandmother" is a look, not a name
+      # (run 8 t25 bound her wager to a labourer; the addressee judge got
+      # looks first).
+      def present_rows(scene)
+        rows  = Array(scene && scene["present_characters"])
+        looks = looks_for(rows.map { |c| c["id"] })
+        rows.map { |c| { "id" => c["id"], "name" => c["name"], "trade" => c["subrole"], "looks" => looks[c["id"]] }.compact }
       end
 
       def talking_to(context, scene)
