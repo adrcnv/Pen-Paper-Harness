@@ -1,0 +1,29 @@
+# Scenery — the nameless places a settlement has without anyone building
+# them: the alley behind the houses, a shack past the last roof, the water's
+# edge. Keyed like the manifest so a town has AT MOST ONE of each: a second
+# "dirty alley" spoken of in the same town is the first one. Minted lazily on
+# first need, under the settlement root; no proprietor, no hours, no shop.
+#   key         — one per settlement
+#   gloss       — what the bind judge reads to match a spoken phrase to it
+#   names       — pool; one picked mechanically
+#   description — mechanical stub prose
+- key: alley
+  gloss: a narrow lane behind the houses, out of sight of the street
+  names: [ "the Back Alley", "the Narrow Lane", "the Alley Behind the Houses" ]
+  description: "A cramped lane behind the buildings, mud underfoot, where nobody looks twice."
+- key: shack
+  gloss: an abandoned hut or lean-to past the last roofs
+  names: [ "the Abandoned Shack", "the Old Lean-to", "the Fallen Hut" ]
+  description: "A sagging hut past the last roofs, half its thatch gone, long empty."
+- key: hollow
+  gloss: a dip, copse or hollow just outside the settlement, hidden from the road
+  names: [ "the Hollow", "the Copse", "the Dell" ]
+  description: "A hollow beyond the fields, hidden from the road by a stand of trees."
+- key: waters_edge
+  gloss: the bank, shore, ford or jetty where the settlement meets the water
+  names: [ "the Water's Edge", "the Landing", "the Ford" ]
+  description: "Where the settlement's ground gives way to water: mud, reeds and moored boats."
+- key: camp
+  gloss: a camp or rough huts outside the settlement proper, where workers or travellers stay
+  names: [ "the Camp", "the Outer Huts", "the Workers' Camp" ]
+  description: "Tents and rough huts outside the settlement proper, smoke and strangers."

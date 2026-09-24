@@ -549,6 +549,17 @@ RSpec.describe Harness::Turn::Loop do
       expect(parts).to eq([ { kind: :line, text: "You learn of The Muddy Pint — A smoke-choked dockside tavern." } ])
     end
 
+    it "renders a refused resolve_location as its own line, and a found one as a discovery" do
+      refused = { "name" => "resolve_location", "args" => { "asked" => "walk to the library" },
+                  "result" => { "status" => "refused", "settlement" => "Stonehold" } }
+      found   = { "name" => "resolve_location", "args" => { "name" => "the Alehouse", "description" => "A low-beamed taproom." },
+                  "result" => { "location_id" => tavern.id + 999, "status" => "linked" } }
+      expect(compose([ refused, found ])).to eq([
+        { kind: :line, text: "Nothing of the kind in Stonehold." },
+        { kind: :line, text: "You learn of the Alehouse — A low-beamed taproom." }
+      ])
+    end
+
     it "renders a runner's display_fragment verbatim and travel legs as lines" do
       frag = { "name" => "display_fragment", "args" => { "text" => "The bark splits." }, "result" => { "rendered" => true } }
       trav = { "name" => "travel", "args" => {},

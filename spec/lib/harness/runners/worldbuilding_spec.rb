@@ -2,46 +2,43 @@ require "rails_helper"
 
 RSpec.describe Harness::Runners::Worldbuilding do
   let(:city)    { Location.create!(name: "Oakenford") }
+  let!(:tavern) { Location.create!(name: "the Alehouse", parent: city, description: "A low-beamed taproom.") }
   let!(:player) { Player.create!(name: "Hero", location: city) }
   let(:step)    { Harness::Dispatcher::Step.new(runner: "worldbuilding", intent: "find a tavern", args: {}) }
 
-  def context_with(&block)
-    Harness::Turn::Context.new(player_location: city, llm_nuance: StubLLM.new(&block), game_time: 100)
-  end
+  def ctx(&block) = Harness::Turn::Context.new(player_location: city, llm_grunt: StubLLM.new(&block), game_time: 100)
+  def run(input, context) = described_class.new.run(context: context, scene: Harness::Tools::QueryScene.build(context), input: input, step: step)
 
-  it "creates a sublocation + character (the CREATE chain) for an implied amenity" do
-    ctx = context_with do
-      { "location"  => { "type" => "sublocation", "name" => "The Drowned Rat", "description" => "a dockside tavern", "connection" => "every port has a tavern" },
-        "character" => { "subrole" => "barkeep", "name" => "Tomas", "description" => "burly", "connection" => "runs the tavern" },
-        "item" => nil, "kickoff" => nil }.to_json
-    end
-    scene = Harness::Tools::QueryScene.build(ctx)
-
+  it "answers with the room the town has, as a discovery record, creating nothing" do
+    c = ctx { %({"reasoning": "the tavern is the Alehouse", "is": "listed_room", "room_id": #{tavern.id}, "scenery": null}) }
     outcome = nil
-    expect { outcome = described_class.new.run(context: ctx, scene: scene, input: "is there a tavern?", step: step) }
-      .to change(Location, :count).by(1).and change(Npc, :count).by(1)
-
+    expect { outcome = run("is there a tavern here?", c) }.not_to change { [ Location.count, Npc.count ] }
     expect(outcome.status).to eq(:ok)
-    names = outcome.tool_calls.map { |t| t["name"] }
-    expect(names).to include("propose_location", "propose_character")
-    new_loc = Location.where(parent_id: city.id).last
-    expect(Npc.last.location_id).to eq(new_loc.id) # character placed at the new sublocation
+    tc = outcome.tool_calls.first
+    expect(tc["name"]).to eq("resolve_location")
+    expect(tc["result"]).to include("location_id" => tavern.id, "name" => "the Alehouse", "status" => "linked", "type" => "sublocation")
+    expect(tc["args"]).to include("description" => "A low-beamed taproom.")
   end
 
-  it "deflects (no-op, no creation) when the model returns an all-null spec" do
-    ctx = context_with { { "location" => nil, "character" => nil, "item" => nil, "kickoff" => nil }.to_json }
-    scene = Harness::Tools::QueryScene.build(ctx)
-
-    expect { @outcome = described_class.new.run(context: ctx, scene: scene, input: "is the legendary archmage here?", step: step) }
-      .not_to change(Location, :count)
-    expect(@outcome.status).to eq(:ok)
-    expect(@outcome.tool_calls).to be_empty
+  it "mints a scenery kind once when that is what was asked for" do
+    c = ctx { %({"reasoning": "somewhere out of sight", "is": "scenery", "room_id": null, "scenery": "alley"}) }
+    outcome = nil
+    expect { outcome = run("find a quiet back alley", c) }.to change(Location, :count).by(1)
+    expect(outcome.tool_calls.first["result"]).to include("status" => "minted")
+    expect(Location.order(:id).last.parent).to eq(city)
+    expect { run("some alley to talk in", c) }.not_to change(Location, :count)
   end
 
-  it "re-dispatches (no crash) on unparseable emit" do
-    ctx = context_with { "not json" }
-    scene = Harness::Tools::QueryScene.build(ctx)
-    outcome = described_class.new.run(context: ctx, scene: scene, input: "make a thing", step: step)
-    expect(outcome.status).to eq(:redispatch)
+  it "says there is nothing of the kind, and builds none, when the town has not got it" do
+    c = ctx { %({"reasoning": "no smithy is listed", "is": "neither", "room_id": null, "scenery": null}) }
+    outcome = nil
+    expect { outcome = run("is there a smith?", c) }.not_to change { [ Location.count, Npc.count ] }
+    expect(outcome.status).to eq(:ok)
+    expect(outcome.null_line).to be_nil   # an answer, rendered as a record — never swallowed beside a voicing
+    expect(outcome.tool_calls.first).to include("name" => "resolve_location", "result" => { "status" => "refused", "settlement" => "Oakenford" })
+  end
+
+  it "has no author to redispatch to: an unreadable judge answer is a refusal" do
+    expect(run("make a thing", ctx { "not json" }).status).to eq(:ok)
   end
 end

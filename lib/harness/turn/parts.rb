@@ -98,7 +98,7 @@ module Harness
         when "sell_item"        then trade_line(result, "sell")
         when "open_container"   then open_line(result)
         when "pass_time"        then pass_time_line(result)
-        when "propose_location" then discovery_line(args, result, context)
+        when "propose_location", "resolve_location" then discovery_line(args, result, context)
         when "propose_item"     then found_line(args, result, context)
         when "start_combat"     then line("⚔ The fight begins.")
         when "harm"             then line("You take #{result['damage']} damage: #{args['what']}.")
@@ -241,6 +241,9 @@ module Harness
       # A place now exists that the player did NOT walk into: they became
       # aware of it. Its authored description is worldbuilding's own prose.
       def discovery_line(args, result, context)
+        if result.is_a?(Hash) && result["status"] == "refused"
+          return line("Nothing of the kind in #{result['settlement'].presence || 'these parts'}.")
+        end
         name = args["name"] || (result.is_a?(Hash) && result["name"])
         return nil unless name
         here = context.player_location&.id

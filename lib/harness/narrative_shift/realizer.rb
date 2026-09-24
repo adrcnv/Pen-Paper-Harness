@@ -15,16 +15,16 @@ module Harness
     # invent more. See memory project_narrative_shift_v2.
     #
     # Decisions baked in here:
-    # - PERSON claims only (v0). Places are the worldbuilding runner's domain;
-    #   factions are rare enough to defer.
+    # - PERSON claims only (v0). A claimed place goes through the one place
+    #   door, Settlement::PlaceWriter; factions are rare enough to defer.
     # - KEEP THE SPOKEN NAME. The player heard "Harek"; the row must be Harek.
     #   This is the one mint path that does NOT mechanically rename (every other
     #   path drops the LLM name and assigns from the culture pools).
     # - Dedup is a global exact / first-token name match — "does this row already
     #   exist", not fuzzy semantic matching. On a hit we LINK, never duplicate.
-    # - Placement: if the NPC named a real destination, create the person THERE
-    #   (active) so they're present when the player travels over. Otherwise
-    #   UNPLACED + dormant — grounded and queryable, crowding no scene. The
+    # - Placement: if the claim bound to a room, the person is homed THERE so
+    #   they're present when the player walks in. Otherwise homed at the
+    #   settlement root, awake — as findable as any citizen, no more. The
     #   social web (who-else-knows-them at the destination) is handled at
     #   scene entry by SocialWeb.
     # - The spawn runs the full Hatchery materialize (stats + description) — that
@@ -81,13 +81,12 @@ module Harness
         end
 
         at_name = claim["at_location"].to_s.strip
-        # The claim's anchor place is realized WITH the claim (no parking, no
-        # lazy placement): reuse an existing row when one matches, else mint
-        # the sublocation NOW so the person is home and findable the moment
-        # they're spoken of — and so a later "go to the mill" is plain
-        # movement instead of the worldbuilder inventing a second mill with
-        # a second miller.
-        place   = resolve_or_mint_location(at_name, context, logger)
+        # The claim's anchor place goes through the one place door: an
+        # existing room by name or by the bind judge, a scenery kind minted
+        # once per settlement, or nothing — a room the settlement was not
+        # laid out with is not talked into existence, and the person is
+        # homed at the settlement instead.
+        place   = ::Harness::Settlement::PlaceWriter.resolve(name: at_name, context: context, source: :claim, logger: logger).location
         # A claim anchored at the player's CURRENT location describes this
         # scene's own furniture, not a findable person elsewhere — anyone
         # actually here either has a row already or is an extra, whose
@@ -97,7 +96,7 @@ module Harness
           logger.info { "[NarrativeShift] claim #{(spoken.presence || gist).inspect} anchored at the current location #{place.name.inspect} — scenery, refusing mint" }
           return nil
         end
-        home    = place || settlement_for(context.player_location)
+        home    = place || ::Harness::Settlement::PlaceWriter.root_of(context.player_location)
 
         npc = ::Harness::Character::Hatchery.spawn(
           llm_grunt:        context.llm_grunt,
@@ -105,7 +104,11 @@ module Harness
           subrole:          subrole,
           location:         (place || home),
           home_location_id: home&.id,
-          dormant:          place.nil?, # no place anchor → off the current stage, still homed
+          # No place anchor → homed at the settlement root, awake: findable
+          # the way any citizen is (the street roll, the draws). Dormant
+          # rows are skipped by whereabouts and woken only by the
+          # materializer, so a dormant claim was a person nobody could find.
+          dormant:          false,
           properties:       {
             "claimed_by"        => speaker_label(speaker),
             "claim_gist"        => gist.presence,
@@ -117,7 +120,7 @@ module Harness
 
         event = ground_event(npc, speaker, context, gist, role_ref)
         logger.info do
-          where = place ? place.name : "#{home&.name} (dormant local)"
+          where = place ? place.name : "#{home&.name} (at large)"
           via   = role_ref ? " (role #{role_ref.inspect} → #{name.inspect})" : ""
           "[NarrativeShift] claim MINTED character_id=#{npc.id} #{name.inspect}#{via} at #{where} (event_id=#{event&.id})"
         end
@@ -183,21 +186,6 @@ module Harness
       # The settlement a claimed person calls home when no real destination was
       # named: walk up to the nearest residence (settlement/lair), else the
       # top-level location. Everyone gets a home — no floating, locationless names.
-      def settlement_for(location)
-        return nil unless location
-        loc = location
-        loc = loc.parent while loc.parent && !loc.residence?
-        loc
-      end
-
-      # Is this a place NAME we can sensibly park for later relocation, vs prose?
-      # A clean name is short ("Blackwood Relay"); "the highest pile of the first
-      # crossing point in the marsh" is a description and won't ever match a row.
-      def looks_like_place?(s)
-        n = s.to_s.strip
-        !n.empty? && n.split(/\s+/).length <= 5
-      end
-
       def name_match?(a, b)
         a_norm = a.to_s.strip.downcase
         b_norm = b.to_s.strip.downcase
@@ -206,61 +194,6 @@ module Harness
         return true  if a_norm == b_norm.split(/\s+/).first
         return true  if b_norm == a_norm.split(/\s+/).first
         false
-      end
-
-      # Resolve the claim's anchor place, EAGERLY (no parking): exact name
-      # match anywhere → reuse; a head-noun match among the current
-      # settlement's sublocations → reuse ("the mill" IS the existing Tide
-      # Mill — one mill per town); else, if it reads as a clean place name,
-      # MINT it now as a sublocation of the current settlement. Prose
-      # descriptions ("the highest pile of the first crossing…") mint nothing.
-      def resolve_or_mint_location(at_location, context, logger)
-        nm = at_location.to_s.strip
-        return nil if nm.empty?
-        exact = ::Location.where("LOWER(name) = ?", nm.downcase).first
-        return exact if exact
-
-        settlement = root_settlement(context.player_location)
-        return nil unless settlement
-        if (existing = head_noun_match(nm, settlement))
-          logger.info { "[NarrativeShift] anchor #{nm.inspect} matches existing #{existing.name.inspect} — reusing" }
-          return existing
-        end
-        return nil unless looks_like_place?(nm)
-
-        loc = ::Location.create!(
-          name:        titleize_place(nm),
-          description: "A place in #{settlement.name}, spoken of in passing.",
-          parent:      settlement
-        )
-        logger.info { "[NarrativeShift] anchor MINTED location_id=#{loc.id} #{loc.name.inspect} under #{settlement.name}" }
-        loc
-      end
-
-      # Anchors parent at the ROOT settlement (the town), matching the
-      # PlaceRealizer's convention — settlement_for (person homing) can stop
-      # at a residence like a tavern, which is no parent for a mill.
-      def root_settlement(location)
-        return nil unless location
-        loc = location
-        loc = loc.parent while loc.parent
-        loc
-      end
-
-      # "the mill" ~ "the Tide Mill": both head nouns are "mill". Token-exact
-      # on the final word (articles stripped) — deliberately not fuzzy, so
-      # "the sawmill" never collapses into "the mill".
-      def head_noun_match(nm, settlement)
-        key = reference_key(nm).split(" ").last.to_s
-        return nil if key.empty?
-        ::Location.where(parent_id: settlement.id).to_a
-                  .find { |l| reference_key(l.name).split(" ").last == key }
-      end
-
-      def titleize_place(nm)
-        nm.split(/\s+/).map.with_index { |w, i|
-          i.zero? && ARTICLES.include?(w.downcase) ? w.downcase : w.capitalize
-        }.join(" ")
       end
 
       # The SHARED event tying the speaker to the new person — the "tangent" that

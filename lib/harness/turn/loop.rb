@@ -452,7 +452,7 @@ module Harness
           transcript.null_lines << outcome.null_line if outcome.null_line
           transcript.record_tool_calls(outcome.tool_calls)
           outcome.tool_calls.each do |tc|
-            next unless tc["name"] == "propose_location"
+            next unless %w[propose_location resolve_location].include?(tc["name"])
             r = tc["result"]
             chain_created_locations << { "id" => r["location_id"], "type" => r["type"], "name" => r["name"] } if r.is_a?(Hash) && r["location_id"]
           end

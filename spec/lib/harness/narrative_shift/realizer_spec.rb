@@ -5,7 +5,7 @@ RSpec.describe Harness::NarrativeShift::Realizer do
   let(:tavern)  { Location.create!(name: "The Drowned Rat", parent: city) }
   let!(:player) { Player.create!(name: "Hero", location: tavern) }
   let(:speaker) { Npc.create!(name: "Vesna", subrole: "messenger", location: tavern) }
-  let(:ctx)     { Harness::Turn::Context.new(player_location: tavern, game_time: 100, llm_grunt: StubLLM.new { "{}" }) }
+  let(:ctx)     { Harness::Turn::Context.new(player_location: tavern, game_time: 100, llm_grunt: StubLLM.new { @answer || "{}" }) }
 
   # Isolate the realizer's logic (naming / home / grounding) from the full
   # Hatchery materialize. The stub still creates a real row so the grounding
@@ -96,35 +96,37 @@ RSpec.describe Harness::NarrativeShift::Realizer do
       .with(hash_including(location: relay, home_location_id: relay.id, dormant: false))
   end
 
-  it "homes an unresolved person at the current location, dormant (no floating names)" do
+  it "homes an unplaced person at the settlement root, awake — findable as any citizen, never dormant" do
     run({ "name" => "Harek", "gist" => "a cousin from nowhere named" })
     expect(Harness::Character::Hatchery).to have_received(:spawn)
-      .with(hash_including(home_location_id: tavern.id, location: tavern, dormant: true))
+      .with(hash_including(home_location_id: city.id, location: city, dormant: false))
   end
 
-  it "MINTS a clean anchor place with the claim (no parking) and homes the person there, active" do
-    run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
-    mill = Location.find_by(name: "the Mill")
-    expect(mill).to be_present
-    expect(mill.parent).to eq(city) # sublocation of the enclosing settlement
-    expect(Harness::Character::Hatchery).to have_received(:spawn)
-      .with(hash_including(location: mill, home_location_id: mill.id, dormant: false))
-  end
-
-  it "REUSES an existing sublocation whose head noun matches instead of minting a twin place" do
+  it "homes the person at the existing room the bind judge names instead of minting a twin place" do
     tide_mill = Location.create!(name: "the Tide Mill", parent: city)
-    run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
-    expect(Location.where("LOWER(name) = ?", "the mill")).to be_empty
+    @answer = %({"reasoning": "the mill is the Tide Mill", "is": "listed_room", "room_id": #{tide_mill.id}, "scenery": null})
+    expect {
+      run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
+    }.not_to change(Location, :count)
     expect(Harness::Character::Hatchery).to have_received(:spawn)
-      .with(hash_including(location: tide_mill, dormant: false))
+      .with(hash_including(location: tide_mill, home_location_id: tide_mill.id, dormant: false))
   end
 
-  it "mints nothing for a prose anchor (person stays dormant local)" do
+  it "mints no room the town has not got — the anchor stays a phrase and the person is homed at the root" do
+    @answer = %({"reasoning": "no mill is listed", "is": "neither", "room_id": null, "scenery": null})
+    expect {
+      run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
+    }.not_to change(Location, :count)
+    expect(Harness::Character::Hatchery).to have_received(:spawn)
+      .with(hash_including(location: city, home_location_id: city.id, dormant: false))
+  end
+
+  it "mints nothing for a prose anchor (person homed at the root, awake)" do
     expect {
       run({ "name" => "Doran", "at_location" => "the highest pile of the first crossing point in the marsh" })
     }.not_to change(Location, :count)
     expect(Harness::Character::Hatchery).to have_received(:spawn)
-      .with(hash_including(location: tavern, dormant: true))
+      .with(hash_including(location: city, dormant: false))
   end
 
   it "stamps the speaker into a named-claim ground event (referrals carry their source)" do

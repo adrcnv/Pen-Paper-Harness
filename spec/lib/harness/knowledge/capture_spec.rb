@@ -647,12 +647,17 @@ RSpec.describe Harness::Knowledge::Capture do
   end
 
   describe "place realization (wiring)" do
-    it "mints a proper-named place named in dialogue" do
+    it "hands a place named in dialogue to the place door (here: scenery the bind judge names, minted under the town)" do
+      bind = Harness::Turn::Context.new(player_location: tavern, game_time: 100, llm_grunt: StubLLM.new {
+        %({"reasoning": "the wharf is the water's edge", "is": "scenery", "room_id": null, "scenery": "waters_edge"})
+      })
       payload = { "facts" => [], "places" => [ { "name" => "The Salt Wharf", "about" => "the loading docks" } ] }
       expect {
-        capture(payload, context: ctx)
-      }.to change { Location.where(name: "The Salt Wharf").count }.by(1)
-      expect(Location.find_by(name: "The Salt Wharf").parent).to eq(city)
+        capture(payload, context: bind)
+      }.to change { Location.where(parent_id: city.id).count }.by(1)
+      minted = Location.where(parent_id: city.id).order(:id).last
+      expect(minted.properties["scenery_key"]).to eq("waters_edge")
+      expect(Location.where(name: "The Salt Wharf")).to be_empty   # the spoken name stays a phrase
     end
 
     it "does not mint places without a context (unit path)" do
