@@ -66,15 +66,6 @@ RSpec.describe Harness::Items::Offers do
     end
   end
 
-  describe ".materialize_described!" do
-    it "reads the painted object out of a figure's description and puts it on their table; nothing known, nothing minted" do
-      item = described_class.materialize_described!(tanner, "an old man balancing a wheel of cheese on his knee", hut, 600)
-      expect(item.name).to end_with("wheel of cheese")
-      expect(item.properties).to include("for_sale" => true, "seller_id" => tanner.id)
-      expect(described_class.materialize_described!(tanner, "a young boy stacking kindling near the hearth", hut, 600)).to be_nil
-    end
-  end
-
   describe "Library.template_for" do
     it "matches the kind by a word of the label, else falls back to a weighted pick" do
       expect(Harness::Items::Library.template_for("goods", label: "a coil of rope")["id"]).to eq("cordage")

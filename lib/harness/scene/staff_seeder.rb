@@ -12,10 +12,9 @@ module Harness
     class StaffSeeder
       def self.ensure!(location, llm:, logger: Rails.logger, rng: Random.new)
         return nil unless location&.parent_id
-        trade = location.properties.is_a?(Hash) ? location.properties["trade"].to_s : ""
+        trade = trade_of(location)
         return nil if trade.empty?
-        return nil if ::Npc.where(home_location_id: location.id, subrole: trade)
-                          .any? { |c| c.max_hp.to_i <= 0 || c.current_hp.to_i > 0 }
+        return nil if staffed?(location, trade)
 
         # Adoption before spawning: a trade-matching resident anchored at the
         # settlement root IS this venue's keeper waiting to be claimed —
@@ -40,6 +39,36 @@ module Harness
       rescue StandardError => e
         logger.warn { "[Scene::StaffSeeder] failed for #{location&.name}: #{e.class}: #{e.message}" }
         nil
+      end
+
+      # Name the keeper of every trade room in the settlement that has none:
+      # a row with a name, a trade and a home, no stats yet — the town knows
+      # its smith's name before the player meets him (roster-4: a voice
+      # guessed "Doric" for a smith whose room stood empty, because the fact
+      # had no name to give). Adoption first, as ensure! does. The body comes
+      # at first meeting (Scene::Manager#materialize_present!). No LLM.
+      def self.name_all!(root, rng: Random.new, logger: Rails.logger)
+        return [] unless root&.settlement? && root.parent_id.nil?
+        ::Location.where(parent_id: root.id).order(:id).filter_map do |room|
+          trade = trade_of(room)
+          next if trade.empty? || staffed?(room, trade)
+          if (adopted = adoptable_keeper(room, trade))
+            adopted.update!(home_location_id: room.id, location_id: room.id)
+            logger.info { "[Scene::StaffSeeder] adopted #{adopted.name} (#{trade}) as keeper of #{room.name}" }
+            next adopted
+          end
+          npc = ::Npc.create!(name: ::Harness::Naming.unique_for(location: room, rng: rng), subrole: trade,
+                              location_id: room.id, home_location_id: room.id)
+          logger.info { "[Scene::StaffSeeder] #{npc.name} (#{trade}) named keeper of #{room.name} — met later" }
+          npc
+        end
+      end
+
+      def self.trade_of(location) = location.properties.is_a?(Hash) ? location.properties["trade"].to_s : ""
+
+      # A living keeper, met or not yet (a named row has no HP either way).
+      def self.staffed?(location, trade)
+        ::Npc.where(home_location_id: location.id, subrole: trade).any? { |c| !Residents.deceased?(c) }
       end
 
       def self.adoptable_keeper(location, trade)

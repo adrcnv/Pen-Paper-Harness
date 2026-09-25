@@ -26,10 +26,13 @@ module Harness
       keyword_init: true
     ) do
       # The disposition ladder — each NPC's standing temperature toward the
-      # player, scene-scoped. Descriptive context ONLY, never a trigger. The
-      # post-emit reevaluation moves it at most one step per turn; internal
-      # state (the mood flavor line) rides beside it — the taking-stock pass
-      # refreshes both.
+      # player. Scene state for the turn, written through to the NPC's row
+      # (properties.stance) on every move and read back from it when a scene
+      # opens: until 2026-09-24 the ladder lived and died with the scene, so an
+      # NPC robbed at noon was neutral again at dusk. Descriptive context ONLY,
+      # never a trigger. The post-emit reevaluation moves it at most one step
+      # per turn; internal state (the mood flavor line) rides beside it — the
+      # taking-stock pass refreshes both.
       DISPOSITIONS = %w[hostile guarded neutral warm trusting].freeze
 
       # Has this character already taken a speaking turn in THIS scene? Once
@@ -41,15 +44,18 @@ module Harness
       end
 
       def disposition_for(character_id)
-        (dispositions || {})[character_id] || "neutral"
+        return "neutral" unless character_id
+        self.dispositions ||= {}
+        dispositions[character_id] ||= stance_on_row(character_id) || "neutral"
       end
 
       # One ladder step, clamped at the ends. direction: "warmer" | "colder".
       def shift_disposition!(character_id, direction)
         idx = DISPOSITIONS.index(disposition_for(character_id)) || 2
         idx += (direction == "warmer" ? 1 : -1)
-        self.dispositions ||= {}
         dispositions[character_id] = DISPOSITIONS[idx.clamp(0, DISPOSITIONS.size - 1)]
+        persist_stance!(character_id, dispositions[character_id])
+        dispositions[character_id]
       end
 
       # A jump, not a step — for acts that end the ladder (a theft in plain sight).
@@ -57,6 +63,22 @@ module Harness
         return unless DISPOSITIONS.include?(value)
         self.dispositions ||= {}
         dispositions[character_id] = value
+        persist_stance!(character_id, value)
+        value
+      end
+
+      # The standing rung on the NPC's row, or nil for no row / none written.
+      def stance_on_row(character_id)
+        npc = ::Npc.find_by(id: character_id)
+        st  = npc && npc.properties.is_a?(::Hash) ? npc.properties["stance"] : nil
+        DISPOSITIONS.include?(st) ? st : nil
+      end
+
+      def persist_stance!(character_id, value)
+        npc = ::Npc.find_by(id: character_id)
+        return unless npc
+        props = npc.properties.is_a?(::Hash) ? npc.properties : {}
+        npc.update!(properties: props.merge("stance" => value))
       end
 
       def update_state!(character_id, mood_line)
@@ -184,11 +206,10 @@ module Harness
         snapshot&.present_items || []
       end
 
-      # Ambient nameless figures painted into the scene at entry — pure
-      # narration flavor. Array of one-line descriptions. No ids; cannot be
-      # commit targets. If the player engages an extra consequentially, a
-      # runner calls propose_character to materialize them as a real
-      # Npc row (the description carries forward via the connection arg).
+      # Ambient life painted into the scene at entry — pure narration
+      # flavor: a dog under the table, gulls, smoke. Array of one-line
+      # descriptions. No ids, never a person, never a speaker or a target
+      # (ruling 2026-09-25).
       def present_extras
         extras || []
       end
@@ -197,12 +218,7 @@ module Harness
       # earlier in the turn — the query_scene hash a runner polls from, the
       # indices it captured — must stay internally consistent while the Active
       # moves on with a fresh array. An in-place delete shifted the extras
-      # under the conversation runner mid-turn: the second promoted speaker
-      # got the wrong figure's description and row (the Reeds, run 2).
-      def remove_extra!(desc)
-        self.extras = present_extras - [ desc ]
-      end
-
+      # under the conversation runner mid-turn (the Reeds, run 2).
       def remove_present!(character_id)
         return unless snapshot
         snapshot.present_characters = present_characters.reject { |c| c.id == character_id }

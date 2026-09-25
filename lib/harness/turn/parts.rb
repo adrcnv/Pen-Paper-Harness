@@ -73,7 +73,9 @@ module Harness
       def render_call(tc, context, scene)
         result = tc["result"]
         args   = tc["args"] || {}
-        return nil if result.is_a?(Hash) && result["error"]
+        # A barred door is a refusal with a reason the player should read;
+        # every other tool error renders nothing.
+        return nil if result.is_a?(Hash) && result["error"] && result["refused"] != "closed"
 
         case tc["name"]
         when "resolve"          then bracket(tc)
@@ -82,7 +84,7 @@ module Harness
         when "propose_event"    then event_part(args, result)
         when "display_fragment" then fragment_part(args)
         when "display_perception" then perception_part(args)
-        when "transition"       then arrival_card(result, context, scene)
+        when "transition"       then result["refused"] == "closed" ? line(sentence(result["error"].to_s.sub(/\A./, &:upcase))) : arrival_card(result, context, scene)
         when "travel"           then travel_line(result)
         when "pickup"           then pickup_line(result)
         when "drop"             then line("You set down the #{result['item_name']}.")
@@ -103,6 +105,9 @@ module Harness
         when "start_combat"     then line("⚔ The fight begins.")
         when "harm"             then line("You take #{result['damage']} damage: #{args['what']}.")
         when "npc_leave"        then line("#{args['name']} leaves for #{args['to']}.")
+        when "hands_refused"    then line(result["line"])
+        when "errand_kept"      then line("#{char_name(args['debtor_id'])} keeps the bargain — #{sentence(args['terms'])}#{" #{args['brought']} is on the way." if args['brought']}")
+        when "errand_broken"    then line("#{char_name(args['debtor_id'])} cannot make good on it — #{sentence(args['terms'])}")
         when "conversation_silence" then { kind: :stock, text: (result.is_a?(Hash) && result["nobody_here"]) ? "No one here answers." : SILENCE_LINE }
         when "meta"             then { kind: :stock, text: "(The moment passes.)" }
         end
@@ -241,6 +246,9 @@ module Harness
       # A place now exists that the player did NOT walk into: they became
       # aware of it. Its authored description is worldbuilding's own prose.
       def discovery_line(args, result, context)
+        # The person door writes its own sentence — who holds the office and
+        # where they are, or that the town has none.
+        return line(result["line"]) if result.is_a?(Hash) && result["line"].present?
         if result.is_a?(Hash) && result["status"] == "refused"
           return line("Nothing of the kind in #{result['settlement'].presence || 'these parts'}.")
         end
@@ -322,6 +330,11 @@ module Harness
 
       def line(text)
         { kind: :line, text: text }
+      end
+
+      def sentence(text)
+        t = text.to_s.strip
+        t.end_with?(".", "!", "?") ? t : "#{t}."
       end
 
       def player_id

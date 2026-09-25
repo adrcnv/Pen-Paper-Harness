@@ -1,0 +1,11 @@
+--- DEED: BIND ---
+A bargain was struck aloud, and INPUT.you owes the player one side of it: INPUT.owed. You say what that side is owed in, for a tabletop-RPG engine. INPUT.carries is what you have on you now, by id. Answer as STRICT JSON. Nothing else.
+
+Say first what the player has out of it once it is done:
+- thing: an object in their hands — brought, made, fetched, lent or handed over. Give its id when it is one of INPUT.carries; else null, and its kind: weapons, armor, jewelry, magical, provisions (food and drink), goods (anything else made, grown or written).
+- person: someone brought, sent or fetched to them. Give the name as spoken.
+- work: neither — labour done for them, a word put in, a place shown, a thing told, a bed kept, a meeting.
+"label" is the thing or person in a few words, as spoken; null for work.
+
+Output:
+{ "reasoning": "<what is owed, in ten words>", "is": "thing"|"person"|"work", "item_id": <a carries id>|null, "label": "<the thing or person>"|null, "kind": "weapons"|"armor"|"jewelry"|"magical"|"provisions"|"goods"|null }

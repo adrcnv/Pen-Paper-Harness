@@ -13,6 +13,9 @@ module Harness
     #   1. follower        — wherever the player is
     #   2. due meet        — an open `meet` obligation in its due window, at
     #                        the meeting place (the certainty draw)
+    #   2b. kept errand    — a `kept` deed or coins owed to the player:
+    #                        wherever the player is in the debtor's own
+    #                        settlement, until the hand-over settles it
     #   3. open post       — anchor is a venue and VenueHours says open
     #                        (Routine.post_venue; the keeper is at her bar)
     #   4. live pin        — transient stay written by the draws or a
@@ -49,6 +52,10 @@ module Harness
 
         if (meet_loc = due_meet_location_id(npc, game_time))
           return meet_loc
+        end
+
+        if (errand_loc = kept_errand_location_id(npc))
+          return errand_loc
         end
 
         post = Routine.post_venue(npc)
@@ -218,6 +225,7 @@ module Harness
         end
         if (player = ::Player.first) && player.location_id == location.id
           add.call(living_scope.prop_eq("following_player", true).to_a)
+          add.call(living_scope.where(id: ::Obligation.where(status: "kept", creditor_id: player.id).select(:debtor_id)).to_a)
         end
         ids.values.reject { |c| Residents.dormant?(c) || Residents.deceased?(c) }
       end
@@ -236,6 +244,23 @@ module Harness
         ::Obligation.open_now.where(kind: "meet").involving(npc.id)
           .where(due_time: window).where.not(location_id: nil)
           .order(:due_time).limit(1).pick(:location_id)
+      rescue ::StandardError
+        nil
+      end
+
+      # A kept errand brings the debtor to the player: wherever the player is
+      # within the settlement the debtor lives in OR stands in now (a visitor
+      # who promised at the wayside cartwright's is there to keep it, deeds-4
+      # t48), until Errands.deliver! settles the row at the first shared
+      # scene. Another town is too far to chase.
+      def kept_errand_location_id(npc)
+        player = ::Player.first
+        return nil unless player&.location_id
+        return nil unless ::Obligation.where(status: "kept", debtor_id: npc.id, creditor_id: player.id).exists?
+        here  = ::Location.find_by(id: player.location_id)
+        roots = [ npc.home_location, npc.location ].compact.map { |l| settlement_root_id(l) }
+        return nil unless here && roots.include?(settlement_root_id(here))
+        here.id
       rescue ::StandardError
         nil
       end

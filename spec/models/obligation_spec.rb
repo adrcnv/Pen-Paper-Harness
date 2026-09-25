@@ -55,6 +55,19 @@ RSpec.describe Obligation do
       expect(described_class.parse_due("a day from now", now)).to eq(now + 1440)
     end
 
+    it "parses the wordings the terms judge actually writes: phase-first tomorrow, a day count at a phase, before dark, this afternoon" do
+      expect(described_class.parse_due("Midday tomorrow", now)).to eq(71 * 1440 + 720)
+      expect(described_class.parse_due("by dusk tomorrow", now)).to eq(71 * 1440 + 1020)
+      expect(described_class.parse_due("two days from now at dusk", now)).to eq(72 * 1440 + 1020)
+      expect(described_class.parse_due("in two days", now)).to eq(now + 2 * 1440)
+      expect(described_class.parse_due("before dark", now)).to eq(70 * 1440 + 1320)
+      expect(described_class.parse_due("by dusk today", now)).to eq(70 * 1440 + 1020)
+      expect(described_class.parse_due("this afternoon", now)).to eq(70 * 1440 + 840)
+      expect(described_class.parse_due("dawn on the third day", now)).to eq(72 * 1440 + 360)
+      expect(described_class.parse_due("the third day at dawn", now)).to eq(72 * 1440 + 360)
+      expect(described_class.parse_due("the next day", now)).to eq(71 * 1440 + 720)
+    end
+
     it "returns nil for condition-dues, blanks, and bare units" do
       expect(described_class.parse_due("after the barge is loaded", now)).to be_nil
       expect(described_class.parse_due("hour", now)).to be_nil
@@ -124,6 +137,61 @@ RSpec.describe Obligation do
       ob = described_class.create!(debtor: player, creditor: wenriel, kind: "meet",
                                    terms: "Help unload", due: "tomorrow dawn", due_time: 1800)
       expect(ob.line_for(player.id)).to eq("You owe Wenriel — Help unload — due: tomorrow dawn")
+    end
+  end
+
+  it "shows a kept errand's resolve to the debtor's own seat only, and a broken one as never made good from either seat" do
+    kept = described_class.create!(debtor: wenriel, creditor: player, kind: "deed", terms: "Bring the axe", status: "kept")
+    expect(kept.line_for(wenriel.id, name: "Wenriel")).to eq("Wenriel owes Gu — Bring the axe — KEPT — will make good when it falls due")
+    expect(kept.line_for(player.id)).to eq("Wenriel owes you — Bring the axe")   # the player's sheet does not leak the roll
+    broken = described_class.create!(debtor: wenriel, creditor: player, kind: "coins", amount: 2, terms: "Two coins", status: "broken")
+    expect(broken.line_for(player.id)).to eq("Wenriel owes you 2 coins — Two coins — BROKEN — Wenriel never made good")
+    expect(broken.line_for(wenriel.id)).to eq("You owe Gu 2 coins — Two coins — BROKEN — you never made good")
+  end
+
+  describe ".sweep_dues! (errands owed to the player resolve at due)" do
+    let(:now) { 10_000 }
+    # A roll of .5: neutral (.7) keeps, guarded (.4) does not.
+    before { allow(described_class).to receive(:keep_roll).and_return(0.5) }
+
+    it "keeps an errand once its due window opens, from the debtor's standing; kept stays outstanding but not open" do
+      deed = described_class.create!(debtor: wenriel, creditor: player, kind: "deed", terms: "Bring the axe", due_time: now + 60)
+      described_class.sweep_dues!(now)
+      expect(deed.reload.status).to eq("kept")
+      expect(described_class.outstanding).to include(deed)
+      expect(described_class.open_now).not_to include(deed)
+    end
+
+    it "leaves a failed roll open through the grace, then breaks it" do
+      wenriel.update!(properties: { "stance" => "guarded" })
+      deed = described_class.create!(debtor: wenriel, creditor: player, kind: "deed", terms: "Bring the axe", due_time: now - 100)
+      described_class.sweep_dues!(now)
+      expect(deed.reload.status).to eq("open")
+      described_class.sweep_dues!(now + 300)
+      expect(deed.reload.status).to eq("broken")
+    end
+
+    it "salts the roll with the terms, never a bare id (ids repeat from one world to the next)" do
+      deed = described_class.create!(debtor: wenriel, creditor: player, kind: "deed", terms: "Bring the axe", due_time: now)
+      expect(described_class).to receive(:keep_roll).with("#{deed.id}:Bring the axe").and_call_original
+      deed.keeps?
+    end
+
+    it "a warmer standing keeps what a colder one would not — the same roll, a moved threshold" do
+      wenriel.update!(properties: { "stance" => "guarded" })
+      deed = described_class.create!(debtor: wenriel, creditor: player, kind: "deed", terms: "Bring the axe", due_time: now)
+      expect(deed.keeps?).to be(false)
+      wenriel.update!(properties: { "stance" => "trusting" })
+      expect(deed.reload.keeps?).to be(true)
+    end
+
+    it "touches neither the player's own debts, a condition-due, an unfixed coin sum, nor a window not yet open" do
+      mine    = described_class.create!(debtor: player, creditor: wenriel, kind: "deed", terms: "Haul the grain", due_time: now - 1000)
+      someday = described_class.create!(debtor: wenriel, creditor: player, kind: "deed", terms: "After the barge is loaded")
+      unfixed = described_class.create!(debtor: wenriel, creditor: player, kind: "coins", terms: "A share", due_time: now - 1000)
+      not_yet = described_class.create!(debtor: wenriel, creditor: player, kind: "coins", amount: 2, terms: "Two coins", due_time: now + 500)
+      described_class.sweep_dues!(now)
+      expect([ mine, someday, unfixed, not_yet ].map { |o| o.reload.status }).to all(eq("open"))
     end
   end
 end

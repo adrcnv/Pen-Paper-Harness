@@ -59,6 +59,7 @@ by_size:
   - key: garrison
     subrole: guard
     min_size: town
+    crew: true    # worked by many, held by no one — a second guard is no twin
     names: [ "the Watch-House", "the Garrison", "the Guardpost" ]
     description: "Where the settlement keeps its armed men — a rack of spears, a duty roster, a cell or two."
   - key: moot_hall
@@ -95,13 +96,13 @@ by_basis:
     - { key: warehouse,   subrole: factor,     min_size: village, names: [ "the Warehouse", "the Goods Store" ], description: "A riverside store where cargo waits between barge and buyer." }
   farming:
     - { key: granary, subrole: granger, min_size: hamlet,  names: [ "the Granary", "the Grain Store" ], description: "A raised timber granary keeping the harvest dry and out of the rats' reach." }
-    - { key: mill,    subrole: miller,  min_size: village, names: [ "the Mill", "the Watermill", "the Windmill" ], description: "A grinding mill where the district brings its grain and leaves a share for the milling." }
+    - { key: mill,    subrole: miller, asked_after: true,  min_size: village, names: [ "the Mill", "the Watermill", "the Windmill" ], description: "A grinding mill where the district brings its grain and leaves a share for the milling." }
   milling:
-    - { key: mill,         subrole: miller, min_size: hamlet,  names: [ "the Mill", "the Great Mill" ], description: "A heavy grinding mill, the wheel turning day-long when there's grain to crush." }
+    - { key: mill,         subrole: miller, asked_after: true, min_size: hamlet,  names: [ "the Mill", "the Great Mill" ], description: "A heavy grinding mill, the wheel turning day-long when there's grain to crush." }
     - { key: grain_store,  subrole: factor, min_size: village, names: [ "the Grain Store", "the Flour Loft" ], description: "Sacked flour and grain stacked to the rafters, dusty and white-coated." }
   herding:
     - { key: stockyard, subrole: drover, min_size: hamlet,  names: [ "the Stockyard", "the Beast Market", "the Pens" ], description: "Muddy pens and rails where livestock is held, traded, and driven through." }
-    - { key: tannery,   subrole: tanner, min_size: village, names: [ "the Tannery", "the Curing Sheds" ], description: "A reeking yard of lime pits and stretched hides — downwind of everything, by custom." }
+    - { key: tannery,   subrole: tanner, asked_after: true, min_size: village, names: [ "the Tannery", "the Curing Sheds" ], description: "A reeking yard of lime pits and stretched hides — downwind of everything, by custom." }
   market:
     - { key: market_row, subrole: trader, min_size: hamlet, names: [ "the Trade Row", "the Merchants' Row" ], description: "A run of permanent shopfronts and counting-tables — the settlement lives on what passes through." }
     - { key: weighhouse, subrole: clerk,  min_size: town,   names: [ "the Weigh-House", "the Exchange" ], description: "Public scales and a clerk's ledger where bulk goods are weighed and deals are witnessed." }

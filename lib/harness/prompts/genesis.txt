@@ -20,6 +20,7 @@ CONSISTENCY RULES
 - Every entry in `characters` becomes a REAL DORMANT CHARACTER ROW in the world (the system materializes a full character — stats, level, abilities, lens — at commit time, marked dormant so they don't crowd the scene immediately). The engine names them mechanically; the player discovers their real names by going forward (the engine can wake them when populating a scene at this city). Keep counts modest — 1-3 entries in `characters` per cluster typically.
 - Do NOT include unnamed groups ("the shepherds", "unnamed travelers") in `characters` — put those in the narrative prose only.
 - The location does NOT yet have a row when you generate; refer to it by NAME only, not by id.
+- The only places named are this one and anchor_name; anywhere else is said by its relation to it — upriver, down the coast, the next town, the road inland. The map holds the names.
 - Time window: events should be in the past (game_time < CURRENT_GAME_TIME). Soft floor: no earlier than CURRENT_GAME_TIME - 200000 (which is roughly 200 in-game years at a thousand minutes per year). If a parent kingdom or anchor city has events, prefer staying within their lifespan.
 
 OPTIONAL SCENARIO DIRECTIVE

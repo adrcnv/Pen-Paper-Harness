@@ -35,20 +35,18 @@ Give EVERY present character a one-line AGENDA: their own active want or frictio
 Every agenda names what the character is getting out of it; a line that would fit a hotel front desk isn't an agenda yet. One short line, the character by FIRST name only. Omit ONLY followers (properties.following_player == true). Ground debts, relatives, and history in recent_events. The agenda is the standing want; a SEPARATE step decides if and when they act on it.
 A character's `obligations` (open deals — money owed, work promised, a meeting due) OUTRANK idle wants: an unpaid debt or an awaited payment is the agenda unless something in recent_events burns hotter.
 
-EXTRAS — ambient nameless figures
-You ALSO produce 0–4 short descriptions of ambient nameless presences in the scene — background figures the narration may mention but who are NOT named characters. Examples: "an old fisherman nursing a beer at the corner table", "a young woman knitting by the fire", "two men playing dice in the back". These are pure scene flavor.
+EXTRAS — the room's life that is not a person
+You ALSO produce 0–4 short descriptions of ambient presences the narration may mention: animals and beasts of burden, things in motion, weather, sound, smell — "a dog asleep under the corner table", "an ox shifting at the rail", "smoke lying low over the pits", "gulls working the gutted fish". Every PERSON here is already a character in INPUT.characters; the background holds no people. These are pure scene flavor.
 
 WHEN to add extras (use judgment):
-- Busy or social locations (taverns, markets, common rooms) — 1–2 extras lend life.
-- Quiet or single-occupant locations (a private study, a craftsman's workshop with one master) — 0 extras. Don't pad.
-- Wilderness or empty places — 0 extras unless the location description explicitly suggests passersby.
-- PLACE WITH NO NAMED CHARACTERS YET (INPUT.characters is empty): emit the figures the place plainly holds — first the people its description already paints, then the occupants a place of its kind keeps (a market's stallholders, a common room's drinkers). A lone hut holds one; a clearing may hold none. The engine materializes one into a real character if the player engages them consequentially.
+- Busy or working places (a market, a forge, a jetty, a stable) — 1–2 lend life.
+- Quiet interiors (a private study) — 0. Don't pad.
+- Wilderness — what lives there, if anything.
 
 CONSTRAINTS on extras:
 - Each is a single sentence, 10–200 characters.
-- Each describes a TYPE + a small specific detail (the fisherman is "nursing a beer", the woman is "knitting by the fire"). Not just "a man" — give a fingerprint.
-- NEVER include a name. They're nameless by definition. If the player engages one consequentially, the engine promotes them to a real character later.
-- DO NOT duplicate present characters. The barkeep is already a real character; do not also add "a barkeep wiping mugs" as an extra.
+- Each describes a TYPE + a small specific detail (the dog is "asleep under the corner table", the ox is "shifting at the rail"). Not just "a dog" — give a fingerprint.
+- Never a person, never a name.
 - DO NOT seed plot. An extra is texture, not bait.
 
 INPUT format
@@ -70,8 +68,8 @@ OUTPUT format (agendas and doing keyed by character name, one per present charac
     "Person B": "<the same for Person B, drawn from a different dimension>"
   },
   "extras": [
-    "an old fisherman at the corner table, nursing the same beer for an hour",
-    "a young courier woman finishing a meal, satchel still slung across her chest"
+    "a dog asleep under the corner table, one ear twitching",
+    "gulls working the gutted fish by the sorting crates"
   ],
   "agendas": {
     "Person A": "<one short line: what Person A is after right now, rooted in their own business, grounded in their data — do NOT copy this wording>",

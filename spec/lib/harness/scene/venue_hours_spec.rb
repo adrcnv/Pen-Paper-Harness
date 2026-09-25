@@ -10,13 +10,13 @@ RSpec.describe Harness::Scene::VenueHours do
       expect(described_class.kind(loc("the Public House"))).to eq("tavern")
       expect(described_class.kind(loc("the Mill"))).to eq("trade")
       expect(described_class.kind(loc("the Mending Shed"))).to eq("trade")
-      expect(described_class.kind(loc("the Docks"))).to eq("trade")
+      expect(described_class.kind(loc("the Docks"))).to eq("post")
       expect(described_class.kind(loc("Dockside Inn"))).to eq("inn")
       expect(described_class.kind(loc("Wayside Shrine"))).to eq("shrine")
     end
 
     it "matches whole words only (the Landing is a dock, not an inn)" do
-      expect(described_class.kind(loc("the Landing"))).to eq("trade")
+      expect(described_class.kind(loc("the Landing"))).to eq("post")
       expect(described_class.kind(loc("the Spinnery"))).to be_nil
     end
 
@@ -82,6 +82,25 @@ RSpec.describe Harness::Scene::VenueHours do
       expect(described_class.kind(forge)).to eq("trade")
       hut = Location.create!(name: "a turf hut", description: "A low hut of turf and driftwood. Its owner drinks at the tavern most nights.")
       expect(described_class.kind(hut)).to be_nil
+    end
+  end
+
+  describe "posts (a trade room without a venue word, open ground with a keeper)" do
+    def room(name, trade: nil) = Location.new(name: name, parent_id: 1, properties: { "trade" => trade }.compact)
+
+    it "classifies a manifest room by its trade when no keyword fits, and open ground by keyword" do
+      expect(described_class.kind(room("the Town Hall", trade: "reeve"))).to eq("post")
+      expect(described_class.kind(room("the Fishing Jetty", trade: "fisher"))).to eq("post")
+      expect(described_class.kind(room("the Market Square", trade: "trader"))).to eq("post")
+      expect(described_class.kind(room("the Back Room"))).to be_nil
+    end
+
+    it "is worked by day and never barred" do
+      hall = room("the Town Hall", trade: "reeve")
+      expect(described_class.open?(hall, :day)).to be(true)
+      expect(described_class.open?(hall, :night)).to be(false)
+      expect(described_class.barred?(hall, :night)).to be(false)
+      expect(described_class.barred?(room("the Landing"), :evening)).to be(false)
     end
   end
 end

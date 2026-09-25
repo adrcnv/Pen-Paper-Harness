@@ -51,6 +51,26 @@ module Harness
         end
       end
 
+      # What the engine did, refused and answered this turn, for a judge
+      # reading from a CHARACTER's seat: the receipts as the player saw them
+      # (they name both parties), a refusal of the player's hands as a
+      # third-person fact (the player's own line — "you keep your coin" —
+      # read from the smith's seat as the smith keeping it, deeds-3 t5), a
+      # barred door's reason, the asks route's own line, and the other
+      # runners' null lines as before.
+      def engine_this_turn(context, tcs)
+        calls = Array(context.turn_transcript&.tool_calls) + Array(tcs)
+        receipts_this_turn(context, tcs) +
+          calls.filter_map { |tc|
+            case tc["name"]
+            when "hands_refused"    then tc.dig("result", "fact").presence
+            when "transition"       then ::Harness::Turn::Parts.render_call(tc, context, nil)&.dig(:text) if tc.dig("result", "refused") == "closed"
+            when "resolve_location" then tc.dig("result", "line").presence
+            end
+          } +
+          Array(context.turn_transcript&.null_lines)
+      end
+
       def resolver_for(context)
         ::Harness::Resolver.new(context: context, tools: ::Harness::Resolver::DEFAULT_TOOLS, logger: @logger)
       end
@@ -87,9 +107,8 @@ module Harness
       # A capped runaway is a three-second miss instead.
       JUDGE_MAX_TOKENS = 384
 
-      # How each of these characters looks, by id — the painted words first
-      # (a figure just given a name is still "the old woman" to the player),
-      # else the appearance the materializer wrote.
+      # How each of these characters looks, by id — the appearance the
+      # materializer wrote.
       def looks_for(ids)
         ::Npc.where(id: ids).index_by(&:id).transform_values do |n|
           pr = n.properties
@@ -165,89 +184,6 @@ module Harness
         end
       end
 
-      # Promote an ambient `extra` (a `present_extras` description string) into a
-      # real Npc so a runner can target it. The weak model cannot act on a
-      # nameless figure — `present_characters` is the only thing a structured-
-      # emit runner can address — so when the player interacts with an
-      # extra consequentially (heals it, hits it, speaks to it), the runner
-      # names the extra by its INDEX and we materialize it here: mechanical
-      # name, runner-supplied subrole, the original description carried as
-      # `physical`. propose_character's `from_extra` removes the extra from the
-      # scene so it doesn't double-render. We then refresh the scene snapshot
-      # (pure SQL) so the new NPC appears in present_characters when rendering
-      # THIS turn — otherwise it reads from the assembly-time snapshot and the
-      # promoted figure would be invisible again.
-      #
-      # `cache` memoizes index→id so a figure referenced twice in one turn
-      # (healed AND spoken to) promotes exactly once. Returns the new id or nil.
-      # THE PROMOTION JUDGE: who a painted figure is, judged once from its
-      # description when the player engages it — the trade (the vocations
-      # alphabet, commoner when none is named) and the gender the words
-      # paint. Replaces the voicing's `subrole` emit and the gendered-word
-      # lists (2026-09-16): "an old woman sorting mushrooms" is named as a
-      # woman, and a promoted extra with a trade lays a table.
-      PROMOTION_PATH = Rails.root.join("lib/harness/prompts/promotion.txt")
-      def promotion_schema
-        @promotion_schema ||= {
-          "type" => "object",
-          "properties" => {
-            "reasoning" => { "type" => "string" },
-            "trade"     => { "type" => "string", "enum" => ::Harness::Vocations.all + %w[commoner] },
-            "gender"    => { "type" => "string", "enum" => %w[male female unknown] }
-          },
-          "required" => %w[reasoning trade gender],
-          "additionalProperties" => false
-        }.freeze
-      end
-
-      def judge_figure(context, desc)
-        payload = { "looks" => desc, "trades" => ::Harness::Vocations.all + %w[commoner] }
-        raw = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
-          llm(context).complete(system: (@promotion_prompt ||= File.read(PROMOTION_PATH)), user: "INPUT:\n#{JSON.pretty_generate(payload)}",
-                                schema: promotion_schema, max_tokens: JUDGE_MAX_TOKENS, temperature: 0, thinking: false)
-        end
-        out = parse_emit(raw)
-        return nil unless out.is_a?(::Hash) && out.key?("trade")
-        @logger.info { "[Runner #{self.name}] figure judged: #{out['trade']}, #{out['gender']} (#{out['reasoning']})" }
-        out
-      rescue StandardError => e
-        @logger.warn { "[Runner #{self.name}] promotion judge failed: #{e.class}: #{e.message}" }
-        nil
-      end
-
-      def promote_extra(resolver, context, scene, index, into:, cache:)
-        return cache[index] if cache.key?(index)
-        desc = Array(scene && scene["present_extras"])[index]
-        return (cache[index] = nil) unless desc.is_a?(String) && desc.strip != ""
-
-        judged = judge_figure(context, desc) || {}
-        trade  = ::Harness::Vocations.all.include?(judged["trade"]) ? judged["trade"] : "commoner"
-        gender = %w[male female].include?(judged["gender"]) ? judged["gender"] : nil
-        # Named as painted: "an old woman sorting mushrooms" is not Vseslav
-        # (items run 8 t26). Nothing gendered in the words → the usual roll.
-        name = ::Harness::Naming.unique_for(location: context.player_location, gender: gender)
-        res, ok = execute_tool(resolver, "propose_character", {
-          "name"       => name,
-          "subrole"    => trade,
-          "connection" => "materialized from an ambient figure the player engaged directly: #{desc}",
-          "properties" => { "physical" => desc },
-          "from_extra" => desc
-        }, into: into)
-
-        id = (ok && res.is_a?(Hash)) ? (res["character_id"] || res["id"]) : nil
-        if id && (npc = ::Npc.find_by(id: id))
-          # The thing painted on the figure comes real with them (Items::Offers).
-          if (ware = ::Harness::Items::Offers.materialize_described!(npc, desc, context.player_location, context.game_time))
-            price = ::Harness::Tools::QueryScene.shop_price(ware, context.player_location)
-            into << tool_call("offer_item", { "seller_id" => npc.id, "item_id" => ware.id },
-                              { "item_id" => ware.id, "item_name" => ware.name, "seller_id" => npc.id, "price" => price })
-          end
-        end
-        if id && (active = context.active_scene)
-          active.snapshot = ::Harness::Scene::Assembler.for(location: context.player_location)
-        end
-        cache[index] = id
-      end
     end
   end
 end

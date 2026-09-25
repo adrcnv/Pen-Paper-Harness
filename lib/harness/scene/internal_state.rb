@@ -2,15 +2,14 @@ module Harness
   module Scene
     # Generates per-character internal-state prose AND ambient extras for a
     # scene in a single LLM call. Pure flavor — keeps NPCs from feeling
-    # like question-answering automata, and paints nameless background
-    # presences into the scene for perception to mention. Conditioned on
+    # like question-answering automata, and paints the room's non-human
+    # life (a dog, gulls, smoke) for perception to mention. Conditioned on
     # each character's subrole, properties, and recent events.
     #
     # Single batched LLM call per scene (one prompt, internal_states +
     # extras both in output). Small-model tier. Cached on Scene::Active and
-    # discarded at scene exit. Extras are RAM-only — no DB row, cannot be
-    # commit targets; if the player engages one consequentially a runner
-    # calls propose_character(from_extra:).
+    # discarded at scene exit. Extras are RAM-only — no DB row, never a
+    # person, never a speaker or a target (ruling 2026-09-25).
     #
     # Player rows are excluded — internal state is for NPCs.
     class InternalState
@@ -31,14 +30,10 @@ module Harness
       def generate(location:, characters:)
         npcs = characters.select { |c| c.is_a?(::Npc) }
 
-        # Empty-NPCs case is NOT a skip anymore. A city's market, an inn's
-        # common room, a busy street — these are populated places even when no
-        # named character row lives at this exact location_id. The prompt
-        # produces extras-only output (ambient nameless figures) so narration
-        # has scene flavor to render. Player engagement promotes via
-        # propose_character(from_extra: ...). Genuinely empty places (a
-        # private study, a wilderness clearing) get back an empty extras list
-        # via the prompt's own judgment.
+        # Empty-NPCs case is NOT a skip: the prompt produces extras-only
+        # output (the place's ambient life) so narration has scene flavor to
+        # render. Genuinely empty places (a private study) get back an empty
+        # extras list via the prompt's own judgment.
         ::Harness::CostTracker.in_subsystem(:scene_internal_state) do
           generate_inner(location, npcs)
         end

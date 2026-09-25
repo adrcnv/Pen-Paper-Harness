@@ -35,7 +35,6 @@ module Harness
       Tools::Travel,
       Tools::PassTime,
       Tools::ProposeEvent,
-      Tools::ProposeCharacter,
       Tools::ProposeFaction,
       Tools::ProposeItem,
       Tools::ProposeLocation,

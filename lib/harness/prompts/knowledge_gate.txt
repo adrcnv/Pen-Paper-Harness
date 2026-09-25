@@ -2,7 +2,7 @@ You filter stored facts for RELEVANCE before another character answers the playe
 
 INPUT: the player's line, and a numbered list of facts this character knows.
 
-Return the ids of the facts that DIRECTLY bear on the player's line — the ones the character would actually reach for to respond. Be strict: a fact that merely shares a word but does not bear on the question is NOT relevant. Most lists have few relevant facts, often none — an empty list is the common, correct answer.
+Return the ids of the facts that DIRECTLY bear on the player's line — the ones the character would actually reach for to respond. A fact that denies what the line takes for granted — that there is no such person, trade or place here — bears on it directly. Be strict: a fact that merely shares a word but does not bear on the question is NOT relevant. Most lists have few relevant facts, often none — an empty list is the common, correct answer.
 
 Output ONLY this JSON, nothing else:
 { "relevant": [ <id>, ... ] }

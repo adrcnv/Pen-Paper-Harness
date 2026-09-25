@@ -41,13 +41,6 @@ module Harness
           for_category(category).find { |e| e["kind_pool"].any? { |k| (k.to_s.downcase.split & words).any? } }
         end
 
-        # The kind inside a template that the text names ("wheel of cheese"
-        # for "…a wheel of cheese on his knee"), or nil.
-        def kind_matching(template, text)
-          words = text.to_s.downcase.scan(/[a-z]+/).select { |w| w.length > 3 }
-          Array(template && template["kind_pool"]).find { |k| (k.to_s.downcase.split & words).any? }
-        end
-
         # Weighted random pick from a category. Returns nil if the category
         # is empty (e.g., no magical items added yet).
         def weighted_pick(category, rng: Random.new)

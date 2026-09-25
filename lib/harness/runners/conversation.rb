@@ -61,11 +61,10 @@ module Harness
 
       def run(context:, scene:, input:, step:)
         present = Array(scene["present_characters"])
-        extras  = Array(scene["present_extras"])
         # An empty room is an honest silence, not a stale plan: re-planned, the
         # same words drew the same talk step, the cap was spent and the wait
         # behind it never ran (hands run 8 t19, the Granary after Yngvar left).
-        if present.empty? && extras.empty?
+        if present.empty?
           @logger.info { "[Runner conversation] no one here at all — silence" }
           return Outcome.new(tool_calls: [ tool_call("conversation_silence", {}, { "nobody_spoke" => true, "nobody_here" => true }) ], scene_dirty: false, status: :ok)
         end
@@ -76,25 +75,15 @@ module Harness
         resolver = resolver_for(context)
         active   = context.active_scene
         tcs      = []
-        promo    = {}
         thread   = conversation_thread(context)
         roster   = present.map { |c| { "name" => c["name"], "subrole" => c["subrole"] } }
         nearby   = nearby_places(context)
         wares    = wares_here(context)
-        step     = addressed_step(context, input, step, present, extras, thread)
+        step     = addressed_step(context, input, step, present, thread)
         # The contest, judged before anyone is voiced: kind and party, the
         # binding, the target's consent, then the dice or a standing verdict
         # re-served (open_contest). nil is plain talk.
-        # A painted figure has no id until it speaks: a contest cannot bind
-        # it, and the kind judge picked a named bystander instead (run 7
-        # t17: "No wager — Mara won't play" while the traveler declined).
-        # The figure answers in words; press again once it has a name.
-        contest = if step.args["figure"].is_a?(::Integer)
-                    @logger.info { "[Runner conversation] the words are for a painted figure — no contest this turn" }
-                    nil
-                  else
-                    open_contest(context, input, player, present, active, resolver, tcs, addressed_id: step.args["with_id"])
-                  end
+        contest  = open_contest(context, input, player, present, active, resolver, tcs, addressed_id: step.args["with_id"])
 
         spoken     = 0
         parsed_any = false
@@ -105,7 +94,7 @@ module Harness
         # addressed them. The exchange itself is what a character reads; a
         # dim chime-in is a character being dim, not the system (user ruling).
         spoke_ids  = []
-        order = poll_order(present, extras, input, step, active)
+        order = poll_order(present, step, active)
         # Recall is for SPEECH: when the input names someone, un-addressed
         # bystanders skip the recall gate (they keep their raw recent events —
         # a chime-in grounds in the exchange, not deep lore). An open-mic
@@ -113,8 +102,8 @@ module Harness
         # the addressee. Contest targets always recall.
         any_addressed = order.any? { |v| v[:addressed] }
         if order.empty?
-          # Nobody to voice: no named character here and no painted figure
-          # addressed ("approach the bar" in a keeperless tavern, items run 7).
+          # Nobody to voice: no character here ("approach the bar" in a
+          # keeperless tavern, items run 7).
           # An honest silence, not a redispatch — the executor re-planned the
           # same conversation step four times and rendered "emit unparseable".
           @logger.info { "[Runner conversation] no one here to answer — silence" }
@@ -136,7 +125,7 @@ module Harness
                                          frame: verdict_frame(contest, v), recall_gate: recall_gate)
           next unless emit
           parsed_any = true
-          applied = apply_emit(resolver, context, scene, emit, v, player, promo, tcs, input: input, contest: contest)
+          applied = apply_emit(resolver, context, scene, emit, v, player, tcs, input: input, contest: contest)
           # The silent snub: a decliner's visible shift still lands on the
           # scene — no line of theirs carries it, so perception voices it
           # (the doing change reaches the eyes as a shift).
@@ -147,7 +136,7 @@ module Harness
           end
           if applied
             spoken += 1
-            spoke_ids << (v[:kind] == :npc ? v[:char]["id"] : promo[v[:index]])
+            spoke_ids << v[:char]["id"]
             # First speaking turn consumed the seeded mood/agenda; from now on the
             # thread carries this NPC (npc_knowledge drops the frozen self-state).
             active&.mark_spoken!(v[:char]["id"]) if v[:kind] == :npc
@@ -159,7 +148,7 @@ module Harness
         # of the next unnamed line. Replaced whole (scene arrays are never
         # mutated); a silent turn leaves it standing.
         active.last_speakers = spoke_ids.compact if active && spoke_ids.any?
-        run_tails(context, tails, promo, active, tcs)
+        run_tails(context, tails, active, tcs)
 
         return redispatch("conversation emit unparseable", tcs) unless parsed_any
         # Everyone declined (or was suppressed): mark the turn as an explicit
@@ -180,20 +169,36 @@ module Harness
       # (Dunstan reciting Kenric, 2026-09-12). Nothing a later speaker
       # consumes depends on the tail, and the hearer set is the same room
       # either way. The old placement bought a hot llama.cpp prefix for the
-      # judges; the hosted target has no prefix cache. An engaged extra
-      # reflects under the identity apply_emit minted — otherwise the debut
-      # line (usually the very claim the player engaged them for) is an
-      # intake hole.
-      def run_tails(context, tails, promo, active, tcs = nil)
+      # judges; the hosted target has no prefix cache.
+      def run_tails(context, tails, active, tcs = nil)
         tails.each do |t|
           v = t[:v]
-          if v[:kind] == :npc
-            reflect_knowledge(context, v, t[:emit], t[:fed], tool_calls: tcs)
-            reevaluate_state(context, v, t[:emit], active, t[:fed], tcs, contest: t[:contest])
-          elsif (minted = ::Character.find_by(id: promo[v[:index]]))
-            reflect_knowledge(context, { char: { "name" => minted.name } }, t[:emit], t[:fed], tool_calls: tcs)
-          end
+          reflect_knowledge(context, v, t[:emit], t[:fed], tool_calls: tcs)
+          reevaluate_state(context, v, t[:emit], active, t[:fed], tcs, contest: t[:contest])
         end
+      end
+
+      # Poll order: the character the plan ADDRESSED (A1's with_id) goes
+      # FIRST and is marked addressed — so an addressee is always asked before
+      # the two-speaker cap can be filled by chime-ins. Nobody addressed is
+      # the room: whoever spoke last turn is polled first and carries
+      # `addressed` (a follow-up question in an exchange one person was
+      # carrying went unanswered because both present NPCs read "no name" as
+      # "not addressed", 2026-09-12). Painted extras are scenery, never
+      # speakers (ruling 2026-09-25: no person is an extra). This is poll
+      # ORDER, not a speech ruling — each character still self-decides
+      # whether it speaks.
+      def poll_order(present, step, active = nil)
+        with_id = step&.args&.dig("with_id")
+        npcs = present.map { |c| { kind: :npc, char: c } }
+        named, rest = npcs.partition { |v| with_id.is_a?(::Integer) && v[:char]["id"] == with_id }
+        named.each { |v| v[:addressed] = true }
+        if named.empty? && active
+          carry, rest = rest.partition { |v| active.spoke_last?(v[:char]["id"]) }
+          carry.each { |v| v[:continuing] = true }
+          rest = carry + rest
+        end
+        named + rest
       end
 
       CHIME_PROMPT_PATH = Rails.root.join("lib/harness/prompts/chime_in.txt")
@@ -221,7 +226,7 @@ module Harness
         payload = {
           "you"            => you,
           "player_said"    => input,
-          "addressed"      => (addressed && (addressed[:kind] == :npc ? addressed[:char]["name"] : addressed[:desc])),
+          "addressed"      => addressed && addressed[:char]["name"],
           "said_this_turn" => Array(tcs).filter_map { |tc| tc.dig("args", "details") if tc["name"] == "propose_event" && tc.dig("result", "staged") },
           "you_said_last"  => (active&.last_lines || {})[id]
         }.compact
@@ -249,66 +254,32 @@ module Harness
       ADDRESSEE_PROMPT_PATH = Rails.root.join("lib/harness/prompts/addressee.txt")
       ADDRESSEE_SCHEMA = {
         "type" => "object",
-        "properties" => { "reasoning" => { "type" => "string" }, "with_id" => { "type" => %w[integer null] }, "figure" => { "type" => %w[integer null] } },
-        "required" => %w[reasoning with_id figure],
+        "properties" => { "reasoning" => { "type" => "string" }, "with_id" => { "type" => %w[integer null] } },
+        "required" => %w[reasoning with_id],
         "additionalProperties" => false
       }.freeze
       ADDRESSEE_THREAD = 4
 
-      def addressed_step(context, input, step, present, extras, thread)
-        return step if present.size + extras.size < 2
-        # How each one looks rides along: a figure just given a name is still
-        # "grandmother" to the player, and with name and trade alone the judge
+      def addressed_step(context, input, step, present, thread)
+        return step if present.size < 2
+        # How each one looks rides along: with name and trade alone the judge
         # knew whom the words were for and had no id to answer with (run 8 t25).
         looks = looks_for(present.map { |c| c["id"] })
         payload = {
           "player_said" => input,
           "present"     => present.map { |c| { "id" => c["id"], "name" => c["name"], "trade" => c["subrole"], "looks" => looks[c["id"]] }.compact },
-          "figures"     => extras.each_with_index.map { |d, i| { "index" => i, "looks" => d } },
           "exchange"    => thread.last(ADDRESSEE_THREAD)
         }
         out = contest_judge(context, ADDRESSEE_PROMPT_PATH, ADDRESSEE_SCHEMA, payload) or return step
-        with_id, figure = out["with_id"], out["figure"]
-        if (with_id && present.none? { |c| c["id"] == with_id }) || (figure && !extras[figure].is_a?(::String))
-          @logger.warn { "[Runner conversation] addressee judge named no one here (#{out.slice('with_id', 'figure').inspect}) — the plan's binding stands" }
+        with_id = out["with_id"]
+        if with_id && present.none? { |c| c["id"] == with_id }
+          @logger.warn { "[Runner conversation] addressee judge named no one here (#{out.slice('with_id').inspect}) — the plan's binding stands" }
           return step
         end
-        figure = nil if with_id
-        @logger.info { "[Runner conversation] addressee: #{with_id ? "id #{with_id}" : (figure ? "figure #{figure}" : 'the room')} (plan had #{step.args.slice('with_id', 'figure').inspect}) — #{out['reasoning']}" }
-        step.dup.tap { |s| s.args = step.args.except("with_id", "figure").merge({ "with_id" => with_id, "figure" => figure }.compact) }
+        @logger.info { "[Runner conversation] addressee: #{with_id ? "id #{with_id}" : 'the room'} (plan had #{step.args.slice('with_id').inspect}) — #{out['reasoning']}" }
+        step.dup.tap { |s| s.args = step.args.except("with_id").merge({ "with_id" => with_id }.compact) }
       end
 
-      # Poll order: the character the plan ADDRESSED (A1's with_id, or a
-      # painted figure by index) goes FIRST and is marked addressed — so an
-      # addressee is always asked before the two-speaker cap can be filled
-      # by chime-ins. Nobody addressed is the room: whoever spoke last turn
-      # is polled first and carries `addressed` (a follow-up question in an
-      # exchange one person was carrying went unanswered because both
-      # present NPCs read "no name" as "not addressed", 2026-09-12). Extras
-      # are ambient flavour, not filler speakers: one is polled ONLY when the
-      # plan addressed it, never to top up the cap (a whinnying horse once
-      # got minted into a phantom innkeeper), and never beside an addressed
-      # character. This is poll ORDER, not a speech ruling — each character
-      # still self-decides whether it speaks. The first-name / trade-word
-      # match and the description-overlap engagement that did this before
-      # (2026-09-16 and earlier) are gone with A1.
-      def poll_order(present, extras, _input, step, active = nil)
-        with_id = step&.args&.dig("with_id")
-        figure  = step&.args&.dig("figure")
-        npcs = present.map { |c| { kind: :npc, char: c } }
-        named, rest = npcs.partition { |v| with_id.is_a?(::Integer) && v[:char]["id"] == with_id }
-        named.each { |v| v[:addressed] = true }
-        if named.empty? && active
-          carry, rest = rest.partition { |v| active.spoke_last?(v[:char]["id"]) }
-          carry.each { |v| v[:continuing] = true }
-          rest = carry + rest
-        end
-        engaged = []
-        if named.empty? && figure.is_a?(::Integer) && (desc = Array(extras)[figure]).is_a?(::String) && !desc.strip.empty?
-          engaged << { kind: :extra, index: figure, desc: desc, addressed: true }
-        end
-        named + engaged + rest
-      end
 
       # THE CONTEST — judged before anyone is voiced, by three narrow calls,
       # replacing the planner's contest binding and the voicing's `guarded`
@@ -858,9 +829,9 @@ module Harness
         "#{n} #{unit}#{'s' if n > 1} past"
       end
 
-      # Voice ONE character. The call sees this character's own events (or, for
-      # an extra, just its description), the public roster of who else is here,
-      # and the shared thread — never anyone else's events.
+      # Voice ONE character. The call sees this character's own events, the
+      # public roster of who else is here, and the shared thread — never
+      # anyone else's events.
       public
 
       # UNPROMPTED VOICING — the initiative consumer's door into the FULL
@@ -951,7 +922,7 @@ module Harness
           transcript&.record_tool_calls(tcs)
           return nil
         end
-        return nil unless apply_emit(resolver, context, scene, emit, v, player, {}, tcs, input: input)
+        return nil unless apply_emit(resolver, context, scene, emit, v, player, tcs, input: input)
 
         active&.mark_spoken!(npc.id)
         reflect_knowledge(context, v, emit, fed, unprompted: true, tool_calls: tcs)
@@ -963,12 +934,7 @@ module Harness
       private
 
       def voice_one(context, input, step, player, v, roster, thread, nearby, wares, resolver, tcs, active, contest = nil, frame: nil, recall_gate: true)
-        you, fed_events =
-          if v[:kind] == :extra
-            [ { "ambient" => true, "index" => v[:index], "desc" => v[:desc] }, [] ]
-          else
-            npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP, now: context.game_time)
-          end
+        you, fed_events = npc_knowledge(resolver, v[:char], tcs, active, event_cap: EVENT_SUMMARY_CAP, now: context.game_time)
         # The judged addressee is TOLD the words are theirs — the judge's
         # ruling is a fact of the turn, and left to work it out again the
         # voice read "that mace" as the trader's and held its tongue (run 7
@@ -998,7 +964,7 @@ module Harness
           fed = { "events" => (fed_events.first(RECALL_EVENT_FLOOR) + Array(given["events"])).uniq(&:first),
                   "facts"  => Array(given["facts"]) }
         end
-        others = v[:kind] == :npc ? roster.reject { |r| r["name"] == v[:char]["name"] } : roster
+        others = roster.reject { |r| r["name"] == v[:char]["name"] }
         # Key ORDER matters for KV-cache reuse across the turn's per-NPC calls:
         # the invariant block (same player/input/intent/nearby/thread for every
         # speaker this turn) leads, so llama.cpp reuses that prefix; the per-NPC
@@ -1019,7 +985,7 @@ module Harness
         # buy that went through, the coins refused ("You can't afford it").
         # Never shown it, the voice took coins the player did not have and
         # the ledger struck a sale on credit nobody meant (run 7 t5).
-        just_now = receipts_this_turn(context, tcs) + Array(context.turn_transcript&.null_lines)
+        just_now = engine_this_turn(context, tcs)
         invariant["just_now"] = just_now unless just_now.empty?
         user = JSON.pretty_generate(invariant.merge(
           "exchange_so_far" => thread,
@@ -1030,7 +996,7 @@ module Harness
         # The unprompted frame (initiative voicing) rides AFTER the payload so
         # the shared prefix stays cache-identical with normal voicings.
         sent_user = "#{sent_user}\n\n#{frame}" if frame
-        who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
+        who = v[:char]["name"]
         emit = ::Harness::CostTracker.in_subsystem(:runner_conversation) do
           raw = llm(context).complete(system: preamble, user: sent_user, schema: VOICING_SCHEMA, max_tokens: VOICING_MAX_TOKENS)
           e1  = parse_emit(raw)
@@ -1093,24 +1059,21 @@ module Harness
       # caller counts it toward the two-speaker cap). Raw dialogue is STAGED for
       # narration only; the hands and the reflection judges persist on their
       # own consequential paths.
-      def apply_emit(resolver, context, scene, emit, v, player, promo, tcs, input: nil, contest: nil)
+      def apply_emit(resolver, context, scene, emit, v, player, tcs, input: nil, contest: nil)
         dlg     = emit["dialogue"]
         prose   = dlg.is_a?(Hash) ? dlg["prose"].to_s.strip : ""
         engaged = emit["speak"] || prose != ""
         @logger.debug do
-          who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
-          "[Runner conversation] #{who} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
+          "[Runner conversation] #{v[:char]['name']} emit: speak=#{!!emit['speak']} dialogue=#{prose != ''} " \
           "thought=#{emit['thought'].to_s[0, 120].inspect}"
         end
         return false unless engaged
         if emit["speak"] && dlg.is_a?(Hash) && prose == ""
-          who = v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
-          @logger.info { "[Runner conversation] #{who} spoke-empty (in-grammar break-off) — treated as silence" }
+          @logger.info { "[Runner conversation] #{v[:char]['name']} spoke-empty (in-grammar break-off) — treated as silence" }
           return false
         end
 
-        actor_id = actor_id_for(v, emit, resolver, context, scene, promo, tcs)
-        return false unless actor_id
+        actor_id = v[:char]["id"]
 
         # PARROT GAUGE (log only): a line that reproduces one already staged
         # this scene is logged, never suppressed. The suppressor this used to
@@ -1184,14 +1147,6 @@ module Harness
       def shared_run?(a, b, run)
         return false if a.length < run || b.length < run
         (0..(a.length - run)).any? { |i| b.include?(a[i, run]) }
-      end
-
-      # The speaker's character_id: a real NPC carries its own id; an ambient
-      # extra is materialized on first engagement (mechanical name, emit-supplied
-      # subrole, description carried forward) via the shared promote path.
-      def actor_id_for(v, emit, resolver, context, scene, promo, tcs)
-        return v[:char]["id"] if v[:kind] == :npc
-        promote_extra(resolver, context, scene, v[:index], into: tcs, cache: promo)
       end
 
       # Prefetch what THIS character could plausibly know (Ruby/SQL, no LLM) AND
@@ -1430,7 +1385,7 @@ module Harness
       # would hesitate to share. actor is always the player; target is this
       # character.
       def who_for(v)
-        v[:kind] == :npc ? v[:char]["name"] : "extra##{v[:index]}"
+        v[:char]["name"]
       end
 
       # THE HANDS — the act judge. What a speaker did with their hands is read
@@ -1523,10 +1478,9 @@ module Harness
         you = {
           "id"        => npc.id,
           "name"      => npc.name,
-          # How they look: a figure promoted from the room's description
-          # speaks of itself as "the weathered fisher", and a judge shown
-          # only the minted name took the fisher for the player and gave
-          # him the cheese he had just been handed (hands run 5, t16).
+          # How they look: a judge shown only the name took the fisher for
+          # the player and gave him the cheese he had just been handed
+          # (hands run 5, t16).
           "looks"     => (props["appearance"] || props["physical"]).presence,
           "coins"     => npc.coins.to_i,
           "can_offer" => ::Harness::Items::Offers.categories_for(npc, loc),
@@ -1547,7 +1501,7 @@ module Harness
           "present"       => present,
           "nearby_places" => nearby_rows(context).map { |l| { "id" => l.id, "name" => l.name } },
           "player_said"   => input,
-          "this_turn"     => receipts_this_turn(context, tcs),
+          "this_turn"     => engine_this_turn(context, tcs),
           "you_said"      => prose
         }
         payload["contest"] = contest[:payload] if contest && contest[:payload] && contest[:target_id] == npc.id
@@ -2298,12 +2252,16 @@ module Harness
         end
       end
 
-      # The open rows between this character and the player, by id, each
-      # rendered from the character's seat in third person.
+      # The standing rows between this character and the player — open, and
+      # broken (a broken promise can still be made good by a receipt or let
+      # go by the player's words; deeds-1 t22: the net handed over, the
+      # broken row a corpse on the sheet) — by id, each rendered from the
+      # character's seat in third person. Kept rows stay out: the engine
+      # hands those over itself, and a word must not settle them first.
       def pair_debts(id, player_id, now)
         return [] unless id
         name = ::Character.find_by(id: id)&.name
-        ::Obligation.open_now
+        ::Obligation.where(status: %w[open broken])
                     .where("(debtor_id = ? AND creditor_id = ?) OR (debtor_id = ? AND creditor_id = ?)", id, player_id, player_id, id)
                     .order(:id).map { |o| { "id" => o.id, "line" => o.line_for(id, now: now, name: name) } }
       rescue ::StandardError
@@ -2409,7 +2367,7 @@ module Harness
       # said too little (probe: a refused knife still "handed over" in the
       # taking-stock's doing and mood).
       def outcome_this_turn(context, tcs, emit)
-        lines = receipts_this_turn(context, tcs) + Array(context.turn_transcript&.null_lines)
+        lines = engine_this_turn(context, tcs)
         lines += [ "Nothing changed hands: #{emit['not_done']}." ] if emit.is_a?(::Hash) && emit["not_done"].to_s.strip != ""
         lines
       end

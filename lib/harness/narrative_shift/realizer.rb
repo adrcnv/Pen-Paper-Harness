@@ -59,39 +59,59 @@ module Harness
           return nil
         end
 
+        named = proper_name?(spoken)
+        if (existing = (named && find_existing(spoken)) || find_by_reference(spoken))
+          logger.info { "[NarrativeShift] claim #{spoken.inspect} LINKS to existing character_id=#{existing.id} #{existing.name.inspect}" }
+          return { "character_id" => existing.id, "name" => existing.name, "linked" => true }
+        end
+
+        # The claim's anchor place goes through the one place door: an
+        # existing room by name or by the bind judge, a scenery kind minted
+        # once per settlement, or nothing.
+        at_name = claim["at_location"].to_s.strip
+        place   = ::Harness::Settlement::PlaceWriter.resolve(name: at_name, context: context, source: :claim, logger: logger).location
+        root    = ::Harness::Settlement::PlaceWriter.root_of(context.player_location)
+
+        # The offices half of the person door, before any mint. The claim's
+        # trade is the reflection's pick from the closed vocation list; the
+        # town's own rows say who holds it — the keeper of the room the
+        # claim anchors to, or for a civic office held once the room that
+        # carries it (seeded now if it stands empty), a resident who holds
+        # it, or nobody, and then the claim is refused rather than minted at
+        # the root against the town's own doctrine. The spoken name yields
+        # to the manifest here: two reeves stood in one hall, and a second
+        # Varya beside the smith, when it did not (roster-2). A claim
+        # anchored in another town is that town's business.
+        unless place && place.parent_id.nil? && place.id != root&.id
+          held = ::Harness::Settlement::Doctrine.holder(subrole, context.player_location, anchor: place, llm: context.llm_grunt, logger: logger)
+          if held&.linked?
+            logger.info { "[NarrativeShift] claim #{spoken.inspect} (#{subrole}) is #{root&.name}'s #{held.words}: LINKS character_id=#{held.npc.id} #{held.npc.name.inspect}" }
+            return { "character_id" => held.npc.id, "name" => held.npc.name, "linked" => true }
+          elsif held&.absent?
+            logger.info { "[NarrativeShift] claim #{spoken.inspect} (#{subrole}): #{root&.name} has no #{held.words} — refused" }
+            return nil
+          end
+        end
+
         role_ref = nil
-        if proper_name?(spoken)
+        if named
           name = spoken
-          if (existing = find_existing(name) || find_by_reference(spoken))
-            logger.info { "[NarrativeShift] claim #{name.inspect} LINKS to existing character_id=#{existing.id}" }
-            return { "character_id" => existing.id, "name" => existing.name, "linked" => true }
-          end
         else
-          # A repeated role-reference must resolve to the row it already
-          # realized to — the picker-assigned name is a pool string dialogue
-          # will never say again, so the referring EXPRESSION is the only
-          # stable key (the two-Guard-Captains bug).
-          if (existing = find_by_reference(spoken))
-            logger.info { "[NarrativeShift] role ref #{spoken.inspect} LINKS to existing character_id=#{existing.id} #{existing.name.inspect}" }
-            return { "character_id" => existing.id, "name" => existing.name, "linked" => true }
-          end
+          # A repeated role-reference resolved above through the stored
+          # role_reference; a first one gets a real name from the picker —
+          # a pool string dialogue will never say again, so the referring
+          # EXPRESSION stays the stable key (the two-Guard-Captains bug).
           role_ref = spoken.presence
           name = ::Harness::Naming.unique_for(location: context.player_location)
           logger.info { "[NarrativeShift] claim by role #{spoken.inspect} → picker named #{name.inspect}" }
         end
 
-        at_name = claim["at_location"].to_s.strip
-        # The claim's anchor place goes through the one place door: an
-        # existing room by name or by the bind judge, a scenery kind minted
-        # once per settlement, or nothing — a room the settlement was not
-        # laid out with is not talked into existence, and the person is
-        # homed at the settlement instead.
-        place   = ::Harness::Settlement::PlaceWriter.resolve(name: at_name, context: context, source: :claim, logger: logger).location
-        # A claim anchored at the player's CURRENT location describes this
+        # A room the settlement was not laid out with is not talked into
+        # existence: without an anchor the person is homed at the
+        # settlement instead. A claim anchored at the player's CURRENT location describes this
         # scene's own furniture, not a findable person elsewhere — anyone
-        # actually here either has a row already or is an extra, whose
-        # promotion door is propose_character. Minting duplicates the room
-        # (the two-drovers bug), so refuse the claim outright.
+        # actually here has a row already. Minting duplicates the room (the
+        # two-drovers bug), so refuse the claim outright.
         if place && place.id == context.player_location&.id
           logger.info { "[NarrativeShift] claim #{(spoken.presence || gist).inspect} anchored at the current location #{place.name.inspect} — scenery, refusing mint" }
           return nil

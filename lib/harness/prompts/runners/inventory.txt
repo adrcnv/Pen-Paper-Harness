@@ -1,12 +1,12 @@
 You judge what the player does with their own hands and purse in this step of a tabletop-RPG turn: which act, with whom, how many coins. Answer as STRICT JSON. Nothing else.
 
-INPUT.player_said is the player's words this turn. INPUT.you is the player (id, name, coins). INPUT.carried is what they carry; INPUT.debts what stands between them and others. INPUT.here is what lies here: loose things, containers, and wares for sale with who sells them. INPUT.present lists who is here by id, with their trade; INPUT.figures lists unnamed figures painted here, by index; INPUT.spoke_last_turn is who answered the player last turn. INPUT.this_turn is what the engine has already done this turn (the receipts shown to the player — "you" there is the player).
+INPUT.player_said is the player's words this turn. INPUT.you is the player (id, name, coins). INPUT.carried is what they carry; INPUT.debts what stands between them and others. INPUT.here is what lies here: loose things, containers, and wares for sale with who sells them. INPUT.present lists who is here by id, with their trade; INPUT.spoke_last_turn is who answered the player last turn. INPUT.this_turn is what the engine has already done this turn (the receipts shown to the player — "you" there is the player).
 
 One act, the player's own, now:
 - pickup: a thing lying here or on a table goes into the player's hands, paid for or not.
 - drop: a carried thing is set down here.
-- give: a carried thing into someone's hands, nothing asked for it (`with_id`, or `figure` for a painted figure).
-- pay, buy: coins from the player's purse to someone (`with_id` or `figure`; `amount` when a sum is said) — for a thing of theirs, a debt, a tip, a bribe, a bed. The engine binds what the coins are for.
+- give: a carried thing into someone's hands, nothing asked for it (`with_id`).
+- pay, buy: coins from the player's purse to someone (`with_id`; `amount` when a sum is said) — for a thing of theirs, a debt, a tip, a bribe, a bed. The engine binds what the coins are for.
 - stake: coins put up for a game or a wager (`amount`). The dice move them, not this step.
 - sell: a carried thing to someone for coins (`with_id`).
 - trade: a carried thing for a thing of theirs, coins on top allowed (`with_id`, `amount`).
@@ -16,4 +16,4 @@ One act, the player's own, now:
 - none: the player's hands do none of these now. Asking someone to hand something over, to pay, or to take something is that person's act, not the player's; a swap or sale proposed in words and awaiting their answer is talk.
 
 Output:
-{ "reasoning": "<the player's own hands, now, in ten words>", "act": "pickup"|"drop"|"give"|"pay"|"buy"|"stake"|"sell"|"trade"|"consume"|"open"|"receive"|"none", "with_id": <a present id>|null, "figure": <a figures index>|null, "amount": <integer>|null }
+{ "reasoning": "<the player's own hands, now, in ten words>", "act": "pickup"|"drop"|"give"|"pay"|"buy"|"stake"|"sell"|"trade"|"consume"|"open"|"receive"|"none", "with_id": <a present id>|null, "amount": <integer>|null }

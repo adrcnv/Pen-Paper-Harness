@@ -7,7 +7,10 @@ module Harness
     # scene (Assembler) — and a barred venue refuses entry (Transition).
     # Classification is mechanical: name keywords → kind → open phases.
     # Unclassified venues have no opinion (always open) so nothing
-    # mysteriously empties.
+    # mysteriously empties. A manifest room with a trade but no keyword is
+    # a POST — worked by day, never shut — as is open ground with a keeper
+    # (a jetty, a square): the hall's reeve resolved "somewhere in town" and
+    # the docks stood barred at dusk before this kind existed (roster-1).
     #
     # Taverns are the always-open refuge: staffed round the clock (user
     # ruling 2026-09-15: a keeper's off-hours read as a vendor vacuum and a
@@ -18,16 +21,17 @@ module Harness
         "tavern" => [ :morning, :day, :evening, :night ].freeze,
         "inn"    => [ :morning, :day, :evening ].freeze,
         "shrine" => [ :morning, :evening ].freeze,
-        "trade"  => [ :morning, :day ].freeze
+        "trade"  => [ :morning, :day ].freeze,
+        "post"   => [ :morning, :day ].freeze
       }.freeze
 
       KIND_WORDS = {
         "tavern" => [ "tavern", "alehouse", "taproom", "common room", "public house", "pub", "brewhouse" ].freeze,
         "inn"    => [ "inn", "lodge", "hostel" ].freeze,
         "shrine" => [ "shrine", "chapel", "temple", "sanctum" ].freeze,
+        "post"   => [ "dock", "docks", "landing", "wharf", "pier", "jetty", "quay", "square", "flats", "green" ].freeze,
         "trade"  => [ "mill", "smith", "smithy", "forge", "market", "bakery", "tannery",
-                      "shed", "loft", "yard", "dock", "docks", "landing", "wharf", "pier",
-                      "warehouse", "counting house", "office" ].freeze
+                      "shed", "loft", "yard", "warehouse", "counting house", "office" ].freeze
       }.freeze
 
       module_function
@@ -46,7 +50,7 @@ module Harness
             return k if words.any? { |w| t.match?(/\b#{::Regexp.escape(w)}\b/) }
           end
         end
-        nil
+        props["trade"].present? && location.parent_id ? "post" : nil
       end
 
       def open?(location, phase)
@@ -60,11 +64,11 @@ module Harness
       end
 
       # Door policy: a classified venue outside its staffed hours refuses
-      # entry — except taverns (presence-only closure, see above).
-      # Unclassified places never bar.
+      # entry — except taverns (presence-only closure, see above) and posts
+      # (open ground, an unlit hall). Unclassified places never bar.
       def barred?(location, phase)
         k = kind(location)
-        return false if k.nil? || k == "tavern"
+        return false if k.nil? || k == "tavern" || k == "post"
         !HOURS[k].include?(phase)
       end
 

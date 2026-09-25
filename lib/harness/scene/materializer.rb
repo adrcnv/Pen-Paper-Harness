@@ -138,6 +138,7 @@ module Harness
       def apply(location, entries)
         reused  = []
         spawned = []
+        entries = without_held_offices(location, entries)
 
         ::Npc.transaction do
           entries["reuse"].each do |e|
@@ -187,6 +188,19 @@ module Harness
 
         logger.info { "[Scene::Materializer] reused=#{reused.size} spawned=#{spawned.size}" }
         { reused: reused, spawned: spawned }
+      end
+
+      # One holder per unique office: a cast entry seated as the town's reeve
+      # while the hall's keeper held it made two reeves, each named as the
+      # reeve by different townsfolk (roster-1). The slot goes unfilled
+      # rather than retagged.
+      def without_held_offices(location, entries)
+        keep = ->(e) {
+          next true unless ::Harness::Settlement::Doctrine.office_held?(e["subrole"], location)
+          logger.info { "[Scene::Materializer] #{location.name}: no second #{e['subrole']} — the office is held; entry dropped" }
+          false
+        }
+        { "reuse" => Array(entries["reuse"]).select(&keep), "spawn" => Array(entries["spawn"]).select(&keep) }
       end
 
       # Where an LLM-cast spawn belongs. At a MANIFEST venue (stub carries

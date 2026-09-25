@@ -3,10 +3,11 @@ A character spoke of a place, or the player asked after one. You say which place
 
 INPUT.spoken is the place as it was named, with what was said of it. INPUT.settlement is the settlement itself, by id. INPUT.rooms are the places it has, by id, with a line on each. INPUT.scenery are the nameless kinds of place any settlement has, by key.
 
-Say first what the spoken place is:
+Say first what was named:
 - listed_room: one of INPUT.rooms, or the settlement itself — however it was worded ("the forge" is the smithy, "the bar" is the taproom, "town" is the settlement). Give its id.
 - scenery: no listed room, but one of INPUT.scenery — an alley, a shack, a hollow, the shore, a camp. Give the key.
-- neither: a place this settlement has not got (a smithy where none is listed, a hall, a wharf), a place elsewhere, no place at all ("unspecified", "here", "at sea"), or a person.
+- person: no place named, but a particular person by name. Give the name.
+- neither: a place this settlement has not got (a smithy where none is listed, a hall, a wharf), a place elsewhere, or no place at all ("unspecified", "here", "at sea").
 
 Output:
-{ "reasoning": "<what was named, and which listed place it is, in ten words>", "is": "listed_room"|"scenery"|"neither", "room_id": <a rooms id or the settlement id>|null, "scenery": <a scenery key>|null }
+{ "reasoning": "<what was named, and which of these it is, in ten words>", "is": "listed_room"|"scenery"|"person"|"neither", "room_id": <a rooms id or the settlement id>|null, "scenery": <a scenery key>|null, "person": <a name>|null }

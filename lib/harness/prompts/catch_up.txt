@@ -13,6 +13,7 @@ WHAT TO INVENT
 WHAT NOT TO INVENT
 - DO NOT invent new named participants. Every participant must appear by name in RECENT_ACTORS. Catch-up cannot create character rows; fresh names will be rejected. If you want to mention "a passing traveler" or "two strangers had words," put them in narrative prose only with NO participant entry.
 - Do NOT include unnamed groups ("the shepherds", "two travelers") as participants — put them in narrative prose only.
+- The only places named are this one and parent_name; anywhere else is said by its relation to it — upriver, the next town, the road inland. The map holds the names.
 - Catch-up should NOT meaningfully change the lives of major existing characters. Small interactions are fine; a known barkeep restocking, a regular dropping in. Don't kill, exile, or upend anyone — leave that for play.
 - No regional/kingdom/world events. Catch-up is local. If a war moved or a king died, that's the regional spine, not catch-up.
 - No plot hooks aimed at the player. ("A mysterious stranger left a sealed letter for the hero" is wrong. "A trader spent a night here, paid in odd coin, moved on" is right — color, not bait.)

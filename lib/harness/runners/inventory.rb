@@ -30,10 +30,9 @@ module Harness
           "reasoning" => { "type" => "string" },
           "act"       => { "type" => "string", "enum" => ACTS },
           "with_id"   => { "type" => %w[integer null] },
-          "figure"    => { "type" => %w[integer null] },
           "amount"    => { "type" => %w[integer null] }
         },
-        "required" => %w[reasoning act with_id figure amount],
+        "required" => %w[reasoning act with_id amount],
         "additionalProperties" => false
       }.freeze
       BIND_SCHEMA = {
@@ -76,15 +75,15 @@ module Harness
 
         resolver = resolver_for(context)
         tcs = []
-        @logger.info { "[Runner inventory] #{kind}#{act['with_id'] ? " with ##{act['with_id']}" : ''}#{act['figure'] ? " figure #{act['figure']}" : ''}#{act['amount'] ? " #{act['amount']} coins" : ''} (#{act['reasoning']})" }
+        @logger.info { "[Runner inventory] #{kind}#{act['with_id'] ? " with ##{act['with_id']}" : ''}#{act['amount'] ? " #{act['amount']} coins" : ''} (#{act['reasoning']})" }
         # The player's hands do nothing here: what they said asks someone
         # else to act, and that person's own line and hands answer it.
         return skip("the player's hands do nothing: #{act['reasoning']}", tcs) if %w[none receive].include?(kind)
         # A stake names no recipient: the dice move it (the wager's verdict),
         # and until then it is coin set out in the open.
-        act = act.merge("with_id" => nil, "figure" => nil) and kind = "pay" if kind == "stake"
+        act = act.merge("with_id" => nil) and kind = "pay" if kind == "stake"
 
-        with = counterparty(act, resolver, context, scene, player, tcs)
+        with = counterparty(act, scene, player)
 
         case kind
         when "pickup"
@@ -111,9 +110,9 @@ module Harness
         when "give"
           return skip("give: no one bound to receive it", tcs, null_line: "Hand it to whom?") unless with
           thing = bind(context, input, kind, player.items.to_a)
-          return skip("give: nothing bound", tcs, null_line: "There's nothing like that to hand over.") unless thing
-          _, ok = execute_tool(resolver, "give_item", { "item_id" => thing.id, "from_id" => player.id, "to_id" => with, "reason" => act["reasoning"] }, into: tcs)
-          return skip("give refused", tcs, null_line: "There's nothing like that to hand over.") unless ok
+          return refused("give: nothing bound", tcs, player, with, kind, act, "There's nothing like that to hand over.", "#{player.name} carries no such thing") unless thing
+          res, ok = execute_tool(resolver, "give_item", { "item_id" => thing.id, "from_id" => player.id, "to_id" => with, "reason" => act["reasoning"] }, into: tcs)
+          return refused("give refused: #{res['error']}", tcs, player, with, kind, act, "There's nothing like that to hand over.", "the #{thing.name} could not change hands (#{res['error']})", thing: thing) unless ok
         when "sell"
           return skip("sell: no one bound to buy", tcs, null_line: "No one here will buy that.") unless with
           thing = bind(context, input, kind, player.items.to_a)
@@ -139,7 +138,7 @@ module Harness
             ware  = table.any? ? bind(context, input, kind, table) : nil
             if ware
               res, ok = execute_tool(resolver, "buy_item", { "item_id" => ware.id, "merchant_id" => with, "buyer_id" => player.id }, into: tcs)
-              return skip("buy refused: #{res['error']}", tcs, null_line: buy_null_line(res["error"])) unless ok
+              return refused("buy refused: #{res['error']}", tcs, player, with, "buy", act, buy_null_line(res["error"]), "#{player.name} cannot buy the #{ware.name} (#{res['error']})", amount: amount) unless ok
               return Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
             end
             if kind == "buy" && amount.nil?
@@ -149,7 +148,7 @@ module Harness
               bare = table.empty? && seller?(with, context, table)
               return skip("buy: nothing bound on their table", tcs, null_line: bare ? "#{seller_name(with)} has nothing out." : "That isn't for sale here.")
             end
-            return skip("pay without amount", tcs, null_line: "No sum was settled — nothing changes hands.") unless amount
+            return refused("pay without amount", tcs, player, with, kind, act, "No sum was settled — nothing changes hands.", "no sum was named") unless amount
             return skip("already paid #{amount} to ##{with} this turn", tcs, null_line: "Those coins already went over.") if paid_this_turn?(with, amount, player, context)
             # Coins to a seller are for goods: refused when none were handed
             # over this turn and none are owed. Keyed on the trade, not on a
@@ -157,12 +156,18 @@ module Harness
             # for salt that never landed and five to a salt worker who said
             # no (hands run 6, t5–t6).
             if seller?(with, context, table) && !owes?(player, with) && !handed_this_turn?(with, player, context)
-              return skip("pay to a seller with nothing owed and nothing handed over", tcs, null_line: table.any? ? "Their goods are on the table — buy, or keep your coin." : "Nothing was handed over — you keep your coin.")
+              return refused("pay to a seller with nothing owed and nothing handed over", tcs, player, with, kind, act,
+                             table.any? ? "Their goods are on the table — buy, or keep your coin." : "Nothing was handed over — you keep your coin.",
+                             "#{seller_name(with)} is owed nothing by #{player.name} and has handed nothing over for them; coins to a tradesperson are for goods bought or owed, never in advance", amount: amount)
             end
             res, ok = execute_tool(resolver, "transfer_coins", { "from_id" => player.id, "to_id" => with, "amount" => amount, "reason" => act["reasoning"] }, into: tcs)
             # A refused payment says so (items run 8 t25: 17 coins against 41
             # owed, the error swallowed, the voice took the words as the deed).
-            return skip("transfer refused: #{res['error']}", tcs, null_line: (res["error"].to_s.include?("has only") ? "You don't have that much coin." : "Nothing changes hands.")) unless ok
+            unless ok
+              short = res["error"].to_s.include?("has only")
+              return refused("transfer refused: #{res['error']}", tcs, player, with, kind, act, short ? "You don't have that much coin." : "Nothing changes hands.",
+                             short ? "#{player.name} has not got #{amount} coins" : "the coins could not change hands (#{res['error']})", amount: amount)
+            end
           else
             return skip("#{kind}: no seller bound", tcs, null_line: "That isn't for sale here.") if kind == "buy"
             return skip("pay without amount", tcs, null_line: "No sum was settled — nothing changes hands.") unless amount
@@ -184,6 +189,29 @@ module Harness
 
       private
 
+      # A refusal of the player's own hands toward someone present is an
+      # ANSWER, not a dead end: the world said no and says why. The record
+      # renders the player's line in causal order like any receipt (no null
+      # line for a sibling to swallow, no out-of-character notice) and
+      # carries the fact in third person, with the act judge's reading of
+      # what the player meant, for every judge that reads the turn from a
+      # character's seat (deeds-3 t5: the smith's payload held only "you keep
+      # your coin", read as the smith keeping it — he pocketed the deposit in
+      # prose while the coins never moved).
+      def refused(note, tcs, player, with, kind, act, line, why, amount: nil, thing: nil)
+        name = ::Character.find_by(id: with)&.name || "them"
+        did  = case kind
+               when "give"  then "held out #{thing ? "the #{thing.name}" : 'a thing'} to #{name}"
+               when "buy"   then amount ? "held out #{amount} coins to #{name}" : "tried to buy from #{name}"
+               else              "held out #{amount || 'some'} coins to #{name}"
+               end
+        fact = "Nothing changed hands: #{player.name} #{did} — #{why} (#{act['reasoning']})."
+        tcs << tool_call("hands_refused", { "act" => kind, "with_id" => with, "amount" => amount, "item_id" => thing&.id }.compact,
+                         { "refused" => note, "line" => line, "fact" => fact })
+        @logger.info { "[Runner inventory] refused: #{note}" }
+        Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok)
+      end
+
       # THE ACT JUDGE: which act, with whom, how many coins — on the room as
       # it stands, the player's words, and the turn's receipts so far.
       def judge_act(context, scene, input, player)
@@ -194,7 +222,6 @@ module Harness
           "debts"       => ::Obligation.outstanding.involving(player.id).order(id: :desc).limit(4).map { |o| o.line_for(player.id, now: context.game_time) }.reverse,
           "here"        => things_here(scene, player).map { |i| here_entry(i, scene) } + containers_here(scene, player).map { |i| { "name" => i.name, "container" => true } },
           "present"     => present_rows(scene),
-          "figures"     => Array(scene && scene["present_extras"]).each_with_index.map { |d, i| { "index" => i, "looks" => d } },
           "spoke_last_turn" => talking_to(context, scene),
           "this_turn"   => receipts_this_turn(context, [])
         }.compact
@@ -228,14 +255,11 @@ module Harness
         theirs ? [ nil, [] ] : nil
       end
 
-      # Who the act is with: a present id the judge named, or a painted
-      # figure by index — made real first, as speech would make them, with
-      # the thing painted on them laid on their table.
-      def counterparty(act, resolver, context, scene, player, tcs)
+      # Who the act is with: a present id the judge named, or no one.
+      def counterparty(act, scene, player)
         present = Array(scene && scene["present_characters"]).map { |c| c["id"] }
         return act["with_id"] if act["with_id"].is_a?(::Integer) && present.include?(act["with_id"]) && act["with_id"] != player.id
-        return nil unless act["figure"].is_a?(::Integer)
-        promote_extra(resolver, context, scene, act["figure"], into: tcs, cache: {})
+        nil
       end
 
       def things_here(scene, player)

@@ -59,6 +59,7 @@ module Harness
 
         maybe_run_genesis(loc)
         maybe_lay_out_settlement(loc)
+        maybe_name_keepers(loc)
         maybe_run_catch_up(loc)
         maybe_seed_staff(loc)
         maybe_run_materialize(loc, materialize_target)
@@ -66,6 +67,7 @@ module Harness
         maybe_draw_local(loc)
         maybe_stock_shop(loc)
         maybe_seed_treasure(loc)
+        maybe_write_doctrine(loc)
 
         # The presence authority writes the cache for this location — pulls
         # in everyone the schedule places here (keepers to open posts, meet
@@ -74,6 +76,7 @@ module Harness
         refresh_whereabouts(loc)
 
         snapshot = ::Harness::Scene::Assembler.for(location: loc)
+        materialize_present!(snapshot.present_characters)
         maybe_run_character_catch_up(snapshot.present_characters)
         maybe_weave_claim_web(snapshot.present_characters)
         flavor = generate_internal_state(loc, snapshot.present_characters)
@@ -330,6 +333,33 @@ module Harness
         ::Harness::Scene::StaffSeeder.ensure!(loc, llm: @context.llm_grunt, logger: logger, rng: rng)
       end
 
+      # Every trade room of the town gets its keeper NAMED on the first entry
+      # to the town — a row, no body — so the doctrine's facts carry the
+      # holder's name from the start and no voice has to guess one. The
+      # body comes at first meeting (materialize_present!).
+      def maybe_name_keepers(loc)
+        return unless @context.llm_grunt
+        root = ::Harness::Settlement::PlaceWriter.root_of(loc)
+        ::Harness::Scene::StaffSeeder.name_all!(root, rng: rng, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] keeper naming failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # A named keeper met for the first time gets a body here — stats and
+      # description, the same two calls a spawn makes — wherever they are
+      # met: at their post, about town, or pulled to the next town.
+      def materialize_present!(present)
+        Array(present).each do |c|
+          next unless c.is_a?(::Npc) && ::Harness::Scene::Residents.unmaterialized?(c)
+          home = c.home_location
+          prose = home&.parent_id ? "Keeper of #{home.name} (#{home.description.to_s.slice(0, 200)})" : nil
+          ::Harness::Character::Hatchery.materialize!(c, llm_grunt: @context.llm_grunt, prose_context: prose, rng: rng)
+          logger.info { "[Scene::Manager] #{c.name} (#{c.subrole}) met for the first time — materialised" }
+        rescue StandardError => e
+          logger.warn { "[Scene::Manager] materialise failed for #{c.name}: #{e.class}: #{e.message}" }
+        end
+      end
+
       # Intra-city draw: at a sublocation, occasionally a same-city resident
       # drifts in so the place feels connected to its town (Scene::LocalDraw).
       # Self-gates to sublocations — a no-op at the city tier, where residents
@@ -362,6 +392,15 @@ module Harness
         ::Harness::Settlement::Layout.lay_out!(city: loc, rng: rng, logger: logger)
       rescue StandardError => e
         logger.warn { "[Scene::Manager] settlement layout failed for #{loc.name}: #{e.class}: #{e.message}" }
+      end
+
+      # The town's own composition as standing local knowledge (which trades
+      # and offices it has, who holds them, which it lacks) — recomputed from
+      # rows after every spawner has run, rewritten only when it changed.
+      def maybe_write_doctrine(loc)
+        ::Harness::Settlement::Doctrine.refresh!(loc, game_time: @context.game_time || 0, logger: logger)
+      rescue StandardError => e
+        logger.warn { "[Scene::Manager] doctrine write failed for #{loc.name}: #{e.class}: #{e.message}" }
       end
 
       # Stock a shop sublocation with wares on first entry (manifest stamped
@@ -412,9 +451,8 @@ module Harness
           # Wilderness leaves get NO materialized resident cast — they're
           # transient encounter spots, not settlements. Staffing them spawned
           # homeless rows in the middle of nowhere (a "lost_traveler" with no
-          # anchor that the transient sweep then culls). Wilderness population comes from
-          # the LLM's ambient `extras` (materialized on engagement via
-          # propose_character(from_extra:)) and the travel encounter-spawner.
+          # anchor that the transient sweep then culls). What lives there is
+          # the seeder's ambient life and the travel encounter-spawner's.
           nil
         elsif loc.parent_id
           TARGET_COUNT_DISTRIBUTION.sample(random: rng)
@@ -430,11 +468,10 @@ module Harness
 
       # Returns a hash {internal_state: {char_id => prose}, agendas: {char_id => text}, extras: [...]}.
       # Skipped (empty everything) when no llm_grunt, or when the scene is
-      # empty AND the venue is shut for the hour (nobody to paint in). An
+      # empty AND the venue is shut for the hour (nothing to paint in). An
       # empty scene at an open place still runs: the seeder's extras are the
-      # only writer of the people a description implies — a street's
-      # merchants, the figure a hut was minted around — and skipping it left
-      # those places describing people nobody could address.
+      # place's ambient life — a dog, the gulls, smoke off a pit — and
+      # skipping it left those places bare.
       # Failures bubble up — generation is allowed to fail with a typed
       # error; the loop's outer ensure catches and persists.
       def generate_internal_state(location, present_characters)

@@ -176,7 +176,9 @@ module Harness
         size = File.size(@log_path)
         File.open(@log_path) do |f|
           f.seek([ size - LOG_TAIL_BYTES, 0 ].max)
-          f.read
+          # The seek lands mid-character as often as not; a torn byte made
+          # JSON.generate refuse the whole flag (deeds-3 t15).
+          f.read.force_encoding(Encoding::UTF_8).scrub
         end
       rescue StandardError
         nil

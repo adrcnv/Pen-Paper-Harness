@@ -13,7 +13,7 @@ RSpec.describe Harness::NarrativeShift::Realizer do
   before do
     allow(Harness::Character::Hatchery).to receive(:spawn) do |**kw|
       Npc.create!(name: kw[:name], subrole: kw[:subrole], location: kw[:location],
-                  home_location_id: kw[:home_location_id], properties: kw[:properties] || {})
+                  home_location_id: kw[:home_location_id], properties: kw[:properties] || {}, current_hp: 5, max_hp: 5)
     end
   end
 
@@ -106,7 +106,7 @@ RSpec.describe Harness::NarrativeShift::Realizer do
     tide_mill = Location.create!(name: "the Tide Mill", parent: city)
     @answer = %({"reasoning": "the mill is the Tide Mill", "is": "listed_room", "room_id": #{tide_mill.id}, "scenery": null})
     expect {
-      run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
+      run({ "name" => "Hrothgar", "subrole" => "ferryman", "at_location" => "the mill" })
     }.not_to change(Location, :count)
     expect(Harness::Character::Hatchery).to have_received(:spawn)
       .with(hash_including(location: tide_mill, home_location_id: tide_mill.id, dormant: false))
@@ -115,7 +115,7 @@ RSpec.describe Harness::NarrativeShift::Realizer do
   it "mints no room the town has not got — the anchor stays a phrase and the person is homed at the root" do
     @answer = %({"reasoning": "no mill is listed", "is": "neither", "room_id": null, "scenery": null})
     expect {
-      run({ "name" => "Hrothgar", "subrole" => "miller", "at_location" => "the mill" })
+      run({ "name" => "Hrothgar", "subrole" => "ferryman", "at_location" => "the mill" })
     }.not_to change(Location, :count)
     expect(Harness::Character::Hatchery).to have_received(:spawn)
       .with(hash_including(location: city, home_location_id: city.id, dormant: false))
@@ -141,5 +141,51 @@ RSpec.describe Harness::NarrativeShift::Realizer do
     expect(pids).to include(speaker.id, player.id, res["character_id"])
     # "the surveyor is <Corin>" — so asking about the surveyor next turn recalls the name.
     expect(ev.details.dig("narrative", "trigger")).to match(/the surveyor is /)
+  end
+
+  describe "the office door (a claimed person's trade against the town's rows)" do
+    let!(:smithy)  { Location.create!(name: "the Smithy", parent: city, properties: { "trade" => "smith" }) }
+    let!(:hengist) { Npc.create!(name: "Hengist", subrole: "smith", location: smithy, home_location_id: smithy.id, current_hp: 5, max_hp: 5) }
+
+    it "links a claim with a civic trade to the town's holder instead of minting a second one — by role or by name" do
+      expect(run({ "name" => "the smith", "subrole" => "smith", "gist" => "could mend the blade" })).to include("linked" => true, "character_id" => hengist.id)
+      expect(run({ "name" => "Varya the smith", "subrole" => "smith" })).to include("character_id" => hengist.id)
+      expect(Harness::Character::Hatchery).not_to have_received(:spawn)
+    end
+
+    it "seeds the civic room's keeper for a claim the player has not yet met — never a row named 'Saltmere's reeve'" do
+      hall = Location.create!(name: "the Moot Hall", parent: city, properties: { "trade" => "reeve" })
+      res  = run({ "name" => "Saltmere's reeve", "subrole" => "reeve", "at_location" => "the Moot Hall" })
+      expect(res["linked"]).to be(true)
+      keeper = Npc.find(res["character_id"])
+      expect(keeper.home_location_id).to eq(hall.id)
+      expect(keeper.subrole).to eq("reeve")
+      expect(Npc.where(name: "Saltmere's reeve")).to be_empty
+      speaker   # materialize the lazy fixture outside the count
+      expect { expect(run({ "name" => "Borin", "subrole" => "reeve", "gist" => "keeps to the hall" })["character_id"]).to eq(keeper.id) }.not_to change(Npc, :count)
+    end
+
+    it "links the keeper of the room a claim anchors to, for a crew's trade as well — 'the salter out at the Flats'" do
+      flats = Location.create!(name: "the Flats", parent: city, properties: { "trade" => "salter" })
+      res = run({ "name" => "the salter out at the Flats", "subrole" => "salter", "at_location" => "the Flats" })
+      expect(res["linked"]).to be(true)
+      expect(Npc.find(res["character_id"]).home_location_id).to eq(flats.id)
+      expect(run({ "name" => "the salter", "subrole" => "salter" })["minted"]).to be(true)   # unanchored, a plural trade: a person of their own
+    end
+
+    it "refuses a claimed holder of a civic office the town lacks, and still mints a named guard (a crew) or a named stranger" do
+      expect(run({ "name" => "the reeve", "subrole" => "reeve", "gist" => "would hear the case" })).to be_nil
+      expect(run({ "name" => "Osric", "subrole" => "reeve" })).to be_nil
+      expect(Npc.where(name: "Osric")).to be_empty
+      expect(run({ "name" => "Wulf", "subrole" => "guard" })["minted"]).to be(true)
+      expect(run({ "name" => "Harek Smith", "subrole" => "contact" })["minted"]).to be(true)
+    end
+
+    it "leaves a claim anchored in another town to the Realizer as before" do
+      far = Location.create!(name: "Coldleigh")
+      res = run({ "name" => "the reeve", "subrole" => "reeve", "at_location" => "Coldleigh" })
+      expect(res["minted"]).to be(true)
+      expect(Harness::Character::Hatchery).to have_received(:spawn).with(hash_including(home_location_id: far.id))
+    end
   end
 end

@@ -281,6 +281,18 @@ RSpec.describe Harness::Knowledge::Capture do
       expect(Event.count).to eq(1)   # only the source — knowledge never became an event
     end
 
+    it "does not revise a town-doctrine row by a telling: the standing row stays current, the embellishment is dropped" do
+      old = Knowledge.create!(content: "Saltmere has no reeve or magistrate.", location_id: city.id, current: true, game_time: 0, source_kind: "layout")
+      judge = StubLLM.new { |prompt|
+        prompt.include?("standing_fact") ? { "relation" => "extends", "merged" => "Saltmere has no reeve or magistrate, as affirmed by Nadya." }.to_json : "{}"
+      }
+      expect {
+        capture({ "fact_additions" => [ { "fact_id" => 1, "content" => "Nadya affirmed there is no reeve." } ] },
+                llm: judge, records: { "events" => [], "facts" => [ [ old.id, old.content ] ] })
+      }.not_to change(Knowledge, :count)
+      expect(old.reload.current).to be(true)
+    end
+
     # records_given ids are ONE space (events 1..E, facts E+1..): the id decides
     # the store, whichever list the judge filed the detail under. Separate
     # 1-based lists collided and put a fence-work detail on the daughter-
@@ -392,6 +404,25 @@ RSpec.describe Harness::Knowledge::Capture do
                                     due: "before you leave town", game_time: 100)
     end
 
+    it "binds what a deed owed to the player is owed in, at strike (Errands.bind) — and only such a deed" do
+      allow(Harness::Errands).to receive(:bind).and_return({ "is" => "thing", "label" => "the net", "kind" => "goods" })
+      capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "deed", "terms" => "Tomas brings Gu the net"), context: ctx)
+      expect(Obligation.last.subject).to eq("is" => "thing", "label" => "the net", "kind" => "goods")
+      expect(Harness::Errands).to have_received(:bind).with(hash_including(terms: "Tomas brings Gu the net", debtor: speaker_row))
+      capture(deals("who_owes" => "Gu", "owed_to" => "Tomas", "kind" => "deed", "terms" => "Gu hauls the grain"), context: ctx)
+      capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "coins", "amount" => 2, "terms" => "Two coins for the net"), context: ctx)
+      expect(Harness::Errands).to have_received(:bind).once
+      expect(Obligation.where.not(id: Obligation.first.id).map(&:subject)).to all(eq({}))
+    end
+
+    it "a renewed promise supersedes the broken one of its kind between the pair — one promise on the sheet, not a corpse beside it" do
+      broke = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
+                                 terms: "Tomas makes Gu a hand net", status: "broken", game_time: 90)
+      capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "deed", "terms" => "Tomas brings Gu the net by dusk", "due" => "by dusk"))
+      expect(broke.reload.status).to eq("forgiven")
+      expect(Obligation.outstanding.involving(player.id).map(&:terms)).to eq([ "Tomas brings Gu the net by dusk" ])
+    end
+
     it "resolves a spoken 'where' to an existing location, link-only" do
       capture(deals("who_owes" => "Tomas", "owed_to" => "Gu", "kind" => "meet",
                     "terms" => "Meet in Saltmere at dusk", "due" => "at dusk", "where" => "saltmere"))
@@ -424,6 +455,17 @@ RSpec.describe Harness::Knowledge::Capture do
         expect(ob.reload.status).to eq("open")
         capture(discharge("id" => ob.id, "how" => "released"))
         expect(ob.reload.status).to eq("settled")
+      end
+
+      it "a BROKEN promise can still be made good by a receipt, or let go by the player's words — never a kept one, which the engine hands over itself" do
+        broke = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
+                                   terms: "Tomas makes Gu a hand net", status: "broken", game_time: 90)
+        capture(discharge("id" => broke.id, "how" => "delivered"))
+        expect(broke.reload.status).to eq("settled")
+        kept = Obligation.create!(debtor: speaker_row, creditor: player, kind: "deed",
+                                  terms: "Tomas brings Gu the net", status: "kept", game_time: 90)
+        capture(discharge("id" => kept.id, "how" => "delivered"))
+        expect(kept.reload.status).to eq("kept")
       end
 
       it "settles the row it names, not the oldest of its kind" do

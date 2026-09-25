@@ -185,7 +185,7 @@ RSpec.describe Harness::Turn::Loop do
     self.use_transactional_tests = false
 
     after do
-      [ TurnLog, SessionState, EventParticipant, Event, Character, Item, Location ].each(&:delete_all)
+      [ TurnLog, SessionState, EventParticipant, Event, Character, Item, Knowledge, Location ].each(&:delete_all)
     end
 
     it "writes a complete per-turn save-state file when snapshot_dir is set" do
@@ -277,6 +277,17 @@ RSpec.describe Harness::Turn::Loop do
   # The player's eyes: appended dead last on every non-combat turn, and
   # DISPLAY-ONLY — the prose renders but never enters scene history, the
   # context buffer, or the persisted narration (fact-laundering firewall).
+  describe "errands (a kept word is handed over in the scene)" do
+    it "delivers a kept errand when its debtor stands in the scene, settles the row, and renders it" do
+      smith = Npc.create!(name: "Hrothgar", subrole: "smith", location: tavern, home_location_id: tavern.id)
+      ob = Obligation.create!(debtor: smith, creditor: player, kind: "deed", status: "kept",
+                              terms: "Hrothgar trues the blade", subject: { "is" => "work" })
+      transcript = run(reasoning: [ { tool: "query_scene", args: {} } ])
+      expect(ob.reload.status).to eq("settled")
+      expect(transcript.narration).to include("Hrothgar keeps the bargain — Hrothgar trues the blade.")
+    end
+  end
+
   describe "silence then initiative" do
     let(:silent_runner) do
       Class.new(Harness::Runners::Base) do
@@ -477,6 +488,22 @@ RSpec.describe Harness::Turn::Loop do
       expect(lines.drop(1)).to eq([ "Low beams, a long bar.", "Present: Bess (barkeep).", "Here: tankard." ])
     end
 
+    it "renders a barred door's reason as a line, and any other transition error as nothing" do
+      barred = { "name" => "transition", "args" => { "destination_id" => 9 }, "result" => { "refused" => "closed", "error" => "the Smithy is shut and barred at this hour" } }
+      other  = { "name" => "transition", "args" => { "destination_id" => 9 }, "result" => { "error" => "no location with id=9" } }
+      expect(compose([ barred, other ]).map { |p| p[:text] }).to eq([ "The Smithy is shut and barred at this hour." ])
+    end
+
+    it "renders a kept errand and a failed hand-over as mechanical lines" do
+      bess  = Npc.create!(name: "Bess", subrole: "barkeep", location: tavern)
+      kept  = { "name" => "errand_kept", "args" => { "debtor_id" => bess.id, "terms" => "Bess fetches Osric", "brought" => "Osric" }, "result" => { "status" => "settled" } }
+      broke = { "name" => "errand_broken", "args" => { "debtor_id" => bess.id, "terms" => "Bess pays Hero two coins." }, "result" => { "status" => "broken" } }
+      expect(compose([ kept, broke ]).map { |p| p[:text] }).to eq([
+        "Bess keeps the bargain — Bess fetches Osric. Osric is on the way.",
+        "Bess cannot make good on it — Bess pays Hero two coins."
+      ])
+    end
+
     it "keeps both cards when the look is of a different place than the arrival" do
       transition = { "name" => "transition", "args" => {}, "result" => { "moved_to" => { "id" => tavern.id, "name" => "Tavern" } } }
       look = { "name" => "query_scene", "args" => {}, "result" => { "location" => { "name" => "Market" } } }
@@ -558,6 +585,12 @@ RSpec.describe Harness::Turn::Loop do
         { kind: :line, text: "Nothing of the kind in Stonehold." },
         { kind: :line, text: "You learn of the Alehouse — A low-beamed taproom." }
       ])
+    end
+
+    it "renders a refusal's own line when the record carries one" do
+      none = { "name" => "resolve_location", "args" => { "asked" => "go find Osric" },
+               "result" => { "status" => "refused", "settlement" => "Stonehold", "person" => "Osric", "line" => "No one has been asked." } }
+      expect(compose([ none ])).to eq([ { kind: :line, text: "No one has been asked." } ])
     end
 
     it "renders a runner's display_fragment verbatim and travel legs as lines" do

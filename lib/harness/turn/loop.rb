@@ -151,6 +151,9 @@ module Harness
           # runs after the turn's time advancement so this turn's initiative
           # and next turn's payloads see the breach. Non-fatal inside.
           ::Obligation.sweep_breaches!(@context.game_time, logger: logger)
+          # Errands owed to the player resolve at due the same way — kept
+          # (the debtor sets out with it) or broken past the grace.
+          ::Obligation.sweep_dues!(@context.game_time, logger: logger)
 
           # If the turn fired a transition / travel / threshold-
           # crossing pass_time, rebuild the scene NOW — before narration —
@@ -184,6 +187,11 @@ module Harness
           if (active = @scene_manager.active)
             ::Harness::Scene::Whereabouts.settle_kept_meets!(
               active.location, @context.game_time, Array(active.present_characters).map(&:id), logger: logger
+            )
+            # Kept errands are handed over the same way: the debtor in the
+            # room, the engine moves the thing or the coins and settles the row.
+            ::Harness::Errands.deliver!(
+              context: @context, transcript: transcript, present_ids: Array(active.present_characters).map(&:id), logger: logger
             )
           end
 

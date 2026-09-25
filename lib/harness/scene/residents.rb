@@ -18,7 +18,11 @@ module Harness
 
       def dormant?(c)  = c.properties.is_a?(Hash) && c.properties["dormant"] == true
       def follower?(c) = c.properties.is_a?(Hash) && c.properties["following_player"] == true
-      def deceased?(c) = !c.current_hp.nil? && c.current_hp <= 0
+      # Dead = had a body and lost it. A row with no max HP never had stats:
+      # a keeper named at layout and not yet met (unmaterialized?), whom
+      # Scene::Manager materialises on first meeting.
+      def deceased?(c)       = c.max_hp.to_i > 0 && c.current_hp.to_i <= 0
+      def unmaterialized?(c) = c.max_hp.to_i <= 0
 
       # The whole city of a location: the top-level root + every descendant.
       # A resident of any sublocation of THIS city counts as local.

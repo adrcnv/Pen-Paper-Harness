@@ -37,16 +37,15 @@ module Harness
           # mending-light brawl: label-first let the model commit "combat"
           # then write "this is a cast step. Wait," — deliberation after a
           # decision it couldn't take back).
-          # The addressee of a conversation step, by id or painted figure
-          # index (A1, 2026-09-16): the conversation runner polls them first
-          # and marks them addressed; nobody named is the room.
+          # The addressee of a conversation step, by id (A1, 2026-09-16): the
+          # conversation runner polls them first and marks them addressed;
+          # nobody named is the room.
           "properties" => {
             "reason"  => { "type" => "string" },
             "runner"  => { "type" => "string", "enum" => VALID_RUNNERS },
-            "with_id" => { "type" => %w[integer null] },
-            "figure"  => { "type" => %w[integer null] }
+            "with_id" => { "type" => %w[integer null] }
           },
-          "required" => %w[reason runner with_id figure],
+          "required" => %w[reason runner with_id],
           "additionalProperties" => false
         } }
       },
@@ -146,7 +145,7 @@ module Harness
       entry = {
         "runner" => runner,
         "reason" => step["reason"].to_s[0, 300],
-        "args"   => { "with_id" => step["with_id"], "figure" => step["figure"] }.select { |_, v| v.is_a?(Integer) }
+        "args"   => { "with_id" => step["with_id"] }.select { |_, v| v.is_a?(Integer) }
       }
       entry["invalid"] = "unknown runner #{runner.inspect}" unless VALID_RUNNERS.include?(runner)
       entry
@@ -166,7 +165,6 @@ module Harness
       payload = {
         "player_input"        => @input,
         "present_characters"  => world["present_characters"] || [],
-        "present_extras"      => world["present_extras"] || [],
         "present_items"       => world["present_items"] || [],
         "carried"             => world["carried"] || [],
         "nearby_locations"    => world["nearby_locations"] || [],
@@ -186,16 +184,11 @@ module Harness
       active = @scene_manager.active
 
       present_characters = []
-      present_extras = []
       present_items = []
       if active && active.location.id == loc.id
         present_characters = active.present_characters.map { |c|
           { "id" => c.id, "name" => c.name, "subrole" => c.subrole }
         }
-        # Painted figures are in the room too: addressing one is conversation
-        # (promotion mints them), not worldbuilding of someone "missing".
-        # Indexed, so a step can name the one addressed.
-        present_extras = Array(active.present_extras).each_with_index.map { |d, i| { "index" => i, "looks" => d } }
         # Fresh from the rows, not the scene snapshot: a table laid mid-scene
         # is on the floor of the DB but not in the snapshot, and the planner
         # could not bind a wager against butter it had watched being set out
@@ -213,7 +206,6 @@ module Harness
 
       {
         "present_characters"  => present_characters,
-        "present_extras"      => present_extras,
         "present_items"       => present_items,
         # What the player carries: without it "hold out the shield" read as a
         # gesture and every gift of a carried thing was routed as talk alone

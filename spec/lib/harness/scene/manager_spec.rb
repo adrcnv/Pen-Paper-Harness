@@ -504,4 +504,31 @@ RSpec.describe Harness::Scene::Manager do
       expect(Location.where(parent_id: profiled_city.id).count).to eq(count)
     end
   end
+
+  describe "keepers named at layout" do
+    # Entry wiring only: the cast and the internal-state pass are stubbed out.
+    before do
+      allow(Harness::Scene::Materializer).to receive(:new).and_return(
+        instance_double(Harness::Scene::Materializer, materialize: { promoted: [], spawned: [] })
+      )
+      allow(Harness::Scene::InternalState).to receive(:new).and_return(
+        instance_double(Harness::Scene::InternalState,
+                        generate: Harness::Scene::InternalState::Result.new(internal_state: {}, agendas: {}, extras: []))
+      )
+    end
+
+    it "names every trade room's keeper on entry to the town and gives the one met a body — the town knows its smith's name before the player does" do
+      tavern.update!(properties: { "trade" => "barkeep" })
+      smithy = Location.create!(name: "Smithy", parent: city, properties: { "trade" => "smith" })
+      ctx = Harness::Turn::Context.new(player_location: tavern, llm_client: stub_llm, llm_grunt: stub_llm)
+      described_class.new(context: ctx, logger: logger, rng: Random.new(1)).ensure_entered
+      smith = Npc.find_by(home_location_id: smithy.id, subrole: "smith")
+      expect(smith).to be_present
+      expect(smith.max_hp).to eq(0)                 # named, not yet met
+      keeper = Npc.find_by(home_location_id: tavern.id, subrole: "barkeep")
+      expect(keeper).to be_present
+      expect(keeper.max_hp).to be > 0               # met here: materialised at entry
+      expect(Npc.where(home_location_id: tavern.id, subrole: "barkeep").count).to eq(1)
+    end
+  end
 end

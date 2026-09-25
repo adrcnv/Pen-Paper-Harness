@@ -34,6 +34,33 @@ RSpec.describe Harness::Scene::Active do
     end
   end
 
+  describe "stance (the ladder outlives the scene)" do
+    let!(:npc) { Npc.create!(name: "Sefa", subrole: "miller", location: loc) }
+
+    it "a shift writes through to the NPC's row" do
+      a = make
+      a.shift_disposition!(npc.id, "colder")
+      expect(a.disposition_for(npc.id)).to eq("guarded")
+      expect(npc.reload.properties["stance"]).to eq("guarded")
+    end
+
+    it "a fresh scene starts the ladder from the row" do
+      make.set_disposition!(npc.id, "hostile")
+      expect(npc.reload.properties["stance"]).to eq("hostile")
+      expect(make.disposition_for(npc.id)).to eq("hostile")
+      expect(make.shift_disposition!(npc.id, "warmer")).to eq("guarded")
+    end
+
+    it "no stance on the row, or no row at all, starts neutral; a rowless id stays scene-only" do
+      a = make
+      expect(a.disposition_for(npc.id)).to eq("neutral")
+      expect(a.disposition_for(nil)).to eq("neutral")
+      expect(npc.reload.properties["stance"]).to be_nil
+      a.shift_disposition!(999_999, "warmer")
+      expect(a.disposition_for(999_999)).to eq("warm")
+    end
+  end
+
   describe "combat sub-mode" do
     it "in_combat? false until start_combat!" do
       a = make

@@ -6,7 +6,7 @@ RSpec.describe Harness::Runners::Worldbuilding do
   let!(:player) { Player.create!(name: "Hero", location: city) }
   let(:step)    { Harness::Dispatcher::Step.new(runner: "worldbuilding", intent: "find a tavern", args: {}) }
 
-  def ctx(&block) = Harness::Turn::Context.new(player_location: city, llm_grunt: StubLLM.new(&block), game_time: 100)
+  def ctx(game_time: 100, &block) = Harness::Turn::Context.new(player_location: city, llm_grunt: StubLLM.new(&block), game_time: game_time)
   def run(input, context) = described_class.new.run(context: context, scene: Harness::Tools::QueryScene.build(context), input: input, step: step)
 
   it "answers with the room the town has, as a discovery record, creating nothing" do
@@ -40,5 +40,19 @@ RSpec.describe Harness::Runners::Worldbuilding do
 
   it "has no author to redispatch to: an unreadable judge answer is a refusal" do
     expect(run("make a thing", ctx { "not json" }).status).to eq(:ok)
+  end
+
+  describe "a person asked for" do
+    def person(name) = ctx { %({"reasoning": "a person", "is": "person", "room_id": null, "scenery": null, "person": "#{name}"}) }
+
+    it "answers nothing about them, known or not: no line about them, no place to walk to (a quest marker)" do
+      Npc.create!(name: "Hengist", subrole: "smith", location: tavern, home_location_id: tavern.id, current_hp: 5, max_hp: 5)
+      [ run("where would I find Hengist?", person("Hengist")), run("go find Osric", person("Osric")) ].each do |outcome|
+        tc = outcome.tool_calls.first
+        expect(tc["result"]).to include("status" => "refused", "line" => "No one has been asked.")
+        expect(tc["result"]).not_to have_key("location_id")
+        expect(tc.to_json).not_to include("Alehouse")
+      end
+    end
   end
 end

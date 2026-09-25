@@ -293,6 +293,13 @@ module Harness
             pairs << pair
             next
           end
+          # A renewed promise replaces the one it broke — same pair, same
+          # kind, the old row broken: it leaves the books as superseded, so
+          # the sheet shows one promise, not a corpse beside it (deeds-1 t19).
+          ::Obligation.where(status: "broken", debtor_id: debtor.id, creditor_id: creditor.id, kind: d["kind"].to_s).find_each do |old|
+            old.update!(status: "forgiven")
+            @logger.info { "[Knowledge::Capture] OBLIGATION ##{old.id} superseded by a renewed #{old.kind} promise" }
+          end
           amount = d["amount"].is_a?(::Integer) && d["amount"].positive? ? d["amount"] : nil
           row = ::Obligation.create!(
             debtor: debtor, creditor: creditor, kind: d["kind"].to_s, amount: amount,
@@ -302,6 +309,12 @@ module Harness
           )
           pairs << pair
           @logger.info { "[Knowledge::Capture] OBLIGATION ##{row.id} #{debtor.name} owes #{creditor.name} (#{row.kind}#{amount ? " #{amount}" : ''}): #{row.terms}" }
+          # An errand owed to the player is bound to what it is owed in while
+          # the words are fresh (Errands.bind: a carried thing, a kind to
+          # mint, a person's row) — delivery reads the binding, never prose.
+          if row.kind == "deed" && creditor.is_a?(::Player) && @context
+            row.update!(subject: ::Harness::Errands.bind(terms: row.terms, debtor: debtor, context: @context, logger: @logger))
+          end
         rescue ::StandardError => e
           @logger.warn { "[Knowledge::Capture] deal write failed: #{e.class}: #{e.message}" }
         end
@@ -362,9 +375,9 @@ module Harness
         pair = [ speaker.id, player.id ].sort
 
         discharges.each do |d|
-          ob = ::Obligation.open_now.find_by(id: d["id"])
+          ob = ::Obligation.where(status: %w[open broken]).find_by(id: d["id"])
           unless ob && [ ob.debtor_id, ob.creditor_id ].sort == pair
-            @logger.info { "[Knowledge::Capture] discharge dropped (no open debt ##{d['id']} between #{speaker.name} and #{player.name})" }
+            @logger.info { "[Knowledge::Capture] discharge dropped (no standing debt ##{d['id']} between #{speaker.name} and #{player.name})" }
             next
           end
           if ob.kind == "coins" && d["how"] != "released"
@@ -511,6 +524,7 @@ module Harness
               @logger.info { "[Knowledge::Capture] revision of knowledge ##{old.id} added nothing — skipped as semantic duplicate :: #{content}" }
               return nil
             end
+            return doctrine_stands(old, content) if doctrine?(old)
             return supersede(old, merged)
           when "contradicts"
             @logger.info { "[Knowledge::Capture] CONTRADICTS knowledge ##{old.id} — standing fact kept (stance, not fact-edit) :: #{content}" }
@@ -771,6 +785,7 @@ module Harness
             @logger.info { "[Knowledge::Capture] addition to knowledge ##{old.id} added nothing — skipped :: #{content}" }
             return nil
           end
+          return doctrine_stands(old, content) if doctrine?(old)
           supersede(old, merged)
         when "contradicts"
           @logger.info { "[Knowledge::Capture] addition CONTRADICTS knowledge ##{old.id} — standing fact kept :: #{content}" }
@@ -787,6 +802,20 @@ module Harness
       # One grunt call: extends / contradicts / unrelated (+ merged text).
       # Any failure degrades to "unrelated" — the fact writes fresh rather
       # than being lost.
+      # The town's own rows (Settlement::Doctrine, from the manifest and the
+      # cast) are not revised by a telling. A voice's "as affirmed by Nadya
+      # Zelenin" merged onto "Volslav has no reeve or magistrate" and every
+      # NPC in town then cited a conversation they never heard; "the nearest
+      # smith is in Stillwater" would have written an invented town into the
+      # roster (roster-4). A restatement is carried by the row already; an
+      # embellishment is the speaker's colour, not the town's shape.
+      def doctrine?(row) = row.source_kind == ::Harness::Settlement::Doctrine::SOURCE
+
+      def doctrine_stands(row, content)
+        @logger.info { "[Knowledge::Capture] town doctrine ##{row.id} stands — not revised by a telling :: #{content}" }
+        nil
+      end
+
       def judge_revision(old, content)
         payload = { "standing_fact" => old.content, "new_statement" => content }
         raw = ::Harness::CostTracker.in_subsystem(:knowledge_capture) do

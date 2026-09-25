@@ -25,7 +25,7 @@ RSpec.describe Harness::Runners::Movement do
     expect(player.reload.location_id).to eq(smithy.id)
   end
 
-  it "skips (chain survives) when the destination's door is barred — a shut smithy at night" do
+  it "a barred door is an answer, not a dead end: the step is done, the player stays, and the refusal rides in the record with its reason" do
     smithy
     ctx = context_with { { "action" => "transition", "target_id" => smithy.id, "place_name" => nil }.to_json }
     ctx.game_time = 23 * 60
@@ -33,9 +33,13 @@ RSpec.describe Harness::Runners::Movement do
 
     outcome = described_class.new.run(context: ctx, scene: scene, input: "go to the smithy", step: step)
 
-    expect(outcome.status).to eq(:skipped)
+    expect(outcome.status).to eq(:ok)
+    expect(outcome.scene_dirty).to be(false)
     expect(outcome.note).to match(/shut and barred/)
+    expect(outcome.tool_calls.last).to include("name" => "transition")
+    expect(outcome.tool_calls.last["result"]).to include("refused" => "closed")
     expect(player.reload.location_id).to eq(tavern.id)
+    expect(Harness::Turn::Parts.render_call(outcome.tool_calls.last, ctx, nil)[:text]).to match(/\A[[:upper:]].* is shut and barred at this hour\.\z/)
   end
 
   it "HALTS the turn (no transition) when the player declines the scene-change gate" do
@@ -125,6 +129,21 @@ RSpec.describe Harness::Runners::Movement do
       expect(outcome.scene_dirty).to be(true)
       expect(outcome.tool_calls.map { |t| t["name"] }).to eq([ "transition" ])
       expect(player.reload.location_id).to eq(smithy.id)
+    end
+
+    it "a chain-created destination behind a barred door is the same answer — never a re-plan into the same door (deeds-nem t17)" do
+      smithy
+      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 23 * 60)
+      s = Harness::Dispatcher::Step.new(runner: "movement", intent: "enter",
+        args: { "_resolved_destination" => { "id" => smithy.id, "type" => "sublocation", "name" => "Smithy" } })
+      scene = Harness::Tools::QueryScene.build(ctx)
+
+      outcome = described_class.new.run(context: ctx, scene: scene, input: "go inside", step: s)
+
+      expect(outcome.status).to eq(:ok)
+      expect(outcome.scene_dirty).to be(false)
+      expect(outcome.tool_calls.last["result"]).to include("refused" => "closed")
+      expect(player.reload.location_id).to eq(tavern.id)
     end
 
     it "routes a chain-created wilderness_leaf to travel (not transition)" do

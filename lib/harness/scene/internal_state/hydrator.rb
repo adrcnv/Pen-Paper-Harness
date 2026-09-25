@@ -19,7 +19,7 @@ module Harness
         EXTRA_MAX_LEN    = 200
         # Raised to support the populated-place-with-no-named-characters case
         # (e.g., a city's market with no character rows yet — the LLM emits
-        # 2-4 ambient figures so narration has scene flavor to render).
+        # 2-4 lines of ambient life so narration has scene flavor to render).
         MAX_EXTRAS       = 4
         AGENDA_MAX_LEN   = 250
         DOING_MAX_LEN    = 80
@@ -29,7 +29,7 @@ module Harness
         # Returns Result(internal_states: {name => prose}, agendas: {name => text}, extras: [str, ...]).
         # The orchestrator maps names back to character_ids when committing
         # to the Active scene. Extras are scene-bound, RAM-only ambient
-        # nameless figures (the "an old fisherman nursing a beer" line).
+        # ambient life (the "a dog asleep under the corner table" line).
         # agendas is per-present-character (their angle toward the player this
         # scene); some characters have none (omitted). The initiative consumer
         # reads these to decide who, if anyone, acts on a given turn.

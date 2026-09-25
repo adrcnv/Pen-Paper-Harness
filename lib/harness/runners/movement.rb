@@ -45,10 +45,7 @@ module Harness
           return declined(dest_name) unless confirm_scene_change(context, dest_name)
           res, ok = execute_tool(resolver, "transition", { "destination_id" => tid }, into: tcs)
           unless ok
-            # A barred door is deterministic (venue shut at this hour) —
-            # skip so the rest of the chain survives; the refusal rides in
-            # tcs and the stall renders diegetically via `unresolved`.
-            return skip(res["error"], tcs) if res.is_a?(::Hash) && res["refused"] == "closed"
+            return barred(res, tcs) if barred?(res)
             return redispatch("transition failed for id=#{tid}", tcs)
           end
           Outcome.new(tool_calls: tcs, scene_dirty: true, status: :ok)
@@ -114,10 +111,30 @@ module Harness
         resolver = resolver_for(context)
         tcs = []
         tool = dest["type"].to_s == "wilderness_leaf" ? "travel" : "transition"
-        _, ok = execute_tool(resolver, tool, { "destination_id" => dest["id"] }, into: tcs)
-        return redispatch("#{tool} failed for chain-created location id=#{dest['id']}", tcs) unless ok
+        res, ok = execute_tool(resolver, tool, { "destination_id" => dest["id"] }, into: tcs)
+        unless ok
+          # The door linked the ask to a real room that is shut at this hour:
+          # an answer, not a stale plan (deeds-nem t17: the Landing at dawn,
+          # re-planned twice into the same barred door, and the cap rendered
+          # "transition failed for chain-created location id=25").
+          return barred(res, tcs) if barred?(res)
+          return redispatch("#{tool} failed for chain-created location id=#{dest['id']}", tcs)
+        end
         @logger.debug { "[Runner movement] entered chain-created #{dest['name'].inspect} via #{tool}" }
         Outcome.new(tool_calls: tcs, scene_dirty: true, status: :ok, note: "entered #{dest['name']}")
+      end
+
+      # A barred door is the world's answer, not a dead end: the venue is shut
+      # at this hour. The refusal rides in tcs and Parts renders its reason as
+      # a line in causal order — no null line for a sibling to swallow, no
+      # re-plan into the same door, no out-of-character notice (deeds-3 t17,
+      # deeds-nem t10/t17: "Nothing comes of it — Walk to the Landing" with a
+      # notice, for a door that was simply shut).
+      def barred?(res) = res.is_a?(::Hash) && res["refused"] == "closed"
+
+      def barred(res, tcs)
+        @logger.info { "[Runner movement] barred: #{res['error']}" }
+        Outcome.new(tool_calls: tcs, scene_dirty: false, status: :ok, note: res["error"])
       end
 
       def movement_targets(scene)

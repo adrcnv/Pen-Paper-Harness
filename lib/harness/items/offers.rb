@@ -105,28 +105,6 @@ module Harness
         item
       end
 
-      # A painted figure's object, made real with the figure. The eyes paint
-      # "an old man balancing a wheel of cheese on his knee"; the player asks
-      # the price; the voice quotes cheese that has no row (items run 6, t1).
-      # At promotion the description is read against the library and the
-      # first matching kind goes on the new person's table, under their name,
-      # at the engine's price. One thing, budget-stamped; nil when nothing in
-      # the description is a thing the library knows.
-      def materialize_described!(npc, desc, location, game_time)
-        return nil unless npc && location && desc.to_s.strip != ""
-        template = %w[provisions goods weapons armor jewelry].lazy
-                   .map { |c| ::Harness::Items::Library.template_matching(c, desc) }.find(&:itself)
-        return nil unless template
-        item  = ::Harness::Items::Generator.instantiate(template, location: location)
-        props = item.properties.is_a?(Hash) ? item.properties.dup : {}
-        props["for_sale"]  = true
-        props["seller_id"] = npc.id
-        kind = ::Harness::Items::Library.kind_matching(template, desc)   # the thing as painted, not a random kin of it
-        item.update!(name: kind || item.name, properties: props)
-        stamp!(npc, game_time)
-        item
-      end
-
       # Count this materialisation against the character's phase budget. Only
       # the current phase is kept — the row never accumulates history.
       def stamp!(npc, game_time)

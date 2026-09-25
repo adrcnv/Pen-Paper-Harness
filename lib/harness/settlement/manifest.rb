@@ -40,6 +40,24 @@ module Harness
           rows.filter_map { |r| r["subrole"] }.uniq
         end
 
+        # The civic spine: the rooms every settlement lays out when large or
+        # rich enough, plus the trade rooms a player asks after anywhere
+        # (`asked_after: true` — the tannery, the mill). Their trades are
+        # the offices a town holds once and the ones it can be said to lack.
+        def civic_subroles
+          d = data
+          rows  = (d["universal"] || []) + (d["by_size"] || []) + (d["by_wealth"] || [])
+          rows += (d["by_basis"] || {}).values.flatten.select { |r| r["asked_after"] }
+          rows.filter_map { |r| r["subrole"] }.uniq
+        end
+
+        # Trades worked by a crew rather than held by one keeper (`crew: true`).
+        def crew_subroles
+          d = data
+          rows = (d["universal"] || []) + (d["by_size"] || []) + (d["by_wealth"] || []) + (d["by_basis"] || {}).values.flatten
+          rows.select { |r| r["crew"] }.filter_map { |r| r["subrole"] }.uniq
+        end
+
         private
 
         def candidate_templates(basis)

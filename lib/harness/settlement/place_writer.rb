@@ -18,10 +18,13 @@ module Harness
     module PlaceWriter
       PROMPT_PATH = Rails.root.join("lib/harness/prompts/place_bind.txt")
 
+      # key: the scenery kind minted or linked; for :person — no place, an
+      # ask for someone by name (the worldbuilding runner's business) — the
+      # name.
       Result = Struct.new(:location, :status, :key, keyword_init: true) do
         def linked?  = status == :linked
         def minted?  = status == :minted
-        def refused? = status == :refused
+        def refused? = %i[refused person].include?(status)
       end
       REFUSED = Result.new(location: nil, status: :refused, key: nil).freeze
 
@@ -29,11 +32,12 @@ module Harness
         "type" => "object",
         "properties" => {
           "reasoning" => { "type" => "string" },
-          "is"        => { "type" => "string", "enum" => %w[listed_room scenery neither] },
+          "is"        => { "type" => "string", "enum" => %w[listed_room scenery person neither] },
           "room_id"   => { "type" => %w[integer null] },
-          "scenery"   => { "anyOf" => [ { "type" => "null" }, { "type" => "string", "enum" => Scenery.keys } ] }
+          "scenery"   => { "anyOf" => [ { "type" => "null" }, { "type" => "string", "enum" => Scenery.keys } ] },
+          "person"    => { "type" => %w[string null] }
         },
-        "required" => %w[reasoning is room_id scenery],
+        "required" => %w[reasoning is room_id scenery person],
         "additionalProperties" => false
       }.freeze
 
@@ -70,6 +74,12 @@ module Harness
           if loc
             logger.info { "[Settlement::PlaceWriter] #{source} #{nm.inspect} is scenery #{bind['scenery']} → #{minted ? 'MINTED' : 'links'} #{loc.name.inspect} (##{loc.id})" }
             return Result.new(location: loc, status: (minted ? :minted : :linked), key: bind["scenery"])
+          end
+        when "person"
+          key = bind["person"].to_s.strip
+          unless key.empty?
+            logger.info { "[Settlement::PlaceWriter] #{source} #{nm.inspect} asks for a person: #{key.inspect}" }
+            return Result.new(location: nil, status: :person, key: key)
           end
         end
         logger.info { "[Settlement::PlaceWriter] #{source} #{nm.inspect} refused: #{bind ? bind['reasoning'].to_s[0, 80].inspect : 'no bind'}" }

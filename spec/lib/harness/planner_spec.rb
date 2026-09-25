@@ -84,33 +84,25 @@ RSpec.describe Harness::Planner do
       expect(captured).to include("Oakenford") # parent city in nearby_locations
     end
 
-    it "surfaces painted figures (extras) so addressing one reads as conversation, not worldbuilding" do
-      captured = nil
-      a = adapter(->(user) { captured = user; { "plan" => [] }.to_json })
-
-      plan_for(model: a, location: tavern, sm: scene_manager_for(tavern, extras: [ "a hunched figure mending a net" ]), input: "talk to the figure")
-
-      expect(JSON.parse(captured.sub(/\AINPUT:\n/, ""))["present_extras"]).to eq([ { "index" => 0, "looks" => "a hunched figure mending a net" } ])
-    end
   end
 
   describe "the addressee (A1): whom a conversation step's words are for" do
-    it "binds with_id or figure from the step into its args, ints only; nothing named is the room" do
+    it "binds with_id from the step into its args, ints only; nothing named is the room" do
       body = { "reasoning" => "single step", "plan" => [
-        { "reason" => "ask Tomas", "runner" => "conversation", "with_id" => npc.id, "figure" => nil },
-        { "reason" => "hand it over", "runner" => "inventory", "with_id" => nil, "figure" => nil },
-        { "reason" => "ask the figure", "runner" => "conversation", "with_id" => nil, "figure" => 0 }
+        { "reason" => "ask Tomas", "runner" => "conversation", "with_id" => npc.id },
+        { "reason" => "hand it over", "runner" => "inventory", "with_id" => nil },
+        { "reason" => "ask the room", "runner" => "conversation", "with_id" => "Tomas" }
       ] }.to_json
-      result = plan_for(model: adapter(body), location: tavern, sm: scene_manager_for(tavern, characters: [ npc ], extras: [ "a hunched figure" ]), input: "…")
-      expect(result["plan"].map { |st| st["args"] }).to eq([ { "with_id" => npc.id }, {}, { "figure" => 0 } ])
+      result = plan_for(model: adapter(body), location: tavern, sm: scene_manager_for(tavern, characters: [ npc ]), input: "…")
+      expect(result["plan"].map { |st| st["args"] }).to eq([ { "with_id" => npc.id }, {}, {} ])
     end
 
     it "the plan grammar: reason before runner, the addressee fields required-nullable; every field the prompt names is in the grammar" do
       step = described_class::PLAN_SCHEMA["properties"]["plan"]["items"]
-      expect(step["properties"].keys).to eq(%w[reason runner with_id figure])
+      expect(step["properties"].keys).to eq(%w[reason runner with_id])
       expect(step["required"]).to eq(step["properties"].keys)
       named = File.read(described_class::PROMPT_PATH).split("You output STRICT JSON", 2).last.split("RUNNER LABELS", 2).first.scan(/"(\w+)":/).flatten.uniq
-      expect(named.sort).to eq(%w[figure plan reason reasoning runner with_id])
+      expect(named.sort).to eq(%w[plan reason reasoning runner with_id])
     end
   end
 

@@ -300,4 +300,13 @@ RSpec.describe Harness::Scene::Materializer do
       }
     end
   end
+
+  describe "unique offices" do
+    it "drops a cast entry for an office the town already holds (no second reeve), and keeps the rest" do
+      Npc.create!(name: "Osric", subrole: "reeve", location: city, home_location_id: city.id, current_hp: 5, max_hp: 5)
+      llm = fake_llm({ "reuse" => [], "spawn" => [ { "subrole" => "reeve" }, { "subrole" => "fisher" } ] })
+      out = described_class.new(llm_client: llm).materialize(location: tavern, target_count: 2)
+      expect(out[:spawned].map(&:subrole)).to eq([ "fisher" ])
+    end
+  end
 end

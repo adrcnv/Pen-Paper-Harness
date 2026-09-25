@@ -73,7 +73,17 @@ RSpec.describe Harness::Settlement::PlaceWriter do
       expect { expect(resolve("Corin's Forge")).to be_refused }.not_to change(Location, :count)
     end
 
-    it "refuses a room id the judge made up" do
+    it "answers an ask for a person as no place, carrying the name" do
+    tavern
+    @answer = %({"reasoning": "Osric is a person", "is": "person", "room_id": null, "scenery": null, "person": "Osric"})
+    res = resolve("where would I find Osric?", source: :ask)
+    expect(res).to be_refused
+    expect(res.status).to eq(:person)
+    expect(res.key).to eq("Osric")
+    expect(res.location).to be_nil
+  end
+
+  it "refuses a room id the judge made up" do
       tavern
       @answer = %({"reasoning": "the hall", "is": "listed_room", "room_id": 999999, "scenery": null})
       expect(resolve("the Grand Hall")).to be_refused

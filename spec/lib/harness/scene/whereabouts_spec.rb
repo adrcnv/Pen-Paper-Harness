@@ -59,6 +59,13 @@ RSpec.describe Harness::Scene::Whereabouts do
       expect(described_class.resolve(keeper, WB_EVENING)).to eq(mirehold.id)
     end
 
+    it "puts the keeper of a trade room with no venue word in its name at their post by day (the moot hall's reeve)" do
+      hall  = Location.create!(name: "Moot Hall", parent_id: mirehold.id, properties: { "kind" => "sublocation", "trade" => "reeve" })
+      reeve = npc(subrole: "reeve", location_id: mirehold.id, home_location_id: hall.id)
+      expect(described_class.resolve(reeve, WB_NOON)).to eq(hall.id)
+      expect(described_class.resolve(reeve, WB_EVENING)).to eq(mirehold.id)
+    end
+
     it "resolves a sleeping settlement NPC nowhere (abstract housing)" do
       citizen = npc(location_id: mirehold.id, home_location_id: mirehold.id)
       expect(described_class.resolve(citizen, WB_NIGHT)).to be_nil
@@ -280,6 +287,39 @@ RSpec.describe Harness::Scene::Whereabouts do
                                  terms: "five owed", due_time: WB_NOON + 30, location_id: tavern.id)
       described_class.settle_kept_meets!(tavern, WB_NOON, [ other.id ])
       expect(coins.reload.status).to eq("open")
+    end
+  end
+
+  describe "the kept-errand tier (a kept errand brings the debtor to the player)" do
+    let!(:player) { Player.create!(name: "Hero", location_id: tavern.id) }
+    let(:keeper)  { npc(location_id: smithy.id, home_location_id: smithy.id) }
+
+    it "puts the debtor wherever the player is, over their open post, and into the roster there" do
+      Obligation.create!(kind: "deed", status: "kept", debtor: keeper, creditor: player, terms: "bring the axe")
+      expect(described_class.resolve(keeper, WB_MORNING)).to eq(tavern.id)
+      expect(described_class.present_at(tavern, WB_MORNING)).to include(keeper)
+    end
+
+    it "brings a visitor who promised here — anchored elsewhere, standing in this settlement — but not one who has gone home" do
+      far     = Location.create!(name: "Coldleigh", x: 9.0, y: 9.0)
+      visitor = npc(location_id: tavern.id, home_location_id: far.id)
+      Obligation.create!(kind: "deed", status: "kept", debtor: visitor, creditor: player, terms: "bring the axe")
+      player.update!(location_id: smithy.id)
+      expect(described_class.resolve(visitor, WB_MORNING)).to eq(smithy.id)
+      visitor.update!(location_id: far.id)
+      expect(described_class.resolve(visitor, WB_MORNING)).not_to eq(smithy.id)
+    end
+
+    it "does not chase the player to another settlement, and lets an open or settled row alone" do
+      far = Location.create!(name: "Coldleigh", x: 9.0, y: 9.0)
+      ob  = Obligation.create!(kind: "deed", status: "kept", debtor: keeper, creditor: player, terms: "bring the axe")
+      player.update!(location_id: far.id)
+      expect(described_class.resolve(keeper, WB_MORNING)).to eq(smithy.id)
+      player.update!(location_id: tavern.id)
+      ob.update!(status: "open")
+      expect(described_class.resolve(keeper, WB_MORNING)).to eq(smithy.id)
+      ob.update!(status: "settled")
+      expect(described_class.resolve(keeper, WB_MORNING)).to eq(smithy.id)
     end
   end
 end

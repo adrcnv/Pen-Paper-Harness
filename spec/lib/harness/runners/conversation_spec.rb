@@ -36,8 +36,8 @@ RSpec.describe Harness::Runners::Conversation do
   end
 
   def step(intent = "ask the barkeep") = Harness::Dispatcher::Step.new(runner: "conversation", intent: intent, args: {})
-  # A step whose words the plan addressed to one present character (by id) or one painted figure (by index).
-  def step_to(id, figure: nil) = Harness::Dispatcher::Step.new(runner: "conversation", intent: "talk", args: { "with_id" => id, "figure" => figure }.compact)
+  # A step whose words the plan addressed to one present character (by id).
+  def step_to(id) = Harness::Dispatcher::Step.new(runner: "conversation", intent: "talk", args: { "with_id" => id }.compact)
   # A voicing prompt, as opposed to any judge's (act, contest, memory, taking stock, recall).
   def voicing?(p) = !(p.include?("WORLD MEMORY") || p.include?("TAKING STOCK") || p.include?("filter stored facts") || p.include?(ACT_MARK) || p.include?("CONTEST") || p.include?(CHIME_MARK) || p.include?(ADDRESS_MARK))
 
@@ -766,14 +766,6 @@ RSpec.describe Harness::Runners::Conversation do
       expect(consent).not_to include(other.name)
     end
 
-    it "a painted figure has no id to bind: the words for one open no contest this turn (run 7 t17: 'Mara won't play' while the traveler declined)" do
-      seen = []
-      ctx, = contest_ctx(kind: kind("wager", barkeep.id), seen: seen)
-      ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern), extras: [ "a traveler in a mud-stained cloak" ])
-      described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "wager you five coins on a toss", step: step_to(nil, figure: 0))
-      expect(prompts(seen, KIND_MARK)).to be_empty
-      expect(prompts(seen, "CONTEST: CONSENT")).to be_empty
-    end
     def payload_of(prompt)
       body = prompt.split("INPUT:\n", 2).last
       JSON.parse(body[0..body.rindex("}")])
@@ -1701,136 +1693,15 @@ RSpec.describe Harness::Runners::Conversation do
 
   # Regression: speaking to an ambient extra materializes that figure and speaks
   # AS it (rather than redirecting to the nearest real NPC).
-  describe "promoting an extra speaker" do
+  describe "extras are scenery (ruling 2026-09-25: the background holds no people)" do
     let(:recruit_desc) { "a young recruit shivering by the hearth, trying to dry his socks" }
-
-    it "materializes the extra and stages a dialogue line spoken by the new character" do
-      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
-        llm_nuance: StubLLM.new { |full|
-          if full.include?(recruit_desc)   # only the extra's own call carries its description
-            { "speak" => true, "subrole" => "recruit",
-              "dialogue" => { "summary" => "stammers a reply", "prose" => "The young one mumbles a nervous answer." } }.to_json
-          else
-            { "speak" => false }.to_json   # the barkeep stays out of it
-          end
-        })
-      ctx.active_scene = Harness::Scene::Active.new(
-        location: tavern,
-        snapshot: Harness::Scene::Assembler.for(location: tavern),
-        extras: [ recruit_desc ]
-      )
-      scene = Harness::Tools::QueryScene.build(ctx)
-
-      expect {
-        @outcome = described_class.new.run(context: ctx, scene: scene, input: "talk to the recruit", step: step_to(nil, figure: 0))
-      }.to change(Npc, :count).by(1)
-
-      pc = @outcome.tool_calls.find { |t| t["name"] == "propose_character" }
-      new_id = pc.dig("result", "character_id")
-      expect(pc.dig("args", "from_extra")).to eq(recruit_desc)
-
-      say = @outcome.tool_calls.find { |t| t["name"] == "propose_event" && t.dig("result", "staged") }
-      actor_ids = say.dig("args", "participants").select { |p| p["role"] == "actor" }.map { |p| p["character_id"] }
-      expect(actor_ids).to eq([ new_id ]) # the recruit speaks, not the barkeep
-    end
 
     # Regression (the Reeds, run 2): two extras spoke in one turn; the first
     # promotion deleted its description IN PLACE from the array the runner's
     # scene hash aliased, so the second promotion looked up a shifted index
     # and minted the wrong figure. Scene arrays are now replaced, never
     # mutated: the captured view keeps its order, the Active moves on.
-    it "the figure's trade and gender are judged once at promotion from its description, not named in the emit: the judge sees the looks and the trades alphabet, the row gets the trade, the name follows the gender" do
-      seen = []
-      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
-        llm_nuance: StubLLM.new { |full|
-          seen << full
-          if full.include?("WHO IS THIS FIGURE")
-            { "reasoning" => "an old woman at her nets", "trade" => "net_mender", "gender" => "female" }.to_json
-          elsif full.include?("wool, mending a net")
-            { "speak" => true, "dialogue" => { "summary" => "answers", "prose" => "The old woman squints. \"Nets don't mend themselves.\"" } }.to_json
-          elsif full.include?(KIND_MARK) then NO_CONTEST.to_json
-          elsif full.include?(ACT_MARK) then NONE.to_json
-          elsif full.include?("WORLD MEMORY") || full.include?("TAKING STOCK") then { "facts" => [], "people" => [], "places" => [] }.to_json
-          else { "speak" => false }.to_json
-          end
-        })
-      ctx.active_scene = Harness::Scene::Active.new(location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern), extras: [ "an old woman wrapped in wool, mending a net" ])
-      expect {
-        described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: "talk to the old woman", step: step_to(nil, figure: 0))
-      }.to change(Npc, :count).by(1)
-      judge = JSON.parse(seen.find { |p| p.include?("WHO IS THIS FIGURE") }.split("INPUT:\n", 2).last)
-      expect(judge["looks"]).to eq("an old woman wrapped in wool, mending a net")
-      expect(judge["trades"]).to include("net_mender", "commoner")
-      minted = Npc.order(:id).last
-      expect(minted.subrole).to eq("net_mender")
-      expect(minted.properties["gender"]).to eq("female") if minted.properties.key?("gender")
-      expect(described_class::VOICING_SCHEMA["properties"]).not_to have_key("subrole")
-      schema = Harness::Runners::Base.new.send(:promotion_schema)
-      expect(schema["properties"].keys).to eq(%w[reasoning trade gender])
-      expect(schema["required"]).to eq(schema["properties"].keys)
-      named = File.read(Harness::Runners::Base::PROMOTION_PATH).split("Output:", 2).last.scan(/"(\w+)":/).flatten.uniq
-      expect(named.sort).to eq(schema["properties"].keys.sort)
-    end
-
-    it "promotes the figure the plan addressed by index under its OWN description — the second of three, not the first (no index shift)" do
-      huddled  = "a huddled figure under a frayed blanket near the firepit"
-      traveler = "a thin traveler in a damp cloak, scanning the reeds"
-      woman    = "an old woman wrapped in wool, quietly mending a net"
-      voiced = []
-      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
-        llm_nuance: StubLLM.new { |full|
-          voiced << full if voicing?(full)
-          if full.include?(traveler)
-            { "speak" => true, "subrole" => "wanderer", "dialogue" => { "summary" => "adds", "prose" => "The traveler says the print led east." } }.to_json
-          else
-            { "speak" => false }.to_json
-          end
-        })
-      ctx.active_scene = Harness::Scene::Active.new(
-        location: tavern, snapshot: Harness::Scene::Assembler.for(location: tavern),
-        extras: [ huddled, traveler, woman ]
-      )
-      scene = Harness::Tools::QueryScene.build(ctx)
-
-      outcome = described_class.new.run(context: ctx, scene: scene, input: "ask the traveler about the reeds", step: step_to(nil, figure: 1))
-
-      minted = outcome.tool_calls.select { |t| t["name"] == "propose_character" }
-      expect(minted.map { |t| t.dig("args", "from_extra") }).to eq([ traveler ])
-      expect(Npc.find(minted.first.dig("result", "character_id")).properties["physical"]).to eq(traveler)
-      expect(voiced.any? { |v| v.include?(huddled) }).to be(false)                # only the addressed figure is polled
-      expect(scene["present_extras"]).to eq([ huddled, traveler, woman ])         # the runner's view never shifted
-      expect(ctx.active_scene.present_extras).to eq([ huddled, woman ])           # the Active moved on
-    end
-
-    it "reflects the debut line under the minted identity (no intake hole on promotion)" do
-      ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
-        llm_nuance: StubLLM.new { |full|
-          if (full.include?("SECOND PASS: WORLD MEMORY") || full.include?("TAKING STOCK"))
-            { "facts" => [ { "content" => "The garrison marches at dawn.", "concerns" => [] } ],
-              "people" => [], "places" => [] }.to_json
-          elsif full.include?(recruit_desc)
-            { "speak" => true, "subrole" => "recruit",
-              "dialogue" => { "summary" => "blurts it out", "prose" => "We march at dawn, all of us." } }.to_json
-          else
-            { "speak" => false }.to_json
-          end
-        })
-      ctx.active_scene = Harness::Scene::Active.new(
-        location: tavern,
-        snapshot: Harness::Scene::Assembler.for(location: tavern),
-        extras: [ recruit_desc ]
-      )
-      scene = Harness::Tools::QueryScene.build(ctx)
-
-      expect {
-        described_class.new.run(context: ctx, scene: scene, input: "talk to the recruit", step: step_to(nil, figure: 0))
-      }.to change(Knowledge, :count).by(1)
-
-      minted = Npc.order(:id).last
-      expect(Knowledge.last.speaker).to eq(minted.name) # attributed to the promoted row, not "extra#0"
-    end
-
-    it "never polls an UNADDRESSED ambient extra (a horse doesn't fill a speaker slot or get minted)" do
+    it "never polls, voices or mints a painted extra — a horse fills no speaker slot and becomes no one" do
       voiced = []
       ctx = Harness::Turn::Context.new(player_location: tavern, game_time: 100,
         llm_nuance: StubLLM.new { |full| next "" if full.include?(ADDRESS_MARK); voiced << full; { "speak" => false }.to_json })
@@ -2660,9 +2531,9 @@ RSpec.describe Harness::Runners::Conversation do
     end
     def talk!(ctx, input, plan_step) = described_class.new.run(context: ctx, scene: Harness::Tools::QueryScene.build(ctx), input: input, step: plan_step)
     def voiced_ids(seen) = seen.select { |p| voicing?(p) }.map { |p| JSON.parse(p.split("INPUT:\n", 2).last).dig("you", "id") }
-    def to(id, figure = nil) = { "reasoning" => "their exchange goes on", "with_id" => id, "figure" => figure }
+    def to(id) = { "reasoning" => "their exchange goes on", "with_id" => id }
 
-    it "is asked on the player's words, who is here, the figures and the last exchanges; capped, cold, thinking off" do
+    it "is asked on the player's words, who is here and the last exchanges; capped, cold, thinking off" do
       seen = []
       maud.update!(properties: { "physical" => "an old woman gutting herring" })
       ctx = address_ctx(to(maud.id), seen: seen, extras: [ "a drover nursing a cup" ])
@@ -2671,7 +2542,7 @@ RSpec.describe Harness::Runners::Conversation do
       asked = JSON.parse(seen.find { |p| p.include?(ADDRESS_MARK) }.split("INPUT:\n", 2).last)
       expect(asked["player_said"]).to eq("\"And the herring?\"")
       expect(asked["present"]).to include({ "id" => barkeep.id, "name" => barkeep.name, "trade" => barkeep.subrole }, { "id" => maud.id, "name" => "Maud", "trade" => "fishwife", "looks" => "an old woman gutting herring" })
-      expect(asked["figures"]).to eq([ { "index" => 0, "looks" => "a drover nursing a cup" } ])
+      expect(asked).not_to have_key("figures")   # painted extras are scenery, never candidates
       expect(asked["exchange"]).to eq((1..4).map { |i| { "player" => "said #{i}", "scene" => "answer #{i}" } })
       expect(ctx.llm_nuance.sampling_calls[seen.index { |p| p.include?(ADDRESS_MARK) }]).to eq(temperature: 0, thinking: false, max_tokens: Harness::Runners::Base::JUDGE_MAX_TOKENS)
     end
@@ -2699,16 +2570,8 @@ RSpec.describe Harness::Runners::Conversation do
       expect(seen.none? { |p| p.include?(CHIME_MARK) }).to be(true)
     end
 
-    it "binds a painted figure by index" do
-      seen = []
-      talk!(address_ctx(to(nil, 0), seen: seen, extras: [ "a drover nursing a cup" ]), "\"You there, with the cup.\"", step)
-      first = JSON.parse(seen.find { |p| voicing?(p) }.split("INPUT:\n", 2).last)
-      expect(first.dig("you", "id")).to be_nil
-      expect(first.to_json).to include("a drover nursing a cup")
-    end
-
     it "leaves the plan's binding when the judge fails or names no one here" do
-      [ "", to(999_999), to(nil, 7) ].each do |answer|
+      [ "", to(999_999) ].each do |answer|
         seen = []
         talk!(address_ctx(answer, seen: seen), "\"Tomas, an ale.\"", step_to(barkeep.id))
         expect(voiced_ids(seen)).to eq([ barkeep.id ])
@@ -2724,7 +2587,7 @@ RSpec.describe Harness::Runners::Conversation do
 
     it "the judge's grammar: reasoning first, all required, the prompt's fields in it" do
       schema = described_class::ADDRESSEE_SCHEMA
-      expect(schema["properties"].keys).to eq(%w[reasoning with_id figure])
+      expect(schema["properties"].keys).to eq(%w[reasoning with_id])
       expect(schema["required"]).to eq(schema["properties"].keys)
       named = File.read(described_class::ADDRESSEE_PROMPT_PATH).split("Output:", 2).last.scan(/"(\w+)":/).flatten.uniq
       expect(named.sort).to eq(schema["properties"].keys.sort)

@@ -54,7 +54,7 @@ RSpec.describe Harness::Scene::LocalDraw do
       homeless = npc(location_id: mirehold.id, home_location_id: nil)
       dormant  = npc(location_id: mirehold.id, home_location_id: mirehold.id, properties: { "dormant" => true })
       follower = npc(location_id: mirehold.id, home_location_id: mirehold.id, properties: { "following_player" => true })
-      corpse   = npc(location_id: mirehold.id, home_location_id: mirehold.id, current_hp: 0)
+      corpse   = npc(location_id: mirehold.id, home_location_id: mirehold.id, current_hp: 0, max_hp: 5)
 
       cands = described_class.new(tavern).candidates
       expect(cands).not_to include(homeless, dormant, follower, corpse)

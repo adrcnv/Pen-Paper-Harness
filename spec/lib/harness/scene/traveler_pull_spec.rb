@@ -46,7 +46,7 @@ RSpec.describe Harness::Scene::TravelerPull do
       bandit   = npc(location_id: lair.id,   home_location_id: lair.id) # home is a lair, not a settlement
       dormant  = npc(location_id: osmere.id, home_location_id: osmere.id, properties: { "dormant" => true })
       follower = npc(location_id: osmere.id, home_location_id: osmere.id, properties: { "following_player" => true })
-      corpse   = npc(location_id: osmere.id, home_location_id: osmere.id, current_hp: 0)
+      corpse   = npc(location_id: osmere.id, home_location_id: osmere.id, current_hp: 0, max_hp: 5)
 
       cands = described_class.new(mirehold).candidates
       expect(cands).not_to include(homeless, bandit, dormant, follower, corpse)
